@@ -10,7 +10,15 @@ from condor.web.app import create_app
 assert Path(get_project_dir()) == Path.cwd(), "MCP and parent must share config cwd"
 assert Path("frontend/dist/index.html").is_file(), "Native frontend bundle is missing"
 with TestClient(create_app()) as client:
-    for route in ("/", "/portfolio", "/bots", "/trade", "/dex", "/routines", "/settings"):
+    for route in (
+        "/",
+        "/portfolio",
+        "/bots",
+        "/trade",
+        "/dex",
+        "/routines",
+        "/settings",
+    ):
         response = client.get(route)
         assert response.status_code == 200, route
         assert "text/html" in response.headers["content-type"], route
