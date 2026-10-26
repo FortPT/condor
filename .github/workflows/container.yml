@@ -23,6 +23,26 @@ jobs:
           --security-opt no-new-privileges:true
           condor-check uv run --offline --no-sync --project /opt/condor
           python -c "import runpy; runpy.run_path('/opt/condor-container-smoke.py', run_name='__main__')"
+      - name: Check original process startup and restart without network or accounts
+        run: |
+          trap 'docker rm -fv condor-startup >/dev/null 2>&1 || true' EXIT
+          docker run -d --name condor-startup --network none --cap-drop ALL \
+            --security-opt no-new-privileges:true --health-interval=2s --health-start-period=0s \
+            -e CONDOR_MODE=local -e ADMIN_USER_ID=1 -e WEB_PORT=8088 condor-check
+          wait_healthy() {
+            for attempt in $(seq 1 45); do
+              if [ "$(docker inspect --format '{{.State.Health.Status}}' condor-startup)" = healthy ]; then return 0; fi
+              if [ "$(docker inspect --format '{{.State.Running}}' condor-startup)" != true ]; then break; fi
+              sleep 2
+            done
+            docker logs condor-startup
+            return 1
+          }
+          wait_healthy
+          docker exec condor-startup test -s /var/lib/condor/config.yml
+          docker restart condor-startup
+          wait_healthy
+          docker exec condor-startup test -s /var/lib/condor/config.yml
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

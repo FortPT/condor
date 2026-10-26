@@ -12,7 +12,9 @@ native authentication and trading capabilities are unchanged. Upstream provenanc
 
 The Container workflow builds on pull requests and runs a network-disabled smoke
 check of the native SPA pages, authentication rejection and parent/MCP working
-directory agreement. Existing upstream CI remains independent. A main-branch push
+directory agreement, followed by original-process startup and restart using only
+an ephemeral offline local-mode test identity. Existing upstream CI remains
+independent. A main-branch push
 publishes `ghcr.io/fortpt/condor:sha-<commit-sha>` and `:main` using only the job's
 ephemeral GitHub token. Use the resulting immutable digest for deployment; the
 moving `main` tag is not a reproducible deployment reference. Verify package
