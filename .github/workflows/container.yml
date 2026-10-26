@@ -1,0 +1,70 @@
+name: Container
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build original application
+        run: docker build --build-arg VCS_REF="$GITHUB_SHA" -t condor-check .
+      - name: Check native pages and authentication without network or accounts
+        run: >-
+          docker run --rm --network none --cap-drop ALL
+          --security-opt no-new-privileges:true
+          condor-check uv run --offline --no-sync --project /opt/condor
+          python -c "import runpy; runpy.run_path('/opt/condor-container-smoke.py', run_name='__main__')"
+      - name: Check original process startup and restart without network or accounts
+        run: |
+          trap 'docker rm -fv condor-startup >/dev/null 2>&1 || true' EXIT
+          docker run -d --name condor-startup --network none --cap-drop ALL \
+            --security-opt no-new-privileges:true --health-interval=2s --health-start-period=0s \
+            -e CONDOR_MODE=local -e ADMIN_USER_ID=1 -e WEB_PORT=8088 condor-check
+          wait_healthy() {
+            for attempt in $(seq 1 45); do
+              if [ "$(docker inspect --format '{{.State.Health.Status}}' condor-startup)" = healthy ]; then return 0; fi
+              if [ "$(docker inspect --format '{{.State.Running}}' condor-startup)" != true ]; then break; fi
+              sleep 2
+            done
+            docker logs condor-startup
+            return 1
+          }
+          wait_healthy
+          docker exec condor-startup test -s /var/lib/condor/config.yml
+          docker restart condor-startup
+          wait_healthy
+          docker exec condor-startup test -s /var/lib/condor/config.yml
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Authenticate to GitHub Container Registry
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Build and publish the main commit
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          docker build --build-arg VCS_REF="$GITHUB_SHA" -t "$image:sha-$GITHUB_SHA" -t "$image:main" .
+          docker push "$image:sha-$GITHUB_SHA"
+          docker push "$image:main"
+          docker inspect --format '{{join .RepoDigests "\n"}}' "$image:sha-$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove temporary registry login
+        if: always()
+        run: docker logout ghcr.io
