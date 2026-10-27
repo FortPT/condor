@@ -4,6 +4,16 @@ description: Autonomous spot trading on the connected Crypto.com Main App within
 agent_key: claude-acp:sonnet
 server_required: false
 tools:
+  - control_agent
+  - delegate
+  - get_available_models
+  - manage_agent_controllers
+  - manage_agents
+  - manage_loops
+  - manage_memory
+  - manage_routines
+  - manage_skill
+  - run_code
   - crypto_com_app
   - get_market_data
   - get_prices
