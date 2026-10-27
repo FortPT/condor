@@ -526,8 +526,12 @@ class AppService:
             self.set_enabled(user_id, False)
         return {
             "equity_eur": str(equity),
-            "new_position_limit_eur": str(equity / 6 if guards_active(equity) else equity),
-            "minimum_cash_reserve_eur": str(equity / 2 if guards_active(equity) else Decimal(0)),
+            "new_position_limit_eur": str(
+                equity / 6 if guards_active(equity) else equity
+            ),
+            "minimum_cash_reserve_eur": str(
+                equity / 2 if guards_active(equity) else Decimal(0)
+            ),
             **self.status(user_id),
         }
 
