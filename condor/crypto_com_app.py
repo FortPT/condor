@@ -20,6 +20,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from urllib.parse import urlencode
 
+from condor import crypto_com_scorecard as scorecard
 from condor.fsutil import atomic_write_json
 from condor.paths import data_dir
 
@@ -484,7 +485,52 @@ class AppService:
                     for coin in data.get("coins", [])
                 ],
             }
+        await self._record_prices(user_id, data, top)
         return data
+
+    async def _record_prices(self, user_id, data, top):
+        """Feed the scorecard; it must never be able to break a coin read."""
+        try:
+            listed = data.get("coins", [])
+            scorecard.record_snapshot(user_id, listed)
+            if not top:
+                return
+            # Held coins and coins with an open call may sit outside the top list.
+            wanted = set(_read_ledger(user_id)["positions"]) | set(
+                scorecard.tracked_symbols(user_id)
+            )
+            for symbol in sorted(wanted - {coin.get("symbol") for coin in listed}):
+                if scorecard.latest_price(user_id, symbol, time.time() - 400):
+                    continue
+                query = urlencode(
+                    {
+                        "keyword": symbol,
+                        "sort_by": "rank",
+                        "sort_direction": "asc",
+                        "native_currency": "EUR",
+                        "page_size": 10,
+                    }
+                )
+                found = await self.request(user_id, "GET", "/v1/crypto/coins?" + query)
+                scorecard.record_snapshot(
+                    user_id,
+                    [c for c in found.get("coins", []) if c.get("symbol") == symbol],
+                )
+        except Exception:  # noqa: BLE001 - analytics only
+            pass
+
+    async def predict(
+        self, user_id, symbol, verdict, target_pct, stop_pct, horizon_hours, note=""
+    ):
+        symbol = symbol.strip().upper() if isinstance(symbol, str) else ""
+        if symbol and scorecard.latest_price(user_id, symbol) is None:
+            await self.coins(user_id, symbol)
+        return scorecard.record_prediction(
+            user_id, symbol, verdict, target_pct, stop_pct, horizon_hours, note
+        )
+
+    def scorecard(self, user_id):
+        return scorecard.report(user_id)
 
     @staticmethod
     def _quote_amount(quote, side):

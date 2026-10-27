@@ -1449,6 +1449,8 @@ async def crypto_com_app(
         "quote",
         "execute",
         "reconcile",
+        "predict",
+        "scorecard",
     ],
     kind: Literal["purchase", "sale", "exchange"] = "purchase",
     source: str = "EUR",
@@ -1456,6 +1458,11 @@ async def crypto_com_app(
     amount: str = "",
     quotation_id: str = "",
     keyword: str = "",
+    verdict: Literal["trade", "pass"] = "pass",
+    target_pct: str = "",
+    stop_pct: str = "",
+    horizon_hours: str = "",
+    note: str = "",
 ) -> dict:
     """Trade on the user's Crypto.com MAIN APP, separately from Hummingbot Exchange.
 
@@ -1466,7 +1473,10 @@ async def crypto_com_app(
     quote: purchase EUR→crypto, sale crypto→EUR, or exchange crypto→crypto;
     amount is the SOURCE quantity as a decimal string. execute: submit the
     quotation_id returned by quote within its countdown. Never retry an order
-    after an uncertain outcome; inspect history instead. A restarted process,
+    after an uncertain outcome; inspect history instead. predict: log one scorecard
+    call for the coin in `target` (verdict trade|pass, target_pct, stop_pct,
+    horizon_hours, short note); paper only, it never trades. scorecard: how the
+    logged calls scored against real prices after costs. A restarted process,
     disconnected account or paused trading invalidates pending quotes.
 
     The owner must connect and enable the account in Settings. These tools cannot
@@ -1492,6 +1502,19 @@ async def crypto_com_app(
         )
     if action == "reconcile":
         return await call_main_api("POST", "/crypto-com/reconcile")
+    if action == "predict":
+        return await call_main_api(
+            "POST",
+            "/crypto-com/predict",
+            {
+                "symbol": target,
+                "verdict": verdict,
+                "target_pct": target_pct,
+                "stop_pct": stop_pct,
+                "horizon_hours": horizon_hours,
+                "note": note,
+            },
+        )
     if action == "coins":
         from urllib.parse import urlencode
 
