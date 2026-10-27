@@ -586,11 +586,13 @@ class ACPClient:
         extra_env: dict[str, str] | None = None,
         model: str | None = None,
         system_prompt: str = "",
+        allowed_tools: list[str] | None = None,
     ):
         self.command = command
         self.working_dir = working_dir or os.getcwd()
         self.mcp_servers: list[dict[str, Any]] = mcp_servers or []
         self.permission_callback = permission_callback
+        self._restrict_host_tools = bool(allowed_tools)
         self.extra_env = extra_env
         # Text APPENDED to the host's own system prompt (see start()). The only
         # true system-level channel an ACP session has — everything else Condor
@@ -668,6 +670,16 @@ class ACPClient:
         }
         if self.system_prompt:
             params["_meta"] = {"systemPrompt": {"append": self.system_prompt}}
+        if self._restrict_host_tools:
+            # Claude may auto-approve native tools before canUseTool reaches us.
+            params.setdefault("_meta", {})["claudeCode"] = {
+                "options": {
+                    "tools": ["ToolSearch"],
+                    "allowDangerouslySkipPermissions": False,
+                    "settingSources": [],
+                    "settings": {"permissions": {"ask": ["mcp__*"]}},
+                }
+            }
         return params
 
     async def start(self) -> None:
