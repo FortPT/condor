@@ -26,7 +26,41 @@ from typing import Any
 from condor.acp import client as acp_client
 from condor.acp import pydantic_ai_client as pydantic_ai
 from condor.preferences import resolve_custom_endpoint
+from condor.runtime.danger import tool_call_name
 from condor.runtime.toolsets import get_project_dir
+from mcp_servers.condor.profiles import canonical_tool_name
+
+
+def _acp_tool_allowlist(
+    allowed_tools: list[str], callback: acp_client.PermissionCallback | None
+) -> acp_client.PermissionCallback:
+    allowed = {canonical_tool_name(name) for name in allowed_tools}
+
+    async def permission(tool_call: dict, options: list[dict]) -> dict:
+        raw_name = tool_call.get("tool") or tool_call.get("title")
+        permitted = (
+            isinstance(raw_name, str)
+            and bool(raw_name)
+            and (
+                raw_name == "ToolSearch"
+                or canonical_tool_name(raw_name) in allowed
+                or canonical_tool_name(tool_call_name(tool_call)) in allowed
+            )
+        )
+        if permitted and callback is not None:
+            return await callback(tool_call, options)
+        kind = "allow_once" if permitted else "reject_once"
+        for option in options:
+            if option.get("kind") == kind and option.get("optionId"):
+                return {
+                    "outcome": {
+                        "outcome": "selected",
+                        "optionId": option["optionId"],
+                    }
+                }
+        return {"outcome": {"outcome": "cancelled"}}
+
+    return permission
 
 
 def build_llm_client(
@@ -61,10 +95,10 @@ def build_llm_client(
     whichever client understands them. Both clients take the env and the system
     prompt — each over its own system-level channel (``_meta.systemPrompt`` for
     ACP, ``instructions`` for pydantic-ai), so a bound Agent keeps its identity
-    on either backend (ARCH-331). Only PydanticAI takes ``allowed_tools`` as a
-    client filter; ACP filters nothing, so for both the allowlist is enforced
-    where the MCP servers are built — :func:`condor.runtime.toolsets.seat_mutes`
-    keeps what it leaves out from ever being mounted.
+    on either backend (ARCH-331). PydanticAI filters discovered tools; ACP
+    enforces an explicit allowlist at the permission callback too, including its
+    native host tools. MCP servers also omit non-allowlisted tools through
+    :func:`condor.runtime.toolsets.seat_mutes`.
     """
     if pydantic_ai.is_pydantic_ai_model(agent_key):
         # The key's provenance is only known here: with an explicit URL in play
@@ -101,7 +135,11 @@ def build_llm_client(
         command=command,
         working_dir=get_project_dir(),
         mcp_servers=mcp_servers,
-        permission_callback=permission_callback,
+        permission_callback=(
+            _acp_tool_allowlist(allowed_tools, permission_callback)
+            if allowed_tools
+            else permission_callback
+        ),
         extra_env=merged_env or None,
         model=model_pref or None,
         system_prompt=system_prompt,

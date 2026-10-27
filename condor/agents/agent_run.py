@@ -2,8 +2,8 @@
 
 The shared engine behind every non-chat Agent run. It never knows which door it
 was reached through: it loads the Agent, builds its toolset, and runs its own
-brain on its configured model — a pydantic-ai key (allowlist enforced) or an ACP
-key like claude-code (unrestricted); a pydantic-ai key whose local backend is
+brain on its configured model with its tool allowlist enforced on either
+backend; a pydantic-ai key whose local backend is
 down falls back to claude-code. No strategy is involved — a run here is the
 Agent's identity + shared memory/skills.
 
@@ -25,8 +25,9 @@ needed it. For those seats a blocking ask is not a worse delegation — it is th
 only shape that works, and the cheap one: one prompt stream and a ledger row,
 against a detached task with an event sidecar, a transcript and a bell.
 
-Every run here is **unattended**: no ``permission_callback`` is built, so an ACP
-agent auto-approves its own tool calls. See :mod:`condor.runtime.confirmations`,
+Every run here is **unattended**: no interactive ``permission_callback`` is built.
+The client factory enforces explicit allowlists and auto-approves allowed calls.
+See :mod:`condor.runtime.confirmations`,
 which still gates the *chat* seats where a human is actually watching. Because
 an ask is auto-approved and its target could ask onward, depth is bounded at one
 — see ``ask_target`` below.
@@ -78,8 +79,8 @@ async def run_agent_to_completion(
 ) -> str:
     """Load the Agent ``slug``, run its brain to completion on ``task``, return text.
 
-    The run is unattended: no ``permission_callback`` is built, so an ACP agent
-    auto-approves its own tool calls and the stream ending IS the "task done"
+    The run is unattended: the client factory enforces an explicit allowlist
+    without interactive confirmation. The stream ending IS the "task done"
     signal — unless its terminal ``PromptDone`` says the session failed
     (:data:`FAILED_STOP_REASONS`), which raises ``RuntimeError`` carrying any
     text the client streamed before it (the pydantic client's formatted error). No strategy is involved — the Agent's identity + shared
