@@ -44,6 +44,15 @@ fee schedules, minimum orders and terminal fill shapes must be checked against t
 actual account before enabling autonomous execution. Fixtures are not proof of a
 working live financial association or profitable strategy.
 
+The live App wallet endpoint returns the entire supported-asset catalogue (about
+1.4 MiB / 1,939 wallets on the initial connection). Responses are bounded at 8 MiB;
+only funded balances and necessary currency/amount fields leave the adapter.
+Card transactions, addresses and merchant metadata are not passed to the model.
+The App's `done` transaction status is supported. When a completed order omits
+explicit from/to amounts, the service requires exact source debit and destination
+credit against its persisted pre-order wallet snapshot before recording a fill.
+Ambiguous changes remain paused; they are never inferred from a transaction ID.
+
 Sources: official crypto-com/crypto-agent-trading App scripts (revision
 92e80c5527312d0acdf769f16511ba3c6db1f2fe), Crypto.com Agent Key management, Condor
 LLM integration documentation and Claude Code authentication documentation.

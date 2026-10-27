@@ -226,7 +226,7 @@ class AppService:
                     size = 0
                     async for chunk in response.content.iter_chunked(65536):
                         size += len(chunk)
-                        if size > 1_048_576:
+                        if size > 8 * 1024 * 1024:
                             raise ValueError("Crypto.com response too large")
                         chunks.append(chunk)
                     raw = b"".join(chunks)
@@ -262,15 +262,110 @@ class AppService:
     async def accounts(self, user_id):
         cash = await self.request(user_id, "GET", "/v1/fiat-account")
         crypto = await self.request(user_id, "GET", "/v1/crypto-account")
+
+        def funded(rows, fields, field):
+            return [
+                {name: row[name] for name in fields if name in row}
+                for row in rows
+                if self._money_units(row.get(field, {})) > 0
+            ]
+
         return {
-            "cash": cash.get("account", {}).get("balances", []),
-            "crypto": crypto.get("account", {}).get("wallets", []),
+            "cash": funded(
+                cash.get("account", {}).get("balances", []),
+                {"currency", "amount"},
+                "amount",
+            ),
+            "crypto": funded(
+                crypto.get("account", {}).get("wallets", []),
+                {"currency", "balance", "available"},
+                "balance",
+            ),
         }
 
+    @staticmethod
+    def _money_units(entry):
+        try:
+            value = Decimal(str(entry.get("amount", "0")))
+        except (InvalidOperation, AttributeError):
+            raise ValueError("Provider returned an invalid balance") from None
+        if not value.is_finite() or value < 0:
+            raise ValueError("Provider returned an invalid balance")
+        return value
+
+    def _wallet_total(self, accounts, token):
+        for row in accounts["cash"]:
+            if row.get("currency") == token:
+                return self._money_units(row.get("amount", {}))
+        for row in accounts["crypto"]:
+            if row.get("currency") == token:
+                return self._money_units(row.get("balance", row.get("available", {})))
+        return Decimal(0)
+
     async def history(self, user_id):
-        return (await self.request(user_id, "GET", "/v1/transactions")).get(
+        transactions = (await self.request(user_id, "GET", "/v1/transactions")).get(
             "transactions", []
-        )[:50]
+        )
+        ledger = _read_ledger(user_id)
+        owned_ids = {order["transaction_id"] for order in ledger["orders"]}
+        pending = ledger["uncertain_order"] or {}
+        owned_ids.add(pending.get("transaction_id"))
+        fields = {
+            "id",
+            "status",
+            "kind",
+            "amount",
+            "native_amount",
+            "from_amount",
+            "to_amount",
+            "fee",
+            "created_at",
+            "updated_at",
+            "quotation_id",
+        }
+        result = []
+        for item in transactions:
+            meta = item.get("meta") or {}
+            if (
+                item.get("kind")
+                not in {"crypto_purchase", "crypto_sale", "crypto_exchange"}
+                and item.get("id") not in owned_ids
+                and meta.get("exchange_quotation_uuid")
+                != pending.get("quotation_id", "missing")
+            ):
+                continue
+            row = {key: value for key, value in item.items() if key in fields}
+            if meta.get("exchange_quotation_uuid"):
+                row["quotation_id"] = meta["exchange_quotation_uuid"]
+            result.append(row)
+        return result[:50]
+
+    async def _verified_transaction(self, user_id, quote, transaction, before):
+        if transaction.get("status") not in {
+            "completed",
+            "success",
+            "successful",
+            "done",
+        }:
+            raise ValueError("Order has not reached a verified completed state")
+        if "from_amount" in transaction and "to_amount" in transaction:
+            return transaction
+        if not before:
+            raise ValueError("Wallet snapshot missing; manual reconciliation required")
+        source, spent = self._quote_amount(quote, "from")
+        target, received = self._quote_amount(quote, "to")
+        after = await self.accounts(user_id)
+        debit = Decimal(before["source"]) - self._wallet_total(after, source)
+        credit = self._wallet_total(after, target) - Decimal(before["target"])
+        if debit != spent or credit != received:
+            raise ValueError(
+                "Final wallet changes do not match the quote; keep trading paused"
+            )
+        return {
+            **transaction,
+            "from_amount": {"currency": source, "amount": format(debit, "f")},
+            "to_amount": {"currency": target, "amount": format(credit, "f")},
+        }
 
     async def coins(self, user_id, keyword):
         if not isinstance(keyword, str) or not 1 <= len(keyword) <= 100:
@@ -461,6 +556,10 @@ class AppService:
                 "time": time.time(),
                 "quote": quote,
                 "credential_digest": entry["credential_digest"],
+                "before_balances": {
+                    "source": str(self._wallet_total(accounts, source)),
+                    "target": str(self._wallet_total(accounts, target)),
+                },
             }
             _write(_root(user_id) / "ledger.json", ledger)
             body = {"quotation_id": quote_id}
@@ -477,20 +576,12 @@ class AppService:
                     _write(_root(user_id) / "ledger.json", ledger)
                 if not isinstance(transaction, dict) or not transaction.get("id"):
                     raise ValueError("Order response has no transaction ID")
-                if transaction.get("status") not in {
-                    "completed",
-                    "success",
-                    "successful",
-                }:
-                    raise ValueError("Order has not reached a verified completed state")
-                actual_source, actual_spent = self._quote_amount(transaction, "from")
-                actual_target, actual_received = self._quote_amount(transaction, "to")
-                if (actual_source, actual_target) != (
-                    source,
-                    target,
-                ) or actual_spent != spent:
-                    raise ValueError("Final debit differs from the accepted quote")
-                received = actual_received
+                transaction = await self._verified_transaction(
+                    user_id,
+                    quote,
+                    transaction,
+                    ledger["uncertain_order"].get("before_balances"),
+                )
             except Exception:
                 raise ValueError(
                     "Order outcome needs reconciliation. Trading paused; inspect Crypto.com transaction history. Do not resubmit."
@@ -506,7 +597,12 @@ class AppService:
     def _apply_fill(self, ledger, kind, quote, transaction):
         source, spent = self._quote_amount(quote, "from")
         target, _ = self._quote_amount(quote, "to")
-        if transaction.get("status") not in {"completed", "success", "successful"}:
+        if transaction.get("status") not in {
+            "completed",
+            "success",
+            "successful",
+            "done",
+        }:
             raise ValueError("Order has not reached a verified completed state")
         actual_source, actual_spent = self._quote_amount(transaction, "from")
         actual_target, received = self._quote_amount(transaction, "to")
@@ -586,6 +682,14 @@ class AppService:
             }:
                 ledger["uncertain_order"] = None
             else:
+                transaction = await self._verified_transaction(
+                    user_id,
+                    pending["quote"],
+                    transaction,
+                    pending.get("before_balances"),
+                )
+                if pending["credential_digest"] != self._credential_digest(user_id):
+                    raise ValueError("Account changed during reconciliation")
                 self._apply_fill(ledger, pending["kind"], pending["quote"], transaction)
             ledger["enabled"] = False
             _write(_root(user_id) / "ledger.json", ledger)

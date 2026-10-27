@@ -297,6 +297,84 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await self.service.execute(1, quotation["id"])
 
+    async def test_real_app_done_status_uses_verified_wallet_deltas(self):
+        self.service.set_enabled(1, True)
+        quotation = await self.service.quote(1, "purchase", "EUR", "BTC", "5")
+        original = self.service.request
+        filled = False
+
+        async def app_contract(user_id, method, path, body=None):
+            nonlocal filled
+            if path.endswith("orders"):
+                filled = True
+                return {
+                    "ok": True,
+                    "transaction": {
+                        "id": "t1",
+                        "status": "done",
+                        "kind": "crypto_purchase",
+                    },
+                }
+            if path == "/v1/fiat-account":
+                return {
+                    "ok": True,
+                    "account": {
+                        "balances": [
+                            {
+                                "currency": "EUR",
+                                "amount": {"amount": "25" if filled else "30"},
+                            }
+                        ]
+                    },
+                }
+            if path == "/v1/crypto-account":
+                return {
+                    "ok": True,
+                    "account": {
+                        "wallets": [
+                            {
+                                "currency": "BTC",
+                                "available": {"amount": "0.001" if filled else "0"},
+                                "balance": {"amount": "0.001" if filled else "0"},
+                            }
+                        ]
+                    },
+                }
+            return await original(user_id, method, path, body)
+
+        self.service.request = app_contract
+        await self.service.execute(1, quotation["id"])
+        state = self.service.status(1)
+        self.assertEqual(state["ledger"]["cash_eur"], "25")
+        self.assertEqual(state["ledger"]["positions"]["BTC"]["units"], "0.001")
+
+    async def test_accounts_do_not_expose_zero_wallets_or_address_metadata(self):
+        async def account_reply(user_id, method, path, body=None):
+            return {
+                "ok": True,
+                "account": {
+                    "balances": [],
+                    "wallets": [
+                        {
+                            "currency": "BTC",
+                            "available": {"amount": "0.001"},
+                            "balance": {"amount": "0.001"},
+                            "address": "private-address",
+                        },
+                        {
+                            "currency": "ETH",
+                            "available": {"amount": "0"},
+                            "balance": {"amount": "0"},
+                        },
+                    ],
+                },
+            }
+
+        self.service.request = account_reply
+        accounts = await self.service.accounts(1)
+        self.assertEqual(len(accounts["crypto"]), 1)
+        self.assertNotIn("address", json.dumps(accounts))
+
 
 class HttpContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_chunked_reply_and_redirects_do_not_leak_credentials(self):
@@ -350,6 +428,39 @@ class HttpContractTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("private_secret", str(error.exception))
         self.assertFalse(captured[0][2]["allow_redirects"])
         self.assertEqual(len(captured), 2)
+
+    async def test_real_wallet_catalogue_larger_than_one_megabyte_is_accepted(self):
+        class Response:
+            status = 200
+
+            @property
+            def content(self):
+                return self
+
+            async def iter_chunked(self, size):
+                yield b'{"ok":true,"wallet_metadata":"'
+                for _ in range(24):
+                    yield b"x" * 65536
+                yield b'"}'
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+        class Session(Response):
+            def request(self, *args, **kwargs):
+                return Response()
+
+        service = cdc.AppService()
+        with (
+            patch.object(service, "credentials", return_value=("key", "secret")),
+            patch("aiohttp.ClientSession", return_value=Session()),
+        ):
+            self.assertTrue(
+                (await service.request(1, "GET", "/v1/crypto-account"))["ok"]
+            )
 
 
 if __name__ == "__main__":
