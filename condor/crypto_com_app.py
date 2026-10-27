@@ -116,6 +116,26 @@ def _read_ledger(user_id):
 # money freely (no reserve, position count or per-position cap). Only the equity
 # floor below stays. At or above it the original guards apply unchanged.
 GUARD_THRESHOLD_EUR = Decimal("1000")
+# Below the threshold one asset may still never hold more than this share of
+# total bot equity, so the whole wallet cannot end up in a single coin.
+MAX_ASSET_FRACTION = Decimal("0.4")
+TOP_COINS = 15
+TOP_COIN_FIELDS = {
+    "rank",
+    "symbol",
+    "rails_id",
+    "name",
+    "is_tradable",
+    "token_type",
+    "price_native",
+    "percent_change_1h_native",
+    "percent_change_24h_native",
+    "percent_change_1w_native",
+    "percent_change_30d_native",
+    "volume_24h_native",
+    "market_cap_native",
+    "updated_at",
+}
 
 
 def guards_active(equity):
@@ -126,6 +146,9 @@ def check_purchase(ledger, token, spend, equity):
     if equity <= Decimal("2"):
         raise ValueError("Bot equity reached the EUR 2 stop threshold")
     if not guards_active(equity):
+        held = Decimal(ledger["positions"].get(token, {}).get("cost_eur", "0"))
+        if held + spend > equity * MAX_ASSET_FRACTION:
+            raise ValueError("Asset would exceed 40% of current bot equity")
         return
     positions = ledger["positions"]
     if token in positions:
@@ -169,6 +192,7 @@ class AppService:
                 "position_fraction": "1/6",
                 "max_positions": 3,
                 "guards_apply_from_eur": str(GUARD_THRESHOLD_EUR),
+                "max_asset_fraction_below_threshold": str(MAX_ASSET_FRACTION),
             },
         }
 
@@ -436,18 +460,31 @@ class AppService:
         }
 
     async def coins(self, user_id, keyword, native_currency="EUR"):
-        if not isinstance(keyword, str) or not 1 <= len(keyword) <= 100:
+        if not isinstance(keyword, str) or len(keyword) > 100:
             raise ValueError("Enter a coin symbol or name")
-        query = urlencode(
-            {
-                "keyword": keyword,
-                "sort_by": "rank",
-                "sort_direction": "asc",
-                "native_currency": currency(native_currency),
-                "page_size": 10,
+        top = not keyword.strip()
+        params = {
+            "sort_by": "rank",
+            "sort_direction": "asc",
+            "native_currency": currency(native_currency),
+            "page_size": TOP_COINS if top else 10,
+        }
+        query = urlencode(params if top else {"keyword": keyword, **params})
+        data = await self.request(user_id, "GET", "/v1/crypto/coins?" + query)
+        if top:
+            # An empty keyword lists the top coins by rank; descriptions and icons stay out.
+            data = {
+                **data,
+                "coins": [
+                    {
+                        key: value
+                        for key, value in coin.items()
+                        if key in TOP_COIN_FIELDS
+                    }
+                    for coin in data.get("coins", [])
+                ],
             }
-        )
-        return await self.request(user_id, "GET", "/v1/crypto/coins?" + query)
+        return data
 
     @staticmethod
     def _quote_amount(quote, side):
@@ -527,7 +564,7 @@ class AppService:
         return {
             "equity_eur": str(equity),
             "new_position_limit_eur": str(
-                equity / 6 if guards_active(equity) else equity
+                equity / 6 if guards_active(equity) else equity * MAX_ASSET_FRACTION
             ),
             "minimum_cash_reserve_eur": str(
                 equity / 2 if guards_active(equity) else Decimal(0)
@@ -575,6 +612,14 @@ class AppService:
                         * spent
                         / Decimal(position["units"])
                     )
+                    if not guards_active(equity):
+                        held = Decimal(
+                            ledger["positions"].get(target, {}).get("cost_eur", "0")
+                        )
+                        if held + old_cost > equity * MAX_ASSET_FRACTION:
+                            raise ValueError(
+                                "Exchange would exceed 40% of current bot equity"
+                            )
                     if guards_active(equity) and (
                         target in ledger["positions"]
                         or old_cost > equity / 6

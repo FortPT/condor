@@ -84,19 +84,39 @@ class AppTests(unittest.TestCase):
 
     def test_guards_are_lifted_below_the_threshold_but_the_floor_stays(self):
         ledger = cdc.new_ledger()
-        cdc.check_purchase(ledger, "BTC", cdc.amount("30"), cdc.amount("30"))
+        cdc.check_purchase(ledger, "BTC", cdc.amount("12"), cdc.amount("30"))
         ledger["positions"] = {
             coin: {"units": "1", "cost_eur": "5"} for coin in ["BTC", "ETH", "SOL"]
         }
         cdc.check_purchase(ledger, "CRO", cdc.amount("5"), cdc.amount("43"))
         cdc.check_purchase(ledger, "BTC", cdc.amount("5"), cdc.amount("43"))
-        cdc.check_purchase(ledger, "BTC", cdc.amount("999"), cdc.amount("999.99"))
+        cdc.check_purchase(ledger, "BTC", cdc.amount("394"), cdc.amount("999.99"))
+        with self.assertRaises(ValueError):
+            cdc.check_purchase(ledger, "BTC", cdc.amount("396"), cdc.amount("999.99"))
         with self.assertRaises(ValueError):
             cdc.check_purchase(ledger, "BTC", cdc.amount("0.1"), cdc.amount("2"))
         with self.assertRaises(ValueError):
             cdc.check_purchase(ledger, "CRO", cdc.amount("1"), cdc.amount("1000"))
         self.assertFalse(cdc.guards_active(cdc.amount("999.99")))
         self.assertTrue(cdc.guards_active(cdc.amount("1000")))
+
+    def test_no_single_asset_above_40_percent_below_the_threshold(self):
+        ledger = cdc.new_ledger()
+        ledger["cash_eur"] = "26"
+        ledger["positions"] = {
+            "CRO": {"units": "216", "cost_eur": "9.98"},
+            "SHIB": {"units": "1215909", "cost_eur": "5.06"},
+            "ETH": {"units": "0.000933", "cost_eur": "1.91"},
+        }
+        equity = cdc.amount("42.95")
+        cdc.check_purchase(ledger, "SOL", cdc.amount("17.18"), equity)
+        with self.assertRaises(ValueError):
+            cdc.check_purchase(ledger, "SOL", cdc.amount("17.19"), equity)
+        with self.assertRaises(ValueError):
+            cdc.check_purchase(ledger, "SOL", cdc.amount("26"), equity)
+        cdc.check_purchase(ledger, "CRO", cdc.amount("7.2"), equity)
+        with self.assertRaises(ValueError):
+            cdc.check_purchase(ledger, "CRO", cdc.amount("7.3"), equity)
 
     def test_profits_increase_allocation_without_cumulative_loss_stop(self):
         ledger = cdc.new_ledger()
@@ -167,6 +187,27 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         }
         with self.assertRaises(ValueError):
             await self.service.portfolio(1)
+
+    async def test_empty_keyword_lists_top_coins_without_descriptions(self):
+        row = {
+            "rank": 1,
+            "symbol": "BTC",
+            "rails_id": "BTC",
+            "is_tradable": True,
+            "price_native": {"currency": "EUR", "amount": "73000"},
+            "description": "long text",
+            "icon_image_url": "https://example.invalid/x.png",
+        }
+        self.service.request = AsyncMock(return_value={"ok": True, "coins": [row]})
+        result = await self.service.coins(1, "")
+        path = self.service.request.await_args.args[2]
+        self.assertIn("page_size=15", path)
+        self.assertNotIn("keyword", path)
+        self.assertEqual(result["coins"][0]["symbol"], "BTC")
+        self.assertNotIn("description", result["coins"][0])
+        self.assertNotIn("icon_image_url", result["coins"][0])
+        await self.service.coins(1, "SOL")
+        self.assertIn("keyword=SOL", self.service.request.await_args.args[2])
 
     async def asyncSetUp(self):
         self.tmp = tempfile.TemporaryDirectory()
