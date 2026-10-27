@@ -17,8 +17,10 @@ The Crypto.com tab provides account checks, quotes, execution, history and bot
 valuation. The bot ledger starts at EUR 30, distinct from other holdings. It keeps
 half the current liquidation value in cash, allows at most three positions and
 sizes new positions at most one sixth of current equity. Existing positions are
-not topped up. Stop new exposure at **EUR 2 total bot equity**, not EUR 2 of losses;
-profits increase the allocation. No guaranteed exit price or guaranteed profit.
+not topped up. **These guards apply only from EUR 1000 total bot equity**
+(`GUARD_THRESHOLD_EUR`); below that the bot may use all its cash, hold any number
+of positions and add to existing ones. Stop new exposure at **EUR 2 total bot
+equity** at any size, not EUR 2 of losses; profits increase the allocation. No guaranteed exit price or guaranteed profit.
 
 The shared crypto_com_app MCP tool is mounted through existing tool profiles.
 Execution is classified as dangerous/mutating, so attended confirmations and
