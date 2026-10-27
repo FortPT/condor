@@ -54,6 +54,8 @@ Shipping these profiles starts nothing and changes no account enablement or
 live ledger. The owner still enables trading and starts the coordinator loop;
 its existing restart-on-boot behavior is preserved after that explicit start.
 The helpers are separate identities, not independent trading bots or schedulers.
+Agent workspaces remain visible without Hummingbot credentials, so App-only
+operators can inspect all three roles and the coordinator's loop directly.
 Installation-local profile/playbook overrides shadow these stock files and must
 be reviewed by the operator when adopting the crew.
 

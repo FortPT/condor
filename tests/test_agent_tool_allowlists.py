@@ -47,6 +47,14 @@ FRAMEWORK = {
 #: Tool names an agent's own files mention without calling them.
 NOT_CALLS: dict[str, set[str]] = {}
 
+# These specialists intentionally cannot administer the framework. Their exact
+# capabilities and consultation policy are pinned in test_crypto_com_crew.py.
+RESTRICTED_CREW = {
+    "crypto_com_app_trader",
+    "crypto_com_market_analyst",
+    "crypto_com_risk_reviewer",
+}
+
 
 def _frontmatter(path: Path) -> dict:
     return yaml.safe_load(path.read_text().split("---")[1]) or {}
@@ -91,6 +99,10 @@ def test_the_list_names_only_tools_the_seat_can_mount(slug):
 
 @pytest.mark.parametrize("slug", ALLOWLISTED)
 def test_the_list_carries_the_framework_family(slug):
+    if slug in RESTRICTED_CREW:
+        assert "run_code" not in _allowlist(slug)
+        assert "manage_agents" not in _allowlist(slug)
+        return
     missing = FRAMEWORK - _allowlist(slug)
     assert not missing, f"{slug} inherits playbooks that call {sorted(missing)}"
 
