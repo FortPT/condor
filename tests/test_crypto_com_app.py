@@ -62,34 +62,53 @@ class AppTests(unittest.TestCase):
 
     def test_budget_reserve_position_limit_and_loss_stop(self):
         ledger = cdc.new_ledger()
-        cdc.check_purchase(ledger, "BTC", cdc.amount("5"), cdc.amount("30"))
-        for requested, equity in [("5.01", "30"), ("0.1", "2")]:
+        ledger["cash_eur"] = "1000"
+        cdc.check_purchase(ledger, "BTC", cdc.amount("166"), cdc.amount("1000"))
+        for requested, equity in [("167", "1000"), ("0.1", "2")]:
             with self.assertRaises(ValueError):
                 cdc.check_purchase(
                     ledger, "BTC", cdc.amount(requested), cdc.amount(equity)
                 )
-        ledger["cash_eur"] = "19"
+        ledger["cash_eur"] = "600"
         with self.assertRaises(ValueError):
-            cdc.check_purchase(ledger, "BTC", cdc.amount("5"), cdc.amount("30"))
+            cdc.check_purchase(ledger, "BTC", cdc.amount("166"), cdc.amount("1000"))
         ledger = cdc.new_ledger()
+        ledger["cash_eur"] = "1000"
         ledger["positions"] = {
             coin: {"units": "1", "cost_eur": "5"} for coin in ["BTC", "ETH", "SOL"]
         }
         with self.assertRaises(ValueError):
-            cdc.check_purchase(ledger, "CRO", cdc.amount("1"), cdc.amount("30"))
+            cdc.check_purchase(ledger, "CRO", cdc.amount("1"), cdc.amount("1000"))
         with self.assertRaises(ValueError):
-            cdc.check_purchase(ledger, "BTC", cdc.amount("1"), cdc.amount("30"))
+            cdc.check_purchase(ledger, "BTC", cdc.amount("1"), cdc.amount("1000"))
+
+    def test_guards_are_lifted_below_the_threshold_but_the_floor_stays(self):
+        ledger = cdc.new_ledger()
+        cdc.check_purchase(ledger, "BTC", cdc.amount("30"), cdc.amount("30"))
+        ledger["positions"] = {
+            coin: {"units": "1", "cost_eur": "5"} for coin in ["BTC", "ETH", "SOL"]
+        }
+        cdc.check_purchase(ledger, "CRO", cdc.amount("5"), cdc.amount("43"))
+        cdc.check_purchase(ledger, "BTC", cdc.amount("5"), cdc.amount("43"))
+        cdc.check_purchase(ledger, "BTC", cdc.amount("999"), cdc.amount("999.99"))
+        with self.assertRaises(ValueError):
+            cdc.check_purchase(ledger, "BTC", cdc.amount("0.1"), cdc.amount("2"))
+        with self.assertRaises(ValueError):
+            cdc.check_purchase(ledger, "CRO", cdc.amount("1"), cdc.amount("1000"))
+        self.assertFalse(cdc.guards_active(cdc.amount("999.99")))
+        self.assertTrue(cdc.guards_active(cdc.amount("1000")))
 
     def test_profits_increase_allocation_without_cumulative_loss_stop(self):
         ledger = cdc.new_ledger()
-        ledger["cash_eur"] = "127"
-        cdc.check_purchase(ledger, "BTC", cdc.amount("20"), cdc.amount("127"))
+        ledger["cash_eur"] = "1270"
+        cdc.check_purchase(ledger, "BTC", cdc.amount("200"), cdc.amount("1270"))
 
     def test_existing_position_is_not_topped_up_after_appreciation(self):
         ledger = cdc.new_ledger()
+        ledger["cash_eur"] = "1000"
         ledger["positions"] = {"BTC": {"units": "1", "cost_eur": "1"}}
         with self.assertRaises(ValueError):
-            cdc.check_purchase(ledger, "BTC", cdc.amount("1"), cdc.amount("30"))
+            cdc.check_purchase(ledger, "BTC", cdc.amount("1"), cdc.amount("1000"))
 
 
 class FlowTests(unittest.IsolatedAsyncioTestCase):

@@ -112,9 +112,21 @@ def _read_ledger(user_id):
     return json.loads(path.read_text()) if path.exists() else new_ledger()
 
 
+# Owner decision 2026-10-27: below this total bot equity the bot may use all of its
+# money freely (no reserve, position count or per-position cap). Only the equity
+# floor below stays. At or above it the original guards apply unchanged.
+GUARD_THRESHOLD_EUR = Decimal("1000")
+
+
+def guards_active(equity):
+    return equity >= GUARD_THRESHOLD_EUR
+
+
 def check_purchase(ledger, token, spend, equity):
     if equity <= Decimal("2"):
         raise ValueError("Bot equity reached the EUR 2 stop threshold")
+    if not guards_active(equity):
+        return
     positions = ledger["positions"]
     if token in positions:
         raise ValueError(
@@ -156,6 +168,7 @@ class AppService:
                 "reserve_fraction": "0.5",
                 "position_fraction": "1/6",
                 "max_positions": 3,
+                "guards_apply_from_eur": str(GUARD_THRESHOLD_EUR),
             },
         }
 
@@ -513,8 +526,8 @@ class AppService:
             self.set_enabled(user_id, False)
         return {
             "equity_eur": str(equity),
-            "new_position_limit_eur": str(equity / 6),
-            "minimum_cash_reserve_eur": str(equity / 2),
+            "new_position_limit_eur": str(equity / 6 if guards_active(equity) else equity),
+            "minimum_cash_reserve_eur": str(equity / 2 if guards_active(equity) else Decimal(0)),
             **self.status(user_id),
         }
 
@@ -558,7 +571,7 @@ class AppService:
                         * spent
                         / Decimal(position["units"])
                     )
-                    if (
+                    if guards_active(equity) and (
                         target in ledger["positions"]
                         or old_cost > equity / 6
                         or (
