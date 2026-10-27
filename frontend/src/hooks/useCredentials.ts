@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { useServer } from "@/hooks/useServer";
-import { api } from "@/lib/api";
+import { api, apiFetch } from "@/lib/api";
 import { credentialsQuery, gatewayWalletsQuery } from "@/lib/queryClient";
 
 export function useCredentials() {
@@ -30,4 +30,23 @@ export function useCredentials() {
   const isLoading = credsLoading || walletsLoading;
 
   return { hasKeys, isLoading, credentials };
+}
+
+type CryptoComStatus = {
+  connected: boolean;
+  enabled: boolean;
+  ledger: {
+    cash_eur: string;
+    positions: Record<string, { units: string; cost_eur: string }>;
+    uncertain_order: unknown;
+  };
+};
+
+export function useCryptoComStatus() {
+  return useQuery({
+    queryKey: ["crypto-com-status"],
+    queryFn: () => apiFetch<CryptoComStatus>("/api/v1/crypto-com/status"),
+    refetchInterval: 10000,
+    retry: false,
+  });
 }

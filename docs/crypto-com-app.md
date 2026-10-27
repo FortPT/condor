@@ -66,3 +66,16 @@ price snapshot, so no missing EUR conversion is silently treated as parity. Valu
 are indicative, not executable sale proceeds. A valuation failure is shown explicitly.
 The whole-account balance does not increase the bot's allocation. Historical charts
 still cover Hummingbot only and are labelled accordingly; no App PnL is invented.
+
+The Trade page offers a Crypto.com App workspace alongside the existing Hummingbot
+workspace. A connected App account with no Exchange credentials opens there by
+default. Explicit executor links retain the Hummingbot workspace, and its key gate
+stays inside that workspace so the account selector remains accessible. Both App
+entry points use the same quote, confirmation and allocation checks.
+
+The packaged runtime disables automatic `uv` synchronization for MCP children as
+well as the parent process. Otherwise the default development group is resolved
+inside an offline production image and both stdio connections close before they
+can expose any tools. The container smoke check initializes and lists tools on
+both actual MCP subprocesses with networking disabled, without calling an account
+or executing an order.

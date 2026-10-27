@@ -16,7 +16,7 @@ import {
 import { Agents } from "@/pages/Agents";
 import { BotDetail } from "@/pages/BotDetail";
 import { Bots } from "@/pages/Bots";
-import { CreateExecutor } from "@/pages/CreateExecutor";
+import { Trade } from "@/pages/Trade";
 import { Dex } from "@/pages/Dex";
 import { DexPool } from "@/pages/DexPool";
 import { Login } from "@/pages/Login";
@@ -105,7 +105,7 @@ export default function App() {
                 <Route path="/portfolio" element={<Portfolio />} />
                 <Route path="/bots" element={<Bots />} />
                 <Route path="/bots/:id" element={<BotDetail />} />
-                <Route path="/trade" element={<CreateExecutor />} />
+                <Route path="/trade" element={<Trade />} />
             <Route path="/dex" element={<Dex />} />
             <Route path="/dex/:network/:address" element={<DexPool />} />
                 {/* Executors are a scope of the browser now, not a page
