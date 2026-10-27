@@ -46,7 +46,7 @@ COPY routines/ /opt/condor/routines/
 COPY --from=frontend /build/frontend/dist /opt/condor/frontend/dist
 COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/condor-entrypoint
 COPY docker/smoke.py /opt/condor-container-smoke.py
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 UV_OFFLINE=true \
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 UV_OFFLINE=true UV_NO_SYNC=true \
     HOME=/var/lib/condor PATH=/opt/claude/node_modules/.bin:$PATH \
     UV_PROJECT_ENVIRONMENT=/opt/condor/.venv \
     CONDOR_DATA_DIR=/var/lib/condor/data CONDOR_RUNTIME_ROOT=/var/lib/condor/.condor \

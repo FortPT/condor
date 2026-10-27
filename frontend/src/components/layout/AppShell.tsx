@@ -72,7 +72,8 @@ function AppShellBody() {
   // teach nobody anything. Matched exactly rather than by prefix, because `/`
   // prefixes every route in the app.
   // Portfolio is a read-only view and also includes native App accounts.
-  const exemptRoutes = ["/routines", "/settings", "/crypto-com", "/portfolio"];
+  // Trade owns its Exchange gate so the account selector stays accessible.
+  const exemptRoutes = ["/trade", "/routines", "/settings", "/crypto-com", "/portfolio"];
   const showKeysOverlay =
     server && !keysLoading && !hasKeys && pathname !== "/" &&
     !exemptRoutes.some((r) => pathname.startsWith(r));

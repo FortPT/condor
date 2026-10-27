@@ -1,18 +1,10 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 
+import { useCryptoComStatus } from "@/hooks/useCredentials";
 import { apiFetch } from "@/lib/api";
 
-type Status = {
-  connected: boolean;
-  enabled: boolean;
-  ledger: {
-    cash_eur: string;
-    positions: Record<string, { units: string; cost_eur: string }>;
-    uncertain_order: unknown;
-  };
-};
 type Quote = {
   id: string;
   countdown: number;
@@ -34,7 +26,7 @@ export function CryptoComApp({ settings = false }: { settings?: boolean }) {
   const [quote, setQuote] = useState<Quote | null>(null);
   const [expiresAt, setExpiresAt] = useState(0);
   const [result, setResult] = useState<unknown>(null);
-  const status = useQuery({ queryKey: ["crypto-com-status"], queryFn: () => apiFetch<Status>(base + "/status"), refetchInterval: 10000, retry: false });
+  const status = useCryptoComStatus();
   const refresh = () => qc.invalidateQueries({ queryKey: ["crypto-com-status"] });
   const save = useMutation({
     mutationFn: () => apiFetch(base + "/credentials", { method: "PUT", body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret }) }),
@@ -74,7 +66,7 @@ export function CryptoComApp({ settings = false }: { settings?: boolean }) {
     {error && <p role="alert" className="text-sm text-[var(--color-red)]">{error.message}</p>}
     <section className="space-y-3 rounded-lg border border-[var(--color-border)] p-4">
       <h2 className="font-semibold">Bot allocation</h2>
-      <p className="text-sm">Starts with €30. Keeps half of current bot equity in cash, up to three positions and one sixth of equity per position (€5 initially). New exposure stops at €2 total bot equity. Profits can increase position sizes.</p>
+      <p className="text-sm">Keeps half of current bot equity in cash, up to three positions and one sixth of current equity per position. New exposure stops at €2 total bot equity. Profits can increase position sizes.</p>
       <p className="text-sm">Account: {data?.connected ? "Agent Key saved" : "not connected"} · Trading: {data?.enabled ? "enabled" : "paused"}</p>
       {data?.ledger && <p className="text-sm">Allocated cash: €{data.ledger.cash_eur} · Open positions: {Object.keys(data.ledger.positions).length}</p>}
       {!!data?.ledger.uncertain_order && <p role="alert" className="text-sm text-[var(--color-red)]">An order needs reconciliation. Trading stays paused. Check Crypto.com history before any new submission.</p>}
@@ -93,7 +85,7 @@ export function CryptoComApp({ settings = false }: { settings?: boolean }) {
       <label className="block text-sm">Agent Key<input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} className={input} required /></label>
       <label className="block text-sm">Agent Secret<input type="password" autoComplete="off" value={apiSecret} onChange={(event) => setApiSecret(event.target.value)} className={input} required /></label>
       <button className={button} disabled={save.isPending}>Save Agent Key</button>
-      <Link className="ml-3 text-sm underline" to="/crypto-com">Open trading</Link>
+      <Link className="ml-3 text-sm underline" to="/trade?workspace=app">Open trading</Link>
     </form> : <>
       {!data?.connected && <Link className="text-sm underline" to="/settings?tab=crypto-com">Connect Crypto.com App</Link>}
       <form className="space-y-3 rounded-lg border border-[var(--color-border)] p-4" onChange={() => setQuote(null)} onSubmit={(event) => { event.preventDefault(); setQuote(null); requestQuote.mutate(); }}>
