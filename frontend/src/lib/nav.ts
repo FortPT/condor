@@ -39,6 +39,7 @@ export const NAV_ITEMS = [
   { to: "/", icon: Brain, label: "Agents" },
   { to: "/portfolio", icon: Wallet, label: "Portfolio" },
   { to: "/trade", icon: Swords, label: "Trade" },
+  { to: "/crypto-com", icon: Wallet, label: "Crypto.com" },
   { to: "/dex", icon: Droplets, label: "DEX" },
   { to: "/bots", icon: Bot, label: "Bots" },
   { to: "/routines", icon: Zap, label: "Routines" },

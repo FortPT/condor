@@ -42,6 +42,7 @@ def canonical_tool_name(name: str) -> str:
 #: the docstring: the panel has one line of room and the docstring's first line
 #: is written for the model.
 TOOL_DESCRIPTIONS: dict[str, str] = {
+    "crypto_com_app": "Trade Crypto.com App within the owner's bot allocation",
     "delegate": "Hand a long task to a background agent instance",
     "send_notification": "Send the user a Telegram message",
     "manage_routines": "List, run, schedule and edit routines",
@@ -65,6 +66,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
 #: oneself are designed behaviour, and a worker already has
 #: ``delegate(action="start")`` refused in code rather than by omission.
 COMMON_TOOLS: tuple[str, ...] = (
+    "crypto_com_app",
     "delegate",
     "send_notification",
     "manage_routines",

@@ -23,6 +23,7 @@ from mcp_servers.condor.settings import settings
 from mcp_servers.condor.tools import servers as servers_tool
 
 EXPECTED_TOOLS = {
+    "crypto_com_app",
     "control_agent",
     "delegate",
     "get_available_models",

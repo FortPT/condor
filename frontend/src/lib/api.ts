@@ -9,7 +9,7 @@ import { collectCursorPages, type WalkOutcome } from "@/lib/history-pagination";
 
 import { authFetch, authHeaders } from "./auth-token";
 
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...authHeaders(),
