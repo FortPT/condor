@@ -991,7 +991,7 @@ export function Portfolio() {
       />
 
       {data?.notes?.map((note) => <p key={note} role="alert" className="text-sm text-[var(--color-red)]">{note}</p>)}
-      {hasApp && <p className="text-sm text-[var(--color-text-muted)]">Crypto.com App is included in the current total and assets below. The historical chart covers Hummingbot accounts only; App performance is not yet recorded. <a className="underline" href="/crypto-com">Open Crypto.com trading</a></p>}
+      {hasApp && <p className="text-sm text-[var(--color-text-muted)]">Crypto.com App is included in the current total and assets below. The historical chart covers Hummingbot accounts only; App performance is not yet recorded. <a className="underline" href="/trade?workspace=app">Open Crypto.com trading</a></p>}
 
       {/* Portfolio Evolution + Top Holdings side by side */}
       <div className="flex flex-col lg:flex-row gap-4">

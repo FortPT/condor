@@ -13,15 +13,14 @@ vi.mock("@/lib/api", () => ({ apiFetch: request }));
 let root: Root;
 let host: HTMLDivElement;
 let qc: QueryClient;
-const quotation = { id: "q1", countdown: 15,
-  from_amount: { amount: "5", currency: "EUR" },
-  to_amount: { amount: "0.001", currency: "BTC" } };
 
 beforeEach(async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   request.mockReset();
-  request.mockImplementation((path: string) => Promise.resolve(path.endsWith("/quote") ? quotation : {
+  request.mockImplementation(() => Promise.resolve({
     connected: true, enabled: true, ledger: { cash_eur: "30", positions: {}, uncertain_order: null },
+    limits: { floor_eur: "2", reserve_fraction: "0.5", position_fraction: "1/6", max_positions: 3,
+      guards_apply_from_eur: "1000", max_asset_fraction_below_threshold: "0.4" },
   }));
   host = document.createElement("div");
   document.body.append(host);
@@ -37,29 +36,19 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-async function quote() {
-  const field = host.querySelector('input[inputmode="decimal"]') as HTMLInputElement;
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "5");
-    field.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-  await act(async () => host.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
-}
-
 it("does not enable execution or submit orders on page load", () => {
   expect(request.mock.calls.map(([path]) => path)).toEqual(["/api/v1/crypto-com/status"]);
 });
 
-it("requests an exact decimal source amount and expires before order submission", async () => {
-  const start = Date.now();
-  await quote();
-  const call = request.mock.calls.find(([path]) => path.endsWith("/quote"));
-  expect(JSON.parse(call![1].body)).toEqual({ kind: "purchase", source: "EUR", target: "BTC", amount: "5" });
-  vi.spyOn(Date, "now").mockReturnValue(start + 60000);
-  const confirm = Array.from(host.querySelectorAll("button")).find((button) => button.textContent === "Confirm & submit order")!;
-  await act(async () => confirm.click());
-  expect(request.mock.calls.some(([path]) => path.endsWith("/execute"))).toBe(false);
+it("describes the limits the server reports instead of fixed text", () => {
+  expect(host.textContent).toContain("no single coin may exceed 40% of bot equity");
+  expect(host.textContent).toContain("From €1000: 50% of bot equity stays in cash, at most 3 positions");
+  expect(host.textContent).not.toContain("up to three positions and one sixth");
+});
+
+it("has no order form: trading lives in the Trade workspace", () => {
+  expect(host.querySelector("form")).toBeNull();
+  expect(host.textContent).not.toContain("Quote an order");
 });
 
 it("shows cash and crypto in their source currencies without rounding quantities", async () => {
