@@ -17,7 +17,7 @@ vi.mock("@/components/ConnectKeysOverlay", () => ({ ConnectKeysOverlay: () => <d
 
 const appStatus = { connected: true, enabled: false, ledger: { cash_eur: "26", positions: {}, uncertain_order: null } };
 const onlyReads = (calls: unknown[][]) => calls.every(([path, init]) =>
-  (path === "/api/v1/crypto-com/status" || String(path).startsWith("/api/v1/crypto-com/coins?")) && !init);
+  (path === "/api/v1/crypto-com/status" || path === "/api/v1/crypto-com/scorecard" || String(path).startsWith("/api/v1/crypto-com/coins?")) && !init);
 vi.mock("@/lib/api", async () => ({
   apiFetch: request.fetch,
   api: { getCredentials: request.credentials, getGatewayWallets: request.wallets, getCandles: vi.fn().mockRejectedValue(new Error("no candles")) },
@@ -28,7 +28,7 @@ let qc: QueryClient;
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   request.fetch.mockReset().mockImplementation((path: string) => Promise.resolve(
-    path.includes("/coins") ? { coins: [] } : appStatus));
+    path.includes("/coins") ? { coins: [] } : path.endsWith("/scorecard") ? {} : appStatus));
   request.credentials.mockReset().mockResolvedValue({ credentials: [] });
   request.wallets.mockReset().mockResolvedValue({ wallets: [] });
   host = document.createElement("div");

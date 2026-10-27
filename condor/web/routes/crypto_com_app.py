@@ -30,6 +30,15 @@ class Execute(BaseModel):
     quotation_id: str
 
 
+class Prediction(BaseModel):
+    symbol: str
+    verdict: str
+    target_pct: str
+    stop_pct: str
+    horizon_hours: str
+    note: str = ""
+
+
 def reject(error):
     raise HTTPException(status_code=400, detail=str(error)) from None
 
@@ -94,6 +103,30 @@ async def coins(
 ):
     try:
         return await service.coins(user.id, keyword)
+    except ValueError as error:
+        reject(error)
+
+
+@router.post("/predict")
+async def predict(body: Prediction, user: WebUser = Depends(get_current_user)):
+    try:
+        return await service.predict(
+            user.id,
+            body.symbol,
+            body.verdict,
+            body.target_pct,
+            body.stop_pct,
+            body.horizon_hours,
+            body.note,
+        )
+    except ValueError as error:
+        reject(error)
+
+
+@router.get("/scorecard")
+async def scorecard(user: WebUser = Depends(get_current_user)):
+    try:
+        return service.scorecard(user.id)
     except ValueError as error:
         reject(error)
 

@@ -588,7 +588,16 @@ def is_mutating_tool_call(tool_call: dict[str, Any]) -> bool:
         return _is_mutating_action(
             tool_call,
             {"execute"},
-            {"status", "valuation", "accounts", "history", "coins", "quote"},
+            {
+                "status",
+                "valuation",
+                "accounts",
+                "history",
+                "coins",
+                "quote",
+                "predict",
+                "scorecard",
+            },
         )
 
     if tool_name == "manage_clmm":

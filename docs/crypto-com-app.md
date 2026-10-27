@@ -30,6 +30,25 @@ against the listed price before you confirm, and the bot holdings. The former
 top-level *Crypto.com* menu now redirects here; Agent Key setup stays in
 Settings → Crypto.com App. The limits shown on both pages come from the server.
 
+## Trader scorecard (paper test)
+
+Before trusting the trader with a lower cost hurdle, its calls are scored against
+real prices. Two things are stored in `scorecard.db` beside the ledger:
+
+* **Prices**: the listed EUR price of every coin the coin list returns (top 15, held
+  coins and coins with an open call), at most once per 4 minutes per coin, kept 90 days.
+* **Calls**: logged by the trader with `crypto_com_app(action="predict", target="SOL",
+  verdict="trade"|"pass", target_pct, stop_pct, horizon_hours, note)`. One open call per
+  coin. `pass` records the best near-miss it declined. Logging never places an order.
+
+Outcomes are not stored; `crypto_com_app(action="scorecard")` (and the Trade page panel)
+recompute them from the prices: *target* if the price reaches it before the stop,
+*stopped* if the stop comes first, otherwise the last price inside the window; all net of
+`ROUND_TRIP_COST_PCT` (5%, measured on the live App). The report also shows the average of
+all listed coins over the same windows as a baseline, and what each cost multiple
+(1x, 1.5x, 2x, 3x) would have returned. About 30 resolved calls are needed before the
+numbers mean anything.
+
 The shared crypto_com_app MCP tool is mounted through existing tool profiles.
 Execution is classified as dangerous/mutating, so attended confirmations and
 dry-run rejection still work. Credentials and enable/disable are not MCP actions.

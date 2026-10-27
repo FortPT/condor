@@ -110,6 +110,8 @@ def test_crypto_com_app_schema_exposes_no_credential_or_enable_arguments():
         "quote",
         "execute",
         "reconcile",
+        "predict",
+        "scorecard",
     }
     assert not {"api_key", "api_secret", "enabled", "user_id"} & properties.keys()
 

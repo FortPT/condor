@@ -23,6 +23,10 @@ class AppTests(unittest.TestCase):
         self.assertTrue(is_dangerous_tool_call(execute))
         self.assertTrue(is_mutating_tool_call(execute))
         self.assertFalse(is_dangerous_tool_call(quote))
+        for action in ("predict", "scorecard"):
+            logged = {"tool": "crypto_com_app", "input": {"action": action}}
+            self.assertFalse(is_dangerous_tool_call(logged))
+            self.assertFalse(is_mutating_tool_call(logged))
 
     def test_signature_uses_exact_body_and_path_without_query(self):
         body = '{"from_currency":"EUR","to_currency":"BTC","from_amount":"5"}'
@@ -187,6 +191,63 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         }
         with self.assertRaises(ValueError):
             await self.service.portfolio(1)
+
+    async def test_coin_reads_feed_the_scorecard_without_ever_breaking_a_read(self):
+        from condor import crypto_com_scorecard as sc
+
+        ledger = cdc._read_ledger(1)
+        ledger["positions"] = {"CRO": {"units": "216", "cost_eur": "9.98"}}
+        cdc._write(cdc._root(1) / "ledger.json", ledger)
+
+        def row(symbol, price):
+            return {
+                "symbol": symbol,
+                "rank": 1,
+                "price_native": {"currency": "EUR", "amount": price},
+            }
+
+        async def request(user_id, method, path, body=None):
+            if "keyword=CRO" in path:
+                return {"ok": True, "coins": [row("CRO", "0.05"), row("CROX", "9")]}
+            return {"ok": True, "coins": [row("BTC", "73000")]}
+
+        self.service.request = request
+        await self.service.coins(1, "")
+        self.assertEqual(sc.latest_price(1, "BTC")[1], 73000.0)
+        # a held coin outside the top list is still priced, and only the exact symbol
+        self.assertEqual(sc.latest_price(1, "CRO")[1], 0.05)
+        self.assertIsNone(sc.latest_price(1, "CROX"))
+        with patch.object(sc, "record_snapshot", side_effect=RuntimeError("db down")):
+            result = await self.service.coins(1, "")
+        self.assertEqual(result["coins"][0]["symbol"], "BTC")
+
+    async def test_predict_looks_the_coin_up_then_logs_without_trading(self):
+        calls = []
+
+        async def request(user_id, method, path, body=None):
+            calls.append((method, path))
+            return {
+                "ok": True,
+                "coins": [
+                    {
+                        "symbol": "SOL",
+                        "price_native": {"currency": "EUR", "amount": "92"},
+                    }
+                ],
+            }
+
+        self.service.request = request
+        result = await self.service.predict(
+            1, "sol", "trade", "10", "5", "24", "breakout"
+        )
+        self.assertTrue(result["recorded"])
+        self.assertEqual(result["entry_eur"], 92.0)
+        self.assertTrue(all(method == "GET" for method, _ in calls))
+        again = await self.service.predict(1, "SOL", "trade", "10", "5", "24")
+        self.assertFalse(again["recorded"])
+        with self.assertRaises(ValueError):
+            await self.service.predict(1, "SOL", "buy", "10", "5", "24")
+        self.assertEqual(self.service.scorecard(1)["trade_calls"]["open"], 1)
 
     async def test_empty_keyword_lists_top_coins_without_descriptions(self):
         row = {

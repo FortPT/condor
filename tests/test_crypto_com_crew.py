@@ -161,6 +161,8 @@ def test_native_tool_exposes_no_enable_credentials_or_money_limit_mutation():
         "quote",
         "execute",
         "reconcile",
+        "predict",
+        "scorecard",
     }
     assert {arg.arg for arg in tool.args.args} == {
         "action",
@@ -170,4 +172,9 @@ def test_native_tool_exposes_no_enable_credentials_or_money_limit_mutation():
         "amount",
         "quotation_id",
         "keyword",
+        "verdict",
+        "target_pct",
+        "stop_pct",
+        "horizon_hours",
+        "note",
     }

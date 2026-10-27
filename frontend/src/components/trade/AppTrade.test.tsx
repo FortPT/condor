@@ -23,6 +23,8 @@ const limits = {
   floor_eur: "2", reserve_fraction: "0.5", position_fraction: "1/6", max_positions: 3,
   guards_apply_from_eur: "1000", max_asset_fraction_below_threshold: "0.4",
 };
+const summary = { total: 0, resolved: 0, open: 0, hit_target: 0, stopped: 0, expired: 0, avg_gross_pct: null, avg_net_pct: null, beat_costs: 0 };
+let scorecard: Record<string, unknown>;
 let status: Record<string, unknown>;
 const coin = (rank: number, symbol: string, amount: string, tradable = true) => ({
   rank, symbol, name: symbol, is_tradable: tradable, price_native: { amount, currency: "EUR" },
@@ -43,6 +45,17 @@ beforeEach(async () => {
     connected: true, enabled: true, limits,
     ledger: { cash_eur: "26", positions: { CRO: { units: "216", cost_eur: "9.98" } }, uncertain_order: null },
   };
+  scorecard = {
+    assumptions: { round_trip_cost_pct: 5, basis: "measured" }, prices: { snapshots: 120, coins: 17, days: 2.5 },
+    trade_calls: { ...summary, total: 3, resolved: 2, open: 1, hit_target: 1, stopped: 1, avg_net_pct: 1.5, beat_costs: 1 },
+    pass_calls: { ...summary, total: 4, resolved: 4, avg_net_pct: -2, expired: 4 },
+    by_cost_multiple: [
+      { multiple: 1, min_target_pct: 5, resolved: 3, avg_net_pct: 1.2, win_rate: 0.5 },
+      { multiple: 2, min_target_pct: 10, resolved: 1, avg_net_pct: null, win_rate: null },
+    ],
+    baseline_gross_pct: -0.4, edge_vs_baseline_pct: 3.1, enough_data: false,
+    recent: [{ ts: 1, symbol: "SOL", verdict: "trade", target_pct: 10, stop_pct: 5, horizon_h: 24, outcome: "target", net_pct: 5 }],
+  };
   mocks.setData.mockReset();
   mocks.candles.mockReset().mockResolvedValue([
     { timestamp: 200, open: 2, high: 3, low: 1, close: 2.5, volume: 1 },
@@ -51,6 +64,7 @@ beforeEach(async () => {
   ]);
   mocks.fetch.mockReset().mockImplementation((path: string) => {
     if (path.endsWith("/status")) return Promise.resolve(status);
+    if (path.endsWith("/scorecard")) return Promise.resolve(scorecard);
     if (path.endsWith("/coins?keyword=")) return Promise.resolve({ coins: top });
     if (path.endsWith("/coins?keyword=CRO")) return Promise.resolve({ coins: [coin(40, "CRO", "0.05")] });
     if (path.endsWith("/quote")) return Promise.resolve(quote);
@@ -202,4 +216,39 @@ it("refuses to quote a coin the App cannot trade", async () => {
   await type(host.querySelector('input[inputmode="decimal"]') as HTMLInputElement, "5");
   expect(button("Get quotation").disabled).toBe(true);
   expect(host.textContent).toContain("TRX is not tradable in the App");
+});
+
+it("shows the paper scorecard: calls, outcomes after costs, baseline and which cost multiple worked", () => {
+  const panel = host.querySelector('section[aria-label="Scorecard"]')!.textContent!;
+  expect(panel).toContain("5% round-trip cost");
+  expect(panel).toContain("Tracking 17 coins · 120 price snapshots over 2.5 days");
+  expect(panel).toContain("6 of 30 resolved calls needed");
+  expect(panel).toContain("Trade calls");
+  expect(panel).toMatch(/Pass calls/);
+  expect(panel).toContain("+1.50%");
+  expect(panel).toContain("−2.00%".replace("−", "-"));
+  expect(panel).toContain("Baseline (average of all listed coins over the same windows): -0.40%");
+  expect(panel).toContain("Edge vs baseline: +3.10%");
+  expect(panel).toContain("2× cost (10.0%)");
+  expect(panel).toContain("SOL · trade · target +10% / stop −5% in 24h · target (+5.00% net)");
+});
+
+it("a scorecard that is down never breaks trading, and a refresh failure keeps the last good numbers", async () => {
+  mocks.fetch.mockImplementation((path: string) => path.endsWith("/scorecard")
+    ? Promise.reject(new Error("boom"))
+    : path.endsWith("/status") ? Promise.resolve(status) : Promise.resolve({ coins: top }));
+  await act(async () => { await qc.invalidateQueries({ queryKey: ["crypto-com-scorecard"] }); });
+  await wait();
+  expect(host.querySelector('section[aria-label="Scorecard"]')!.textContent).toContain("Tracking 17 coins");
+  await act(async () => root.unmount());
+  qc.clear();
+  root = createRoot(host);
+  qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  await act(async () => root.render(<QueryClientProvider client={qc}>
+    <ServerContext value={{ server: "test", setServer: () => {} }}><AppTrade /></ServerContext>
+  </QueryClientProvider>));
+  await wait();
+  expect(host.querySelector('section[aria-label="Scorecard"]')!.textContent).toContain("Scorecard unavailable");
+  await pickCoin("SOL");
+  expect(host.textContent).toContain("Buy SOL with EUR");
 });
