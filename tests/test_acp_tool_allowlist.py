@@ -135,3 +135,34 @@ def test_pydantic_ai_filter_and_callback_are_unchanged():
     )
     assert client.permission_callback is callback
     assert client.allowed_tools == {"get_prices"}
+
+
+def test_restricted_claude_session_removes_native_tools_before_provider_autoapproval():
+    client = build_llm_client(
+        "claude-acp:sonnet", allowed_tools=["trading_agent_journal_read"]
+    )
+    options = client._session_new_params()["_meta"]["claudeCode"]["options"]
+    assert options["tools"] == ["ToolSearch"]
+    assert options["allowDangerouslySkipPermissions"] is False
+    assert options["settingSources"] == []
+    assert options["settings"]["permissions"]["ask"] == ["mcp__*"]
+    assert (
+        "allowedTools" not in options
+    )  # SDK pre-approval would bypass our risk callback.
+
+
+def test_restricted_session_preserves_its_system_prompt_metadata():
+    client = build_llm_client(
+        "claude-acp:sonnet",
+        allowed_tools=["get_prices"],
+        system_prompt="Analyst identity",
+    )
+    meta = client._session_new_params()["_meta"]
+    assert meta["systemPrompt"] == {"append": "Analyst identity"}
+    assert meta["claudeCode"]["options"]["tools"] == ["ToolSearch"]
+
+
+@pytest.mark.parametrize("allowed", [None, []])
+def test_unrestricted_session_keeps_original_provider_options(allowed):
+    client = build_llm_client("claude-acp:sonnet", allowed_tools=allowed)
+    assert "_meta" not in client._session_new_params()

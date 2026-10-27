@@ -143,6 +143,7 @@ def build_llm_client(
         extra_env=merged_env or None,
         model=model_pref or None,
         system_prompt=system_prompt,
+        allowed_tools=allowed_tools,
     )
 
 
