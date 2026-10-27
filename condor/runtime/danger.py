@@ -431,6 +431,8 @@ def _executor_amount(tool_name: str, input_data: dict[str, Any]) -> str:
 def is_dangerous_tool_call(tool_call: dict[str, Any]) -> bool:
     """Check if a tool call requires user confirmation."""
     tool_name = tool_call_name(tool_call)
+    if tool_name == "crypto_com_app":
+        return _has_dangerous_action(tool_call, {"execute"})
 
     # Direct dangerous tools
     if tool_name in DANGEROUS_TOOLS:
@@ -582,6 +584,12 @@ def is_mutating_tool_call(tool_call: dict[str, Any]) -> bool:
     which is one exposure and not two.
     """
     tool_name = tool_call_name(tool_call)
+    if tool_name == "crypto_com_app":
+        return _is_mutating_action(
+            tool_call,
+            {"execute"},
+            {"status", "valuation", "accounts", "history", "coins", "quote"},
+        )
 
     if tool_name == "manage_clmm":
         return _is_mutating_action(

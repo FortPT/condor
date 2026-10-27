@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { EXECUTION_PATH } from "@/components/chat/accountPanels";
 import { AppShell } from "@/components/layout/AppShell";
+import { CryptoComApp } from "@/components/settings/CryptoComApp";
 import { ServerContext } from "@/hooks/useServer";
 import { AuthContext, SERVER_KEY, useAuth, useAuthState } from "@/lib/auth";
 import { invalidateServerScopedQueries, queryClient } from "@/lib/queryClient";
@@ -81,6 +82,7 @@ export default function App() {
                 }
               >
                 <Route path="/" element={<Agents />} />
+                <Route path="/crypto-com" element={<CryptoComApp />} />
                 {/* What every agent is doing is the conversation's Execution
                     panel now, read owner first (FEAT-114) — so this address is
                     a redirect into it rather than a page. Kept rather than

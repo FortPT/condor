@@ -1419,7 +1419,6 @@ _resolve = make_resolver(globals())
 
 #: profile name → the tools it registers, resolved from ``profiles.PROFILE_TOOLS``
 #: (which carries the prose on what each ring is for).
-TOOL_PROFILES: dict[str, tuple] = resolve_profiles(globals(), PROFILE_TOOLS)
 
 
 def register_tools(
@@ -1439,6 +1438,68 @@ def register_tools(
 # Registration happens at import: ``mcp`` is a module-level singleton and the
 # profile and the mute list are resolved from argv at import (settings), so the
 # server object is complete for anything that inspects it before startup.
+@handle_errors("Crypto.com App")
+async def crypto_com_app(
+    action: Literal[
+        "status",
+        "valuation",
+        "accounts",
+        "history",
+        "coins",
+        "quote",
+        "execute",
+        "reconcile",
+    ],
+    kind: Literal["purchase", "sale", "exchange"] = "purchase",
+    source: str = "EUR",
+    target: str = "",
+    amount: str = "",
+    quotation_id: str = "",
+    keyword: str = "",
+) -> dict:
+    """Trade on the user's Crypto.com MAIN APP, separately from Hummingbot Exchange.
+
+    status: bot allocation, enable state, positions and enforced limits. valuation:
+    current liquidation quotation value in EUR (pauses on EUR 2 floor). accounts:
+    available account cash/crypto. coins: search a symbol/name (EUR prices).
+    quote: purchase EUR→crypto, sale crypto→EUR, or exchange crypto→crypto;
+    amount is the SOURCE quantity as a decimal string. execute: submit the
+    quotation_id returned by quote within its countdown. Never retry an order
+    after an uncertain outcome; inspect history instead. A restarted process,
+    disconnected account or paused trading invalidates pending quotes.
+
+    The owner must connect and enable the account in Settings. These tools cannot
+    change credentials or enable trading. Execution enforces the bot allocation,
+    50% cash reserve, at most three positions, 1/6 equity per position and EUR 2
+    equity floor. No withdrawal, leverage or access to unallocated holdings.
+    A configured autonomous loop may execute without per-order prompts; an
+    attended manual request should show the quotation before executing it.
+    """
+    from mcp_servers.condor.condor_client import call_main_api
+
+    if action == "quote":
+        return await call_main_api(
+            "POST",
+            "/crypto-com/quote",
+            {"kind": kind, "source": source, "target": target, "amount": amount},
+        )
+    if action == "execute":
+        return await call_main_api(
+            "POST", "/crypto-com/execute", {"quotation_id": quotation_id}
+        )
+    if action == "reconcile":
+        return await call_main_api("POST", "/crypto-com/reconcile")
+    if action == "coins":
+        from urllib.parse import urlencode
+
+        return await call_main_api(
+            "GET", "/crypto-com/coins?" + urlencode({"keyword": keyword})
+        )
+    result = await call_main_api("GET", "/crypto-com/" + action)
+    return {"data": result}
+
+
+TOOL_PROFILES: dict[str, tuple] = resolve_profiles(globals(), PROFILE_TOOLS)
 register_tools(mcp, settings.tool_profile, settings.muted_tools)
 
 
