@@ -391,6 +391,7 @@ export interface PortfolioResponse {
   server: string;
   connectors: ConnectorBalance[];
   total_usd: number;
+  notes?: string[];
 }
 
 export interface PortfolioHistoryPoint {

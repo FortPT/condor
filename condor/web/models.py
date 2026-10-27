@@ -76,6 +76,7 @@ class PortfolioResponse(BaseModel):
     server: str
     connectors: list[ConnectorBalance]
     total_usd: float = 0.0
+    notes: list[str] = []
 
 
 class PortfolioHistoryPoint(BaseModel):

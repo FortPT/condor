@@ -278,9 +278,64 @@ class AppService:
             ),
             "crypto": funded(
                 crypto.get("account", {}).get("wallets", []),
-                {"currency", "balance", "available"},
+                {"currency", "balance", "available", "native_balance"},
                 "balance",
             ),
+        }
+
+    async def portfolio(self, user_id):
+        accounts = await self.accounts(user_id)
+        rows = []
+        for wallet in accounts["cash"] + accounts["crypto"]:
+            balance = wallet.get("amount", wallet.get("balance"))
+            native = wallet.get("native_balance", wallet.get("amount"))
+            if not isinstance(native, dict) or not native.get("currency"):
+                raise ValueError("Crypto.com wallet valuation is unavailable")
+            rows.append((wallet, balance, native))
+        rates = {"USD": Decimal(1)}
+        for denomination in sorted(
+            {native["currency"] for _, _, native in rows} - {"USD"}
+        ):
+            # Both prices come from one provider snapshot; never assume EUR = USD.
+            coins = await self.coins(user_id, "BTC", denomination)
+            bitcoin = next(
+                (
+                    coin
+                    for coin in coins.get("coins", [])
+                    if coin.get("rails_id") == "BTC"
+                ),
+                {},
+            )
+            native_price = bitcoin.get("price_native", {})
+            usd_price = bitcoin.get("price_usd", {})
+            if (
+                native_price.get("currency") != denomination
+                or usd_price.get("currency") != "USD"
+            ):
+                raise ValueError("Crypto.com portfolio conversion is unavailable")
+            native_units = self._money_units(native_price)
+            usd_units = self._money_units(usd_price)
+            if native_units <= 0 or usd_units <= 0:
+                raise ValueError("Crypto.com portfolio conversion is unavailable")
+            rates[denomination] = usd_units / native_units
+        balances = []
+        for wallet, balance, native in rows:
+            rate = rates[native["currency"]]
+            balances.append(
+                {
+                    "token": wallet["currency"],
+                    "total": float(self._money_units(balance)),
+                    "available": float(
+                        self._money_units(wallet.get("available", balance))
+                    ),
+                    "usd_value": float(self._money_units(native) * rate),
+                }
+            )
+        return {
+            "connector": "Crypto.com App",
+            "balances": balances,
+            "total_usd": sum(row["usd_value"] for row in balances),
+            "note": "Whole App account at indicative Crypto.com prices. Trade proceeds may differ due to spread and fees. Only the separate bot allocation may be traded.",
         }
 
     @staticmethod
@@ -367,7 +422,7 @@ class AppService:
             "to_amount": {"currency": target, "amount": format(credit, "f")},
         }
 
-    async def coins(self, user_id, keyword):
+    async def coins(self, user_id, keyword, native_currency="EUR"):
         if not isinstance(keyword, str) or not 1 <= len(keyword) <= 100:
             raise ValueError("Enter a coin symbol or name")
         query = urlencode(
@@ -375,7 +430,7 @@ class AppService:
                 "keyword": keyword,
                 "sort_by": "rank",
                 "sort_direction": "asc",
-                "native_currency": "EUR",
+                "native_currency": currency(native_currency),
                 "page_size": 10,
             }
         )

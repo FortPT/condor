@@ -9,7 +9,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from condor import crypto_com_app as cdc
 
@@ -93,6 +93,62 @@ class AppTests(unittest.TestCase):
 
 
 class FlowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_portfolio_uses_live_account_values_not_bot_allocation(self):
+        self.service.accounts = AsyncMock(
+            return_value={
+                "cash": [
+                    {"currency": "EUR", "amount": {"amount": "30", "currency": "EUR"}}
+                ],
+                "crypto": [
+                    {
+                        "currency": "CRO",
+                        "balance": {"amount": "200"},
+                        "available": {"amount": "190"},
+                        "native_balance": {"amount": "20", "currency": "EUR"},
+                    }
+                ],
+            }
+        )
+        self.service.coins = AsyncMock(
+            return_value={
+                "coins": [
+                    {
+                        "rails_id": "BTC",
+                        "price_native": {"amount": "100", "currency": "EUR"},
+                        "price_usd": {"amount": "110", "currency": "USD"},
+                    }
+                ]
+            }
+        )
+        result = await self.service.portfolio(1)
+        self.service.accounts.assert_awaited_once_with(1)
+        self.service.coins.assert_awaited_once_with(1, "BTC", "EUR")
+        self.assertEqual(result["connector"], "Crypto.com App")
+        self.assertAlmostEqual(result["total_usd"], 55)
+        self.assertEqual(result["balances"][1]["total"], 200)
+        self.assertEqual(result["balances"][1]["available"], 190)
+        self.assertAlmostEqual(result["balances"][1]["usd_value"], 22)
+        self.assertFalse(self.service.status(1)["enabled"])
+
+    async def test_portfolio_refuses_missing_fx_or_wallet_valuation(self):
+        self.service.accounts = AsyncMock(
+            return_value={
+                "cash": [
+                    {"currency": "EUR", "amount": {"amount": "30", "currency": "EUR"}}
+                ],
+                "crypto": [],
+            }
+        )
+        self.service.coins = AsyncMock(return_value={"coins": []})
+        with self.assertRaises(ValueError):
+            await self.service.portfolio(1)
+        self.service.accounts.return_value = {
+            "cash": [],
+            "crypto": [{"currency": "CRO", "balance": {"amount": "200"}}],
+        }
+        with self.assertRaises(ValueError):
+            await self.service.portfolio(1)
+
     async def asyncSetUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.env = patch.dict(os.environ, {"CONDOR_DATA_DIR": self.tmp.name})
