@@ -248,6 +248,8 @@ class AppService:
                             and re.fullmatch(r"[a-z_]{1,64}", code)
                             else "request_rejected"
                         )
+                        if key in safe or secret in safe:
+                            safe = "request_rejected"
                         raise ValueError(
                             f"Crypto.com rejected the request (HTTP {response.status}, {safe})"
                         )

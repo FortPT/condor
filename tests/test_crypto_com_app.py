@@ -298,5 +298,59 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
             await self.service.execute(1, quotation["id"])
 
 
+class HttpContractTests(unittest.IsolatedAsyncioTestCase):
+    async def test_chunked_reply_and_redirects_do_not_leak_credentials(self):
+        captured = []
+
+        class Response:
+            status = 200
+            pieces = [b'{"ok":', b"true}"]
+
+            @property
+            def content(self):
+                return self
+
+            async def iter_chunked(self, size):
+                for piece in self.pieces:
+                    yield piece
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+        response = Response()
+
+        class Session:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            def request(self, method, url, **kwargs):
+                captured.append((method, url, kwargs))
+                return response
+
+        service = cdc.AppService()
+        with (
+            patch.object(
+                service, "credentials", return_value=("private_key", "private_secret")
+            ),
+            patch("aiohttp.ClientSession", return_value=Session()),
+        ):
+            self.assertEqual(
+                await service.request(1, "GET", "/v1/fiat-account"), {"ok": True}
+            )
+            response.status = 302
+            response.pieces = [b'{"ok":false,"error":"private_secret"}']
+            with self.assertRaises(ValueError) as error:
+                await service.request(1, "GET", "/v1/fiat-account")
+            self.assertNotIn("private_secret", str(error.exception))
+        self.assertFalse(captured[0][2]["allow_redirects"])
+        self.assertEqual(len(captured), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
