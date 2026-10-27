@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useServer } from "@/hooks/useServer";
 import { api, apiFetch } from "@/lib/api";
 import { credentialsQuery, gatewayWalletsQuery } from "@/lib/queryClient";
+import type { CryptoComLimits } from "@/components/settings/cryptoComLimits";
 
 export function useCredentials() {
   const { server } = useServer();
@@ -40,6 +41,7 @@ type CryptoComStatus = {
     positions: Record<string, { units: string; cost_eur: string }>;
     uncertain_order: unknown;
   };
+  limits?: CryptoComLimits;
 };
 
 export function useCryptoComStatus() {

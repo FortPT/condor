@@ -2,15 +2,10 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 
+import { limitsSummary } from "@/components/settings/cryptoComLimits";
 import { useCryptoComStatus } from "@/hooks/useCredentials";
 import { apiFetch } from "@/lib/api";
 
-type Quote = {
-  id: string;
-  countdown: number;
-  from_amount: { amount: string; currency: string };
-  to_amount: { amount: string; currency: string };
-};
 const base = "/api/v1/crypto-com";
 const input = "w-full rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm";
 const button = "rounded border border-[var(--color-border)] px-3 py-2 text-sm disabled:opacity-40";
@@ -19,43 +14,27 @@ export function CryptoComApp({ settings = false }: { settings?: boolean }) {
   const qc = useQueryClient();
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
-  const [kind, setKind] = useState("purchase");
-  const [source, setSource] = useState("EUR");
-  const [target, setTarget] = useState("BTC");
-  const [amount, setAmount] = useState("");
-  const [quote, setQuote] = useState<Quote | null>(null);
-  const [expiresAt, setExpiresAt] = useState(0);
   const [result, setResult] = useState<unknown>(null);
   const status = useCryptoComStatus();
   const refresh = () => qc.invalidateQueries({ queryKey: ["crypto-com-status"] });
   const save = useMutation({
     mutationFn: () => apiFetch(base + "/credentials", { method: "PUT", body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret }) }),
-    onSuccess: () => { setApiKey(""); setApiSecret(""); setQuote(null); refresh(); },
+    onSuccess: () => { setApiKey(""); setApiSecret(""); refresh(); },
   });
   const toggle = useMutation({
     mutationFn: (enabled: boolean) => apiFetch(base + "/enabled", { method: "PUT", body: JSON.stringify({ enabled }) }),
-    onSuccess: () => { setQuote(null); refresh(); },
+    onSuccess: () => refresh(),
   });
   const inspect = useMutation({
     mutationFn: (path: string) => apiFetch(base + path),
     onSuccess: setResult,
-  });
-  const requestQuote = useMutation({
-    mutationFn: () => apiFetch<Quote>(base + "/quote", { method: "POST", body: JSON.stringify({ kind, source, target, amount }) }),
-    onSuccess: (next) => { setQuote(next); setExpiresAt(Date.now() + next.countdown * 1000); },
   });
   const reconcile = useMutation({
     mutationFn: () => apiFetch(base + "/reconcile", { method: "POST" }),
     onSuccess: () => refresh(),
     retry: false,
   });
-  const execute = useMutation({
-    mutationFn: (quotationId: string) => apiFetch(base + "/execute", { method: "POST", body: JSON.stringify({ quotation_id: quotationId }) }),
-    onSuccess: (next) => { setResult(next); refresh(); },
-    onSettled: () => setQuote(null),
-    retry: false,
-  });
-  const error = status.error || save.error || toggle.error || inspect.error || requestQuote.error || execute.error || reconcile.error;
+  const error = status.error || save.error || toggle.error || inspect.error || reconcile.error;
   const data = status.data;
 
   return <div className="mx-auto max-w-3xl space-y-5">
@@ -66,7 +45,7 @@ export function CryptoComApp({ settings = false }: { settings?: boolean }) {
     {error && <p role="alert" className="text-sm text-[var(--color-red)]">{error.message}</p>}
     <section className="space-y-3 rounded-lg border border-[var(--color-border)] p-4">
       <h2 className="font-semibold">Bot allocation</h2>
-      <p className="text-sm">Keeps half of current bot equity in cash, up to three positions and one sixth of current equity per position. New exposure stops at €2 total bot equity. Profits can increase position sizes.</p>
+      <p className="text-sm">{limitsSummary(data?.limits)}</p>
       <p className="text-sm">Account: {data?.connected ? "Agent Key saved" : "not connected"} · Trading: {data?.enabled ? "enabled" : "paused"}</p>
       {data?.ledger && <p className="text-sm">Allocated cash: €{data.ledger.cash_eur} · Open positions: {Object.keys(data.ledger.positions).length}</p>}
       {!!data?.ledger.uncertain_order && <p role="alert" className="text-sm text-[var(--color-red)]">An order needs reconciliation. Trading stays paused. Check Crypto.com history before any new submission.</p>}
@@ -86,27 +65,7 @@ export function CryptoComApp({ settings = false }: { settings?: boolean }) {
       <label className="block text-sm">Agent Secret<input type="password" autoComplete="off" value={apiSecret} onChange={(event) => setApiSecret(event.target.value)} className={input} required /></label>
       <button className={button} disabled={save.isPending}>Save Agent Key</button>
       <Link className="ml-3 text-sm underline" to="/trade?workspace=app">Open trading</Link>
-    </form> : <>
-      {!data?.connected && <Link className="text-sm underline" to="/settings?tab=crypto-com">Connect Crypto.com App</Link>}
-      <form className="space-y-3 rounded-lg border border-[var(--color-border)] p-4" onChange={() => setQuote(null)} onSubmit={(event) => { event.preventDefault(); setQuote(null); requestQuote.mutate(); }}>
-        <h2 className="font-semibold">Quote an order</h2>
-        <label className="block text-sm">Operation<select className={input} value={kind} onChange={(event) => setKind(event.target.value)}><option value="purchase">Buy with cash</option><option value="sale">Sell to cash</option><option value="exchange">Exchange crypto</option></select></label>
-        <div className="grid grid-cols-2 gap-3">
-          <label className="text-sm">From<input className={input} value={source} onChange={(event) => setSource(event.target.value.toUpperCase())} required /></label>
-          <label className="text-sm">To<input className={input} value={target} onChange={(event) => setTarget(event.target.value.toUpperCase())} required /></label>
-        </div>
-        <label className="block text-sm">Amount to spend ({source})<input className={input} value={amount} inputMode="decimal" onChange={(event) => setAmount(event.target.value)} required /></label>
-        <button className={button} disabled={!data?.connected || requestQuote.isPending || execute.isPending}>Get quotation</button>
-      </form>
-      {quote && <section className="space-y-3 rounded-lg border border-[var(--color-border)] p-4">
-        <p>Spend {quote.from_amount.amount} {quote.from_amount.currency} → receive {quote.to_amount.amount} {quote.to_amount.currency}</p>
-        <p className="text-sm">Quotation expires after {quote.countdown} seconds. Expired quotes are rejected by the server.</p>
-        <button className={button} disabled={!data?.enabled || execute.isPending} onClick={() => {
-          if (Date.now() >= expiresAt) { setQuote(null); return; }
-          execute.mutate(quote.id);
-        }}>Confirm & submit order</button>
-      </section>}
-    </>}
+    </form> : !data?.connected && <Link className="text-sm underline" to="/settings?tab=crypto-com">Connect Crypto.com App</Link>}
     {result !== null && <AppResult value={result} />}
   </div>;
 }
@@ -119,7 +78,7 @@ function money(value?: Money) {
   return value?.amount === undefined ? "—" : `${value.amount} ${value.currency ?? ""}`.trim();
 }
 
-function AppResult({ value }: { value: unknown }) {
+export function AppResult({ value }: { value: unknown }) {
   const data = value as {
     equity_eur?: string; new_position_limit_eur?: string; minimum_cash_reserve_eur?: string;
     cash?: Wallet[]; crypto?: Wallet[]; transaction?: Transaction;

@@ -1,7 +1,7 @@
 import { Navigate, useSearchParams } from "react-router-dom";
 
 import { ConnectKeysOverlay } from "@/components/ConnectKeysOverlay";
-import { CryptoComApp } from "@/components/settings/CryptoComApp";
+import { AppTrade } from "@/components/trade/AppTrade";
 import { useCredentials, useCryptoComStatus } from "@/hooks/useCredentials";
 import { useServer } from "@/hooks/useServer";
 import { CreateExecutor } from "@/pages/CreateExecutor";
@@ -42,7 +42,7 @@ export function Trade() {
       <button className="rounded border border-[var(--color-border)] px-3 py-2 text-sm aria-pressed:bg-[var(--color-surface-hover)]" aria-pressed={!loading && !appWorkspace} onClick={() => selectWorkspace("hummingbot")}>Hummingbot / Exchange</button>
     </div>
     {loading ? <p role="status" className="p-6 text-sm">Loading trading accounts…</p> :
-      appWorkspace ? <div className="min-h-0 flex-1 overflow-auto p-6"><CryptoComApp /></div> :
+      appWorkspace ? <div className="min-h-0 flex-1 overflow-auto p-6"><AppTrade /></div> :
         <div className="relative min-h-0 flex-1 p-6">
           <CreateExecutor />
           {server && !keysLoading && !hasKeys && <ConnectKeysOverlay />}

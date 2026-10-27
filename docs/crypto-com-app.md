@@ -23,6 +23,13 @@ add to existing ones, but no single asset may exceed **40% of total bot equity**
 (`MAX_ASSET_FRACTION`). An empty `coins` keyword lists the top 15 coins by rank. Stop new exposure at **EUR 2 total bot
 equity** at any size, not EUR 2 of losses; profits increase the allocation. No guaranteed exit price or guaranteed profit.
 
+**Trade → Crypto.com App** is the single place to trade the App: a top-coins list
+(with your holdings first), a candlestick chart (public Binance/OKX candles in USDT,
+since the App has no candle feed), an order ticket that shows each quotation's cost
+against the listed price before you confirm, and the bot holdings. The former
+top-level *Crypto.com* menu now redirects here; Agent Key setup stays in
+Settings → Crypto.com App. The limits shown on both pages come from the server.
+
 The shared crypto_com_app MCP tool is mounted through existing tool profiles.
 Execution is classified as dangerous/mutating, so attended confirmations and
 dry-run rejection still work. Credentials and enable/disable are not MCP actions.
