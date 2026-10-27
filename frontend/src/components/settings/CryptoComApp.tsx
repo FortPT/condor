@@ -52,13 +52,18 @@ export function CryptoComApp({ settings = false }: { settings?: boolean }) {
     mutationFn: () => apiFetch<Quote>(base + "/quote", { method: "POST", body: JSON.stringify({ kind, source, target, amount }) }),
     onSuccess: (next) => { setQuote(next); setExpiresAt(Date.now() + next.countdown * 1000); },
   });
+  const reconcile = useMutation({
+    mutationFn: () => apiFetch(base + "/reconcile", { method: "POST" }),
+    onSuccess: () => refresh(),
+    retry: false,
+  });
   const execute = useMutation({
     mutationFn: (quotationId: string) => apiFetch(base + "/execute", { method: "POST", body: JSON.stringify({ quotation_id: quotationId }) }),
     onSuccess: (next) => { setResult(next); refresh(); },
     onSettled: () => setQuote(null),
     retry: false,
   });
-  const error = status.error || save.error || toggle.error || inspect.error || requestQuote.error || execute.error;
+  const error = status.error || save.error || toggle.error || inspect.error || requestQuote.error || execute.error || reconcile.error;
   const data = status.data;
 
   return <div className="mx-auto max-w-3xl space-y-5">
@@ -73,6 +78,7 @@ export function CryptoComApp({ settings = false }: { settings?: boolean }) {
       <p className="text-sm">Account: {data?.connected ? "Agent Key saved" : "not connected"} · Trading: {data?.enabled ? "enabled" : "paused"}</p>
       {data?.ledger && <p className="text-sm">Allocated cash: €{data.ledger.cash_eur} · Open positions: {Object.keys(data.ledger.positions).length}</p>}
       {!!data?.ledger.uncertain_order && <p role="alert" className="text-sm text-[var(--color-red)]">An order needs reconciliation. Trading stays paused. Check Crypto.com history before any new submission.</p>}
+      {!!data?.ledger.uncertain_order && <button className={button} disabled={reconcile.isPending} onClick={() => reconcile.mutate()}>Reconcile from provider history</button>}
       <div className="flex flex-wrap gap-2">
         <button className={button} disabled={!data?.connected || toggle.isPending || !!data?.ledger.uncertain_order} onClick={() => toggle.mutate(!data?.enabled)}>{data?.enabled ? "Pause trading" : "Enable trading within allocation"}</button>
         <button className={button} disabled={!data?.connected || inspect.isPending} onClick={() => inspect.mutate("/accounts")}>Check connection & balances</button>

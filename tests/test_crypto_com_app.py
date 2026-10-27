@@ -278,6 +278,25 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.service.valuation(1))["equity_eur"], "2")
         self.assertFalse(self.service.status(1)["enabled"])
 
+    async def test_missing_initial_funding_cannot_create_phantom_cash(self):
+        self.service.set_enabled(1, True)
+        quotation = await self.service.quote(1, "purchase", "EUR", "BTC", "5")
+        original = self.service.request
+
+        async def only_five_euros(user_id, method, path, body=None):
+            if path == "/v1/fiat-account":
+                return {
+                    "ok": True,
+                    "account": {
+                        "balances": [{"currency": "EUR", "amount": {"amount": "5"}}]
+                    },
+                }
+            return await original(user_id, method, path, body)
+
+        self.service.request = only_five_euros
+        with self.assertRaises(ValueError):
+            await self.service.execute(1, quotation["id"])
+
 
 if __name__ == "__main__":
     unittest.main()

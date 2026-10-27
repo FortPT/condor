@@ -4,7 +4,7 @@ Goal: run Claude with the owner's subscription and support Crypto.com App tradin
 
 Architecture: keep the original Condor/Hummingbot deployment. Add a small App API adapter using the official crypto-com/crypto-agent-trading request contracts, shared by HTTP routes and MCP tools. Keep credentials per user on the VM, never return them. Package pinned Claude CLI and ACP runtime with a persistent home. Reuse Condor's loop engine, not a second scheduler.
 
-Scope: App spot purchases, sales, crypto exchange, balances, quotations, transaction history. No bank transfers, cash withdrawals, leverage, public network exposure or automatic live activation during setup. Asset universe and maximum loss are awaiting the owner's answer. Daily trading is the goal; no promised returns or forced daily order.
+Scope: App spot purchases, sales, crypto exchange, balances, quotations, transaction history. No bank transfers, cash withdrawals, leverage, public network exposure or automatic live activation during setup. The owner authorizes any App-supported coin. Latest stop rule: pause new exposure at EUR 2 total bot equity, not a cumulative-loss limit. Keep half of current equity in cash; at most three positions with each new entry no larger than one sixth of current equity (EUR 5 initially). Daily trading is the goal; no promised returns or forced daily order.
 
 Approach: native adapter chosen over installing an unmodified trading skill because the dashboard and loops need the same enforcement and errors. No change to Hummingbot Exchange connector contracts or existing portfolio totals/currency conversions.
 

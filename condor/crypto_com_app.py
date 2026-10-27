@@ -44,7 +44,7 @@ def amount(value: str) -> Decimal:
 
 
 def currency(value: str) -> str:
-    if not re.fullmatch(r"[A-Z0-9_]{1,24}", value):
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Z0-9_]{1,24}", value):
         raise ValueError("Invalid currency code")
     return value
 
@@ -438,6 +438,10 @@ class AppService:
                 )
             if not available.is_finite() or available < spent:
                 raise ValueError("Insufficient available account balance")
+            if kind == "purchase" and available < Decimal(ledger["cash_eur"]):
+                raise ValueError(
+                    "EUR account cash does not back the bot allocation; fund or reconcile it first"
+                )
             # Account checks await I/O: a stop/rotation may have arrived meanwhile.
             current = _read_ledger(user_id)
             if (
