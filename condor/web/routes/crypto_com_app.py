@@ -89,7 +89,7 @@ async def history(user: WebUser = Depends(get_current_user)):
 
 @router.get("/coins")
 async def coins(
-    keyword: str = Query(..., min_length=1, max_length=100),
+    keyword: str = Query("", max_length=100),
     user: WebUser = Depends(get_current_user),
 ):
     try:

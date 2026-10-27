@@ -1461,7 +1461,8 @@ async def crypto_com_app(
 
     status: bot allocation, enable state, positions and enforced limits. valuation:
     current liquidation quotation value in EUR (pauses on EUR 2 floor). accounts:
-    available account cash/crypto. coins: search a symbol/name (EUR prices).
+    available account cash/crypto. coins: search a symbol/name (EUR prices); an
+    empty keyword lists the top 15 coins by rank with is_tradable and changes.
     quote: purchase EUR→crypto, sale crypto→EUR, or exchange crypto→crypto;
     amount is the SOURCE quantity as a decimal string. execute: submit the
     quotation_id returned by quote within its countdown. Never retry an order
@@ -1469,9 +1470,11 @@ async def crypto_com_app(
     disconnected account or paused trading invalidates pending quotes.
 
     The owner must connect and enable the account in Settings. These tools cannot
-    change credentials or enable trading. Execution enforces the bot allocation,
-    50% cash reserve, at most three positions, 1/6 equity per position and EUR 2
-    equity floor. No withdrawal, leverage or access to unallocated holdings.
+    change credentials or enable trading. Execution enforces the bot allocation
+    and the EUR 2 equity floor at any size. Below EUR 1000 total bot equity the cash reserve,
+    position-count and 1/6 limits are lifted and no single asset may exceed 40% of
+    bot equity; from EUR 1000 the 50% cash reserve, three positions and 1/6 limit
+    apply. No withdrawal, leverage or access to unallocated holdings.
     A configured autonomous loop may execute without per-order prompts; an
     attended manual request should show the quotation before executing it.
     """
