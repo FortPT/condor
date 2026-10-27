@@ -87,7 +87,7 @@ class Agent:
     description: str = ""
     instructions: str = ""  # AGENT.md body: identity + domain knowledge
     agent_key: str = ""  # default model (pydantic-ai or ACP, e.g. "claude-code")
-    # Tool-name allowlist (pydantic-ai only), enforced on BOTH delegate and loop.
+    # Tool-name allowlist, enforced on MCP discovery and each model backend.
     # Names match full (``mcp__condor__manage_skill``) or short (``manage_skill``).
     # Empty => UNRESTRICTED (all discovered tools).
     tools: list[str] = field(default_factory=list)

@@ -178,13 +178,10 @@ def every_tool_name() -> set[str]:
 def allowlist_mutes(agent_slug: str | None) -> set[str]:
     """What an Agent's ``tools:`` allowlist leaves out, as mute names.
 
-    Only pydantic-ai's ``_prepare_tools`` reads ``allowed_tools``; an ACP bridge
-    filters nothing, so on every Claude seat the list used to be decoration — the
-    seat mounted the whole ring and its preload named all of it, ~39k tokens of
-    schemas for tools the Agent was never meant to reach. Turning the complement
-    into mutes enforces the list at the one layer every backend shares: the
-    subprocess never registers what the list omits, so the model is never told
-    the tool exists.
+    Omit unwanted tools at their source rather than advertising schemas the
+    model cannot use. This discovery boundary is shared by both backends; the
+    ACP client factory also checks the allowlist at permission time so native
+    host tools cannot escape it.
 
     An empty list means unrestricted, as it always has; so does an unknown slug.
     Names may be namespaced (``mcp__condor__delegate``), the form pydantic-ai

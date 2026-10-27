@@ -23,6 +23,9 @@ vi.mock("./NotificationBell", () => ({ NotificationBell: () => null }));
 
 it.each([
   ["/trade", false], ["/crypto-com", false], ["/bots", true], ["/dex", true],
+  ["/agents/crypto_com_app_trader", false],
+  ["/agents/crypto_com_market_analyst", false],
+  ["/agents/crypto_com_risk_reviewer", false],
 ])("keeps shell onboarding scoped on %s", async (path, gated) => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   const host = document.createElement("div");
