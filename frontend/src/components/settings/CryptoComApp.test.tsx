@@ -28,6 +28,7 @@ beforeEach(async () => {
   root = createRoot(host);
   qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   await act(async () => { root.render(<QueryClientProvider client={qc}><MemoryRouter><CryptoComApp /></MemoryRouter></QueryClientProvider>); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
 });
 afterEach(async () => {
   await act(async () => root.unmount());
@@ -59,4 +60,15 @@ it("requests an exact decimal source amount and expires before order submission"
   const confirm = Array.from(host.querySelectorAll("button")).find((button) => button.textContent === "Confirm & submit order")!;
   await act(async () => confirm.click());
   expect(request.mock.calls.some(([path]) => path.endsWith("/execute"))).toBe(false);
+});
+
+it("shows cash and crypto in their source currencies without rounding quantities", async () => {
+  request.mockResolvedValue({ cash: [{ currency: "EUR", amount: { amount: "30.12", currency: "EUR" } }],
+    crypto: [{ currency: "BTC", balance: { amount: "0.000000123456789", currency: "BTC" }, available: { amount: "0.0000001", currency: "BTC" } }] });
+  const check = Array.from(host.querySelectorAll("button")).find((button) => button.textContent === "Check connection & balances")!;
+  await act(async () => check.click());
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
+  expect(host.querySelectorAll("table")).toHaveLength(2);
+  expect(host.textContent).toContain("30.12 EUR");
+  expect(host.textContent).toContain("0.000000123456789 BTC");
 });
