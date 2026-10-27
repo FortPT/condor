@@ -56,3 +56,13 @@ Ambiguous changes remain paused; they are never inferred from a transaction ID.
 Sources: official crypto-com/crypto-agent-trading App scripts (revision
 92e80c5527312d0acdf769f16511ba3c6db1f2fe), Crypto.com Agent Key management, Condor
 LLM integration documentation and Claude Code authentication documentation.
+# Portfolio dashboard
+
+The main Portfolio page includes the authenticated user's Crypto.com App cash and
+crypto wallets automatically, even while execution is paused. These holdings are
+added after reading the shared Hummingbot cache and never written into that cache.
+The App's native wallet valuations are converted to USD using its Bitcoin native/USD
+price snapshot, so no missing EUR conversion is silently treated as parity. Values
+are indicative, not executable sale proceeds. A valuation failure is shown explicitly.
+The whole-account balance does not increase the bot's allocation. Historical charts
+still cover Hummingbot only and are labelled accordingly; no App PnL is invented.

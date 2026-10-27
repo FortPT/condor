@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from condor.crypto_com_app import service as app_service
 from condor.fetchers.portfolio import (
     PORTFOLIO_HISTORY_RANGES,
     UNIFIED_ACCOUNT_NOTE,
@@ -135,8 +136,22 @@ async def get_portfolio(
                     )
                 )
 
+    notes = []
+    if app_service.status(user.id)["connected"]:
+        try:
+            # App credentials belong to the user, never the shared server cache.
+            connectors.append(ConnectorBalance(**await app_service.portfolio(user.id)))
+        except Exception as error:
+            logger.warning(
+                "Crypto.com portfolio unavailable (%s)", type(error).__name__
+            )
+            notes.append(
+                "Crypto.com App could not be valued. Its holdings are excluded from this total; check the Crypto.com page and retry."
+            )
     total_usd = sum(c.total_usd for c in connectors)
-    return PortfolioResponse(server=name, connectors=connectors, total_usd=total_usd)
+    return PortfolioResponse(
+        server=name, connectors=connectors, total_usd=total_usd, notes=notes
+    )
 
 
 @router.get(
