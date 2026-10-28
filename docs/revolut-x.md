@@ -202,13 +202,20 @@ available it uses 0.35%.
 
 ## Portfolio dashboard
 
-The Portfolio page adds the authenticated user's Revolut X balances (connector "Revolut X"),
-after reading the shared Hummingbot cache and never written into it. Hummingbot has no
-Revolut X connector, so there is no double-count rule. Euros and coins are valued at the last
-traded price and converted to USD through the USDC/EUR rate; assets without a price are listed
-with zero value and named in a note. A value sample is also recorded for the Portfolio chart
-(`condor/portfolio_history.py`, source "Revolut X"). The whole-account balance does not
-increase the bot's allocation.
+Revolut X is one entry in the native-venue registry (`condor/native_venues.py`: venue
+`revolut_x`, service `condor.revolut_x`, crew agent `revolut_x_trader`), so it shares the
+path the other native accounts use (`condor/native_accounts.py`). The Portfolio page adds the
+authenticated user's Revolut X balances (connector "Revolut X"), after reading the shared
+Hummingbot cache and never written into it. Hummingbot has no Revolut X connector, so there
+is no double-count rule. Euros and coins are valued at the last traded price and converted to
+USD through the USDC/EUR rate (Kraken's EUR/USD when that pair is missing); assets without a
+price are listed with zero value and named in a note. With no EUR/USD rate at all the account
+is not valued (a note says so) rather than recorded as zero. The bot ledger stays in EUR;
+every account value, chart sample and equity change is in USD. A value sample is recorded for
+the Portfolio chart (`condor/portfolio_history.py`, source "Revolut X"), the Revolut X loop
+card's PnL is the change in that USD account equity (deposits and withdrawals are not
+tracked), and the chat tool `native_portfolio` includes the account. The whole-account balance
+does not increase the bot's allocation.
 
 ## Known limits
 

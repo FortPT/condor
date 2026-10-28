@@ -140,3 +140,10 @@ def test_every_exemption_is_still_needed():
         named = _named_in_own_files(slug)
         stale = {t for t in exempt if t not in named or t in _allowlist(slug)}
         assert not stale, f"drop {sorted(stale)} from NOT_CALLS[{slug!r}]"
+
+
+def test_the_native_portfolio_tool_is_mountable_and_the_condor_chat_is_not_narrowed():
+    """The chat agent answers "what is my portfolio" with it; an allowlist on that
+    agent would silently hide the tool, so it must stay unlisted."""
+    assert "native_portfolio" in AGENT_RING
+    assert "condor" not in ALLOWLISTED

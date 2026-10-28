@@ -13,7 +13,7 @@ import {
 import { countdown } from "@/lib/agent-attribution";
 import type { AgentSummary } from "@/lib/api";
 import { formatCurrencyPnl, formatRelativeTime, pnlColor } from "@/lib/formatters";
-import { unavailableLabel } from "@/lib/strategy-unavailable";
+import { pnlBasisTitle, unavailableLabel } from "@/lib/strategy-unavailable";
 
 /**
  * Every loop, from every agent, one click from the rail (FEAT-123) — grouped by
@@ -197,6 +197,9 @@ function LoopCard({
               data-loop-pnl
               className="ml-auto shrink-0 font-mono text-[11px] font-semibold"
               style={{ color: pnlColor(stats.latestSessionPnl) }}
+              // A native crew's figure is the account's equity change, not
+              // executor PnL; say so on hover, and say when it is an estimate.
+              title={pnlBasisTitle(stats.pnlBasis, stats.pnlNote)}
             >
               {formatCurrencyPnl(stats.latestSessionPnl, "$")}
             </span>

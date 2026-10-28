@@ -31,6 +31,7 @@ import {
 } from "@/lib/api";
 import { formatCurrency, formatCurrencyPnl, formatCurrencyVolume, isExecutorActive } from "@/lib/formatters";
 import { agentsQuery, EXECUTORS_REFETCH_MS, executorsQuery } from "@/lib/queryClient";
+import { ACCOUNT_EQUITY } from "@/lib/strategy-unavailable";
 import { getThemeColors } from "@/lib/theme-colors";
 
 // ── Formatters ──
@@ -81,12 +82,14 @@ function KpiCell({
   pnl,
   details,
   currencySymbol,
+  pnlTitle,
 }: {
   label: string;
   mainValue: string | number;
   pnl?: number;
   details: string;
   currencySymbol?: string;
+  pnlTitle?: string;
 }) {
   return (
     <div className="flex-1 px-5 py-3 min-w-0">
@@ -95,6 +98,7 @@ function KpiCell({
         <span className="text-2xl font-bold tabular-nums tracking-tight leading-none">{mainValue}</span>
         {pnl !== undefined && pnl !== null && (
           <span className="inline-flex items-center gap-0.5 text-sm tabular-nums font-semibold"
+            title={pnlTitle}
             style={{ color: pnl >= 0 ? "var(--color-green)" : "var(--color-red)" }}>
             {pnl >= 0 ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
             {formatCurrencyPnl(pnl, currencySymbol || "$")}
@@ -182,6 +186,11 @@ function DashboardStrip({
           label="Agents"
           mainValue={activeAgents.length}
           pnl={convertFromUsd(agentPnl)}
+          pnlTitle={
+            agents.some((a) => a.pnl_basis === ACCOUNT_EQUITY)
+              ? "Includes the change in account equity of native crews (Crypto.com Exchange, Kraken xStocks, Revolut X); deposits and withdrawals are not tracked"
+              : undefined
+          }
           details={`${agents.length} total · ${agentSessions} session${agentSessions !== 1 ? "s" : ""}`}
           currencySymbol={currencySymbol}
         />

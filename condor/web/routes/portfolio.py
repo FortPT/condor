@@ -7,18 +7,15 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from condor import portfolio_history
-from condor.crypto_com_exchange import service as exchange_service
+from condor import native_accounts, portfolio_history
 from condor.fetchers.portfolio import (
     PORTFOLIO_HISTORY_RANGES,
     UNIFIED_ACCOUNT_NOTE,
     balance_value,
     dedupe_unified_accounts,
 )
-from condor.kraken_xstocks import service as kraken_service
-from condor.revolut_x import service as revolut_service
 from condor.server_data_service import ServerDataType, get_server_data_service
-from condor.web.auth import require_server_access
+from condor.web.auth import get_current_user, require_server_access
 from condor.web.models import (
     BalanceItem,
     ConnectorBalance,
@@ -140,57 +137,28 @@ async def get_portfolio(
                     )
                 )
 
-    notes = []
-    if exchange_service.status(user.id)["connected"]:
-        try:
-            # App credentials belong to the user, never the shared server cache.
-            exchange_view = await exchange_service.portfolio(user.id)
-            portfolio_history.record(
-                user.id, portfolio_history.EXCHANGE, exchange_view["total_usd"]
-            )
-            connectors.append(ConnectorBalance(**exchange_view))
-        except Exception as error:
-            logger.warning(
-                "Crypto.com portfolio unavailable (%s)", type(error).__name__
-            )
-            notes.append(
-                "Crypto.com App could not be valued. Its holdings are excluded from this total; check the Crypto.com page and retry."
-            )
-    if any(c.connector == "kraken" for c in connectors):
-        # Hummingbot's kraken connector already values this account; adding the
-        # Kraken xStocks view as well would count the same balances twice.
-        pass
-    elif kraken_service.status(user.id)["connected"]:
-        try:
-            # Kraken credentials belong to the user too, never the shared cache.
-            kraken_view = await kraken_service.portfolio(user.id)
-            portfolio_history.record(
-                user.id, portfolio_history.KRAKEN, kraken_view["total_usd"]
-            )
-            connectors.append(ConnectorBalance(**kraken_view))
-        except Exception as error:
-            logger.warning("Kraken portfolio unavailable (%s)", type(error).__name__)
-            notes.append(
-                "Kraken xStocks could not be valued. Its holdings are excluded from this total; check the Kraken xStocks settings and retry."
-            )
-    # Revolut X is not a Hummingbot connector, so nothing else counts this account.
-    if revolut_service.status(user.id)["connected"]:
-        try:
-            # Revolut X credentials belong to the user too, never the shared cache.
-            revolut_view = await revolut_service.portfolio(user.id)
-            portfolio_history.record(
-                user.id, portfolio_history.REVOLUT, revolut_view["total_usd"]
-            )
-            connectors.append(ConnectorBalance(**revolut_view))
-        except Exception as error:
-            logger.warning("Revolut X portfolio unavailable (%s)", type(error).__name__)
-            notes.append(
-                "Revolut X could not be valued. Its holdings are excluded from this total; check the Revolut X settings and retry."
-            )
+    # Hummingbot's kraken connector already values that account; adding the
+    # Kraken xStocks view as well would count the same balances twice.
+    skip = (
+        ("kraken_xstocks",) if any(c.connector == "kraken" for c in connectors) else ()
+    )
+    native = await native_accounts.collect_views(user.id, skip=skip)
+    connectors.extend(ConnectorBalance(**view) for view in native.views)
+    notes = list(native.notes)
     total_usd = sum(c.total_usd for c in connectors)
     return PortfolioResponse(
         server=name, connectors=connectors, total_usd=total_usd, notes=notes
     )
+
+
+@router.get("/portfolio/native")
+async def get_native_portfolio(user: WebUser = Depends(get_current_user)):
+    """Crypto.com Exchange, Kraken xStocks and Revolut X for the caller, read-only.
+
+    What the chat agent's ``native_portfolio`` tool returns: Hummingbot cannot see
+    these accounts, so its own portfolio tool reads as empty without them.
+    """
+    return await native_accounts.overview(user.id)
 
 
 @router.get(

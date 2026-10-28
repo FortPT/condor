@@ -1484,16 +1484,25 @@ class RevolutXTests(unittest.IsolatedAsyncioTestCase):
         by = {b["token"]: b for b in data["balances"]}
         self.assertAlmostEqual(by["EUR"]["usd_value"], 44.4, places=6)
 
-    async def test_portfolio_names_what_it_could_not_price(self):
+    async def test_portfolio_names_the_coins_it_could_not_price(self):
+        self.svc.tickers_raw = {
+            "data": [t for t in tickers()["data"] if t["symbol"] != "SUI/EUR"]
+        }
+        data = await self.svc.portfolio(1)
+        by = {b["token"]: b for b in data["balances"]}
+        self.assertEqual(by["SUI"]["usd_value"], 0)
+        self.assertIn("No USD price for SUI, XYZ", data["note"])
+        self.assertGreater(data["total_usd"], 0)
+
+    async def test_portfolio_refuses_to_value_the_account_without_a_eur_usd_rate(self):
         self.svc.tickers_raw = {"data": []}
 
         async def none():
             return None
 
         with patch("condor.kraken_xstocks.service.eur_usd", none):
-            data = await self.svc.portfolio(1)
-        self.assertEqual(data["total_usd"], 0)
-        self.assertIn("No USD price for EUR, SUI, XYZ", data["note"])
+            with self.assertRaises(ValueError):
+                await self.svc.portfolio(1)
 
     async def test_history_lists_final_orders_newest_first(self):
         old = info("buy", "BTC", "1", "1", "1", updated_date=1_000)

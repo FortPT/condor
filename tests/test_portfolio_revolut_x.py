@@ -6,17 +6,16 @@ from unittest.mock import AsyncMock
 import pytest
 
 from condor import portfolio_history
+from condor.crypto_com_exchange import service as exchange_service
+from condor.kraken_xstocks import service as kraken_service
+from condor.revolut_x import service as revolut_service
 from condor.web.models import WebUser
 from condor.web.routes import portfolio
 
 
 def no_other_native_accounts(monkeypatch):
-    monkeypatch.setattr(
-        portfolio.exchange_service, "status", lambda uid: {"connected": False}
-    )
-    monkeypatch.setattr(
-        portfolio.kraken_service, "status", lambda uid: {"connected": False}
-    )
+    monkeypatch.setattr(exchange_service, "status", lambda uid: {"connected": False})
+    monkeypatch.setattr(kraken_service, "status", lambda uid: {"connected": False})
 
 
 @pytest.mark.asyncio
@@ -29,9 +28,7 @@ async def test_revolut_x_balances_are_user_scoped_and_never_written_to_shared_ca
     sds = type("SDS", (), {"get_or_fetch": AsyncMock(return_value=state)})()
     monkeypatch.setattr(portfolio, "get_server_data_service", lambda: sds)
     no_other_native_accounts(monkeypatch)
-    monkeypatch.setattr(
-        portfolio.revolut_service, "status", lambda uid: {"connected": uid == 1}
-    )
+    monkeypatch.setattr(revolut_service, "status", lambda uid: {"connected": uid == 1})
     revolut = AsyncMock(
         return_value={
             "connector": "Revolut X",
@@ -43,7 +40,7 @@ async def test_revolut_x_balances_are_user_scoped_and_never_written_to_shared_ca
             "note": "Only the bot allocation may be traded.",
         }
     )
-    monkeypatch.setattr(portfolio.revolut_service, "portfolio", revolut)
+    monkeypatch.setattr(revolut_service, "portfolio", revolut)
     owner = await portfolio.get_portfolio("vm08", False, WebUser(id=1, role="admin"))
     other = await portfolio.get_portfolio("vm08", False, WebUser(id=2, role="admin"))
     assert owner.total_usd == 175
@@ -65,11 +62,9 @@ async def test_revolut_x_failure_is_visible_without_hiding_other_connectors(
     sds = type("SDS", (), {"get_or_fetch": AsyncMock(return_value={})})()
     monkeypatch.setattr(portfolio, "get_server_data_service", lambda: sds)
     no_other_native_accounts(monkeypatch)
+    monkeypatch.setattr(revolut_service, "status", lambda uid: {"connected": True})
     monkeypatch.setattr(
-        portfolio.revolut_service, "status", lambda uid: {"connected": True}
-    )
-    monkeypatch.setattr(
-        portfolio.revolut_service,
+        revolut_service,
         "portfolio",
         AsyncMock(side_effect=ValueError("unavailable")),
     )
@@ -85,11 +80,9 @@ async def test_an_unconnected_revolut_x_account_is_not_queried(monkeypatch):
     sds = type("SDS", (), {"get_or_fetch": AsyncMock(return_value={})})()
     monkeypatch.setattr(portfolio, "get_server_data_service", lambda: sds)
     no_other_native_accounts(monkeypatch)
-    monkeypatch.setattr(
-        portfolio.revolut_service, "status", lambda uid: {"connected": False}
-    )
+    monkeypatch.setattr(revolut_service, "status", lambda uid: {"connected": False})
     revolut = AsyncMock()
-    monkeypatch.setattr(portfolio.revolut_service, "portfolio", revolut)
+    monkeypatch.setattr(revolut_service, "portfolio", revolut)
     response = await portfolio.get_portfolio("vm08", False, WebUser(id=1, role="admin"))
     assert response.connectors == []
     revolut.assert_not_awaited()
@@ -105,9 +98,7 @@ async def test_revolut_x_is_added_even_when_a_hummingbot_connector_is_named_revo
     sds = type("SDS", (), {"get_or_fetch": AsyncMock(return_value=state)})()
     monkeypatch.setattr(portfolio, "get_server_data_service", lambda: sds)
     no_other_native_accounts(monkeypatch)
-    monkeypatch.setattr(
-        portfolio.revolut_service, "status", lambda uid: {"connected": True}
-    )
+    monkeypatch.setattr(revolut_service, "status", lambda uid: {"connected": True})
     revolut = AsyncMock(
         return_value={
             "connector": "Revolut X",
@@ -116,7 +107,7 @@ async def test_revolut_x_is_added_even_when_a_hummingbot_connector_is_named_revo
             "note": "",
         }
     )
-    monkeypatch.setattr(portfolio.revolut_service, "portfolio", revolut)
+    monkeypatch.setattr(revolut_service, "portfolio", revolut)
     response = await portfolio.get_portfolio("vm08", False, WebUser(id=1, role="admin"))
     assert [c.connector for c in response.connectors] == ["kraken", "Revolut X"]
     assert response.total_usd == pytest.approx(22.4)

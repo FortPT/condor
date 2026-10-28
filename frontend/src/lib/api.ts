@@ -1192,9 +1192,19 @@ export interface VenueConditions {
  * - `no_server` — its config names no server
  * - `no_access` — the caller may not use the server it names (SEC-334)
  * - `unreachable` — the server is offline or its credentials failed
+ * A native crew (Crypto.com Exchange, Kraken xStocks, Revolut X) has no server; its money
+ * is the venue's account equity:
+ * - `no_history` — no equity has been recorded for the venue yet
+ * - `no_ledger` — the crew is paper-only and holds no account
  * Optional on the wire so an older backend reads as `""`.
  */
-export type StrategyUnavailable = "" | "no_server" | "no_access" | "unreachable";
+export type StrategyUnavailable =
+  | ""
+  | "no_server"
+  | "no_access"
+  | "unreachable"
+  | "no_history"
+  | "no_ledger";
 
 export interface StrategySummary {
   slug: string;
@@ -1222,6 +1232,18 @@ export interface StrategySummary {
   server_name?: string;
   /** Why the figures above are zero when it is not "nothing traded". */
   unavailable?: StrategyUnavailable;
+  /**
+   * What the PnL figures measure. `"account_equity"` = a native crew's change in
+   * its venue's whole-account value (deposits and withdrawals are not tracked);
+   * `""`/absent = Hummingbot executor PnL.
+   */
+  pnl_basis?: string;
+  /** A session boundary's equity was taken from the nearest sample, not one at that moment. */
+  pnl_estimated?: boolean;
+  /** Which boundary was estimated, in a sentence. */
+  pnl_note?: string;
+  /** When `total_pnl`'s window starts (unix seconds); 0 = unknown. */
+  pnl_since?: number;
   instances: RunningInstance[];
 }
 
@@ -1370,6 +1392,8 @@ export interface AgentSummary {
    * (workspace/fleet.ts) owns, and both the home and the workspace call.
    */
   server_name?: string;
+  /** `"account_equity"` when the PnL above is a native crew's equity change. */
+  pnl_basis?: string;
   instances: RunningInstance[];
 }
 
@@ -1406,6 +1430,10 @@ export interface AgentPerformance {
   /** When the session started, unix seconds (its config.yml mtime). 0 or
    *  absent = unknown; always 0 for an experiment. */
   started_at?: number;
+  /** `"account_equity"`: `total_pnl` is a native crew's change in account equity. */
+  pnl_basis?: string;
+  pnl_estimated?: boolean;
+  pnl_note?: string;
   realized_pnl: number;
   unrealized_pnl: number;
   total_pnl: number;

@@ -858,6 +858,11 @@ class RevolutXService:
         accounts = (await self.accounts(user_id))["accounts"]
         tickers = await self.tickers()
         rate = await self.eur_usd()
+        if accounts and not rate:
+            # Every holding is priced in euros and converted here, so without the
+            # rate the whole account would read as 0 USD, and that false drop would
+            # be recorded as equity. Fail instead: the dashboard shows a note.
+            raise ValueError("No EUR/USD rate is available to value Revolut X")
         balances, unpriced = [], []
         for row in accounts:
             token = row["currency"]

@@ -20,7 +20,7 @@ from __future__ import annotations
 #: the docstring: the panel has one line of room and the docstring's first line
 #: is written for the model.
 TOOL_DESCRIPTIONS: dict[str, str] = {
-    "get_portfolio_overview": "Balances, perp positions, LP positions and open orders",
+    "get_portfolio_overview": "Balances, perp positions, LP positions and open orders on Hummingbot-connected accounts only",
     "set_account_position_mode_and_leverage": "Set position mode and leverage",
     "search_history": "Search historical trades, orders and funding",
     "get_prices": "Latest price for one or more pairs",

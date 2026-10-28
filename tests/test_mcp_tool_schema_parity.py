@@ -29,7 +29,13 @@ SERVERS = {"condor": condor_server, "hummingbot_api": hb_server}
 FIELDS = ("name", "description", "inputSchema", "outputSchema")
 # Added after the SDK migration: preserve the historical fixture's provenance.
 POST_V1_TOOLS = {
-    "condor": {"crypto_com_exchange", "xstocks_paper", "kraken_xstocks", "revolut_x"},
+    "condor": {
+        "crypto_com_exchange",
+        "xstocks_paper",
+        "kraken_xstocks",
+        "revolut_x",
+        "native_portfolio",
+    },
     "hummingbot_api": set(),
 }
 
@@ -173,6 +179,18 @@ def test_revolut_x_schema_exposes_no_credential_key_or_enable_arguments():
         }
         & properties.keys()
     )
+
+
+def test_native_portfolio_takes_no_arguments_and_cannot_change_anything():
+    tool = live_surface(condor_server)["native_portfolio"]
+    assert tool["inputSchema"].get("properties", {}) == {}
+
+
+def test_the_hummingbot_portfolio_tool_says_it_cannot_see_the_native_accounts():
+    description = live_surface(hb_server)["get_portfolio_overview"]["description"]
+    assert "only Hummingbot-connected accounts" in description
+    assert "native_portfolio" in description
+    assert "Crypto.com Exchange" in description and "Kraken xStocks" in description
 
 
 def test_instructions_are_handed_to_the_sdk_unchanged():

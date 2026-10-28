@@ -20,14 +20,15 @@ import time
 from contextlib import closing
 from pathlib import Path
 
+from condor import native_venues
 from condor.paths import data_dir
 
 log = logging.getLogger(__name__)
 
-EXCHANGE = "Crypto.com Exchange"
-KRAKEN = "Kraken xStocks"
-REVOLUT = "Revolut X"
-SOURCES = (EXCHANGE, KRAKEN, REVOLUT)
+EXCHANGE = native_venues.get("crypto_com_exchange").label
+KRAKEN = native_venues.get("kraken_xstocks").label
+REVOLUT = native_venues.get("revolut_x").label
+SOURCES = tuple(v.label for v in native_venues.account_venues())
 SAMPLE_EVERY_SEC = 300
 # A second sample inside this gap (an open dashboard plus the timer) is dropped.
 MIN_GAP_SEC = 240
@@ -98,6 +99,52 @@ def series(
     return out
 
 
+def nearest(
+    user_id: int, source: str, stamps
+) -> list[tuple[tuple[int, float] | None, tuple[int, float] | None]]:
+    """For each timestamp, the closest sample at-or-before it and the first after it.
+
+    One connection for the whole batch. Read-only: a user with no history gets
+    ``(None, None)`` pairs and no database file is created for them.
+    """
+    stamps = [int(s) for s in stamps]
+    if not _db(user_id).exists():
+        return [(None, None) for _ in stamps]
+    out = []
+    with closing(_connect(user_id)) as conn:
+        for stamp in stamps:
+            before = conn.execute(
+                "SELECT ts, total_usd FROM samples WHERE source = ? AND ts <= ?"
+                " ORDER BY ts DESC LIMIT 1",
+                (source, stamp),
+            ).fetchone()
+            after = conn.execute(
+                "SELECT ts, total_usd FROM samples WHERE source = ? AND ts > ?"
+                " ORDER BY ts ASC LIMIT 1",
+                (source, stamp),
+            ).fetchone()
+            out.append((before, after))
+    return out
+
+
+def bounds(
+    user_id: int, source: str
+) -> tuple[tuple[int, float] | None, tuple[int, float] | None]:
+    """``(first sample, latest sample)`` of one source; ``(None, None)`` without history."""
+    if not _db(user_id).exists():
+        return None, None
+    with closing(_connect(user_id)) as conn:
+        first = conn.execute(
+            "SELECT ts, total_usd FROM samples WHERE source = ? ORDER BY ts ASC LIMIT 1",
+            (source,),
+        ).fetchone()
+        last = conn.execute(
+            "SELECT ts, total_usd FROM samples WHERE source = ? ORDER BY ts DESC LIMIT 1",
+            (source,),
+        ).fetchone()
+    return first, last
+
+
 def merge(points, native, interval_seconds: int, skip=(), point_type=None):
     """Add the native accounts to the Hummingbot history points.
 
@@ -152,32 +199,32 @@ def merge(points, native, interval_seconds: int, skip=(), point_type=None):
     return merged
 
 
-async def sample_user(user_id: int, exchange=None, kraken=None, revolut=None) -> None:
-    """Take one sample of each connected native account for the user."""
-    if exchange is None or kraken is None or revolut is None:
-        from condor.crypto_com_exchange import service as exchange_service
-        from condor.kraken_xstocks import service as kraken_service
-        from condor.revolut_x import service as revolut_service
+async def sample_user(user_id: int, exchange=None, kraken=None, **services) -> None:
+    """Take one sample of each connected native account for the user.
 
-        exchange = exchange or exchange_service
-        kraken = kraken or kraken_service
-        revolut = revolut or revolut_service
-    for source, service in ((EXCHANGE, exchange), (KRAKEN, kraken), (REVOLUT, revolut)):
+    ``exchange``/``kraken`` (and any other venue key) override that venue's
+    service, which tests use to run without credentials.
+    """
+    overrides = {"crypto_com_exchange": exchange, "kraken_xstocks": kraken, **services}
+    for venue in native_venues.account_venues():
         try:
+            service = overrides.get(venue.key) or venue.service
             if not service.status(user_id)["connected"]:
                 continue
             data = await service.portfolio(user_id)
-            record(user_id, source, data["total_usd"])
+            record(user_id, venue.label, data["total_usd"])
         except Exception as error:  # noqa: BLE001 - history must never break a read
             log.debug(
-                "Portfolio sample for %s skipped (%s)", source, type(error).__name__
+                "Portfolio sample for %s skipped (%s)",
+                venue.label,
+                type(error).__name__,
             )
 
 
 def _users() -> list[int]:
     found: set[int] = set()
-    for folder in ("crypto_com_exchange", "kraken_xstocks", "revolut_x"):
-        root = data_dir() / folder
+    for venue in native_venues.account_venues():
+        root = data_dir() / venue.key
         if root.is_dir():
             found.update(int(p.name) for p in root.iterdir() if p.name.isdigit())
     return sorted(found)

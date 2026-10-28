@@ -68,6 +68,7 @@ CONDOR_COMMON = {
     "xstocks_paper",
     "kraken_xstocks",
     "revolut_x",
+    "native_portfolio",
     "delegate",
     "send_notification",
     "manage_routines",

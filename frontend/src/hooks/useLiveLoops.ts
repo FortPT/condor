@@ -69,6 +69,10 @@ export interface LoopCardStats {
   latestSessionPnl: number;
   /** Why the PnL could not be read (CORR-706), or `""` — then it is a dash, never `$0.00`. */
   unavailable: StrategyUnavailable;
+  /** `"account_equity"` for a native crew, whose PnL is the venue's equity change. */
+  pnlBasis: string;
+  /** Which session boundary was estimated from the nearest sample, if any. */
+  pnlNote: string;
   sessionCount: number;
   experimentCount: number;
 }
@@ -85,6 +89,8 @@ export function loopStats(
     ? {
         latestSessionPnl: strategy.latest_session_pnl,
         unavailable: strategy.unavailable ?? "",
+        pnlBasis: strategy.pnl_basis ?? "",
+        pnlNote: strategy.pnl_note ?? "",
         sessionCount: strategy.session_count,
         experimentCount: strategy.experiment_count,
       }

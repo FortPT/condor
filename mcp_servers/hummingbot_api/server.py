@@ -213,6 +213,10 @@ async def get_portfolio_overview(
     in parallel. By default, it returns all four types of data, but you can filter to only include
     specific sections.
 
+    SCOPE: this covers only Hummingbot-connected accounts. It does NOT see the Crypto.com Exchange or
+    Kraken xStocks accounts that Condor trades itself; an empty result here does not mean those are empty.
+    Use the condor `native_portfolio` tool for them.
+
     Data Sources (fetched in parallel using asyncio.gather):
     1. Token Balances - Holdings across all connected CEX/DEX exchanges
     2. Perpetual Positions - Open perpetual futures positions from CEX

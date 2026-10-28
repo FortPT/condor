@@ -59,6 +59,41 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(len(rows[ph.EXCHANGE]), 1)
 
 
+class NeighbourTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = patch.dict(os.environ, {"CONDOR_DATA_DIR": self.tmp.name})
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+        self.tmp.cleanup()
+
+    def test_nearest_gives_the_sample_at_or_before_and_the_first_after(self):
+        ph.record(1, ph.EXCHANGE, 10, now=T0)
+        ph.record(1, ph.EXCHANGE, 11, now=T0 + 600)
+        ph.record(1, ph.KRAKEN, 99, now=T0 + 300)
+        before_both, mid, after_all = ph.nearest(
+            1, ph.EXCHANGE, [T0 - 1, T0 + 300, T0 + 700]
+        )
+        self.assertEqual(before_both, (None, (T0, 10.0)))
+        self.assertEqual(mid, ((T0, 10.0), (T0 + 600, 11.0)))
+        self.assertEqual(after_all, ((T0 + 600, 11.0), None))
+        # A sample exactly at the moment counts as at-or-before.
+        self.assertEqual(ph.nearest(1, ph.EXCHANGE, [T0 + 600])[0][0], (T0 + 600, 11.0))
+
+    def test_bounds_are_the_first_and_latest_sample_of_one_source(self):
+        ph.record(1, ph.EXCHANGE, 10, now=T0)
+        ph.record(1, ph.EXCHANGE, 11, now=T0 + 600)
+        self.assertEqual(ph.bounds(1, ph.EXCHANGE), ((T0, 10.0), (T0 + 600, 11.0)))
+        self.assertEqual(ph.bounds(1, ph.KRAKEN), (None, None))
+
+    def test_reading_a_user_without_history_creates_nothing(self):
+        self.assertEqual(ph.nearest(5, ph.EXCHANGE, [T0]), [(None, None)])
+        self.assertEqual(ph.bounds(5, ph.EXCHANGE), (None, None))
+        self.assertFalse((ph.data_dir() / "portfolio_history").exists())
+
+
 class MergeTests(unittest.TestCase):
     def merged(self, points, native, **kwargs):
         return ph.merge(points, native, 3600, point_type=Point, **kwargs)
@@ -147,7 +182,7 @@ class RecorderTests(unittest.IsolatedAsyncioTestCase):
             1,
             exchange=FakeService(False, 48.2),
             kraken=FakeService(True, 9.0),
-            revolut=FakeService(True, 61.5),
+            revolut_x=FakeService(True, 61.5),
         )
         rows = ph.series(1, since=0)
         self.assertEqual(set(rows), {ph.KRAKEN, ph.REVOLUT})
@@ -160,7 +195,7 @@ class RecorderTests(unittest.IsolatedAsyncioTestCase):
             1,
             exchange=FakeService(True, 48.2),
             kraken=FakeService(False, 0),
-            revolut=FakeService(True, None),
+            revolut_x=FakeService(True, None),
         )
         self.assertEqual(list(ph.series(1, since=0)), [ph.EXCHANGE])
 

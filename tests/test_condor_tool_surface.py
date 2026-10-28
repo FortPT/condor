@@ -27,6 +27,7 @@ EXPECTED_TOOLS = {
     "xstocks_paper",
     "kraken_xstocks",
     "revolut_x",
+    "native_portfolio",
     "control_agent",
     "delegate",
     "get_available_models",

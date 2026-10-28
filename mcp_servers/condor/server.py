@@ -1873,6 +1873,31 @@ async def revolut_x(
     return {"data": result}
 
 
+@handle_errors("native portfolio")
+async def native_portfolio() -> dict:
+    """Read the owner's Crypto.com Exchange, Kraken xStocks and Revolut X accounts (USD, read-only).
+
+    Hummingbot's `get_portfolio_overview` cannot see these accounts, which
+    Condor trades itself, so on its own it reads as an empty portfolio for them.
+    This returns, for each: whether it is connected; the whole account's value in
+    USD split into cash and positions (each with its USD value); the bot
+    allocation's ledger (cash, positions at cost, whether it is synced, whether
+    trading is enabled, whether an order is uncertain); and the change in account
+    equity since the value history began and over the last 24 hours. The change is
+    only the difference between two account readings: deposits and withdrawals are
+    not tracked, so a deposit reads as a gain. Revolut X's ledger is in EUR (its
+    `quote`), while every account value and change here is in USD.
+
+    Report these figures next to the Hummingbot ones, not instead of them. Kraken
+    xStocks is the same Kraken account Hummingbot's `kraken` connector may also
+    report, so do not add both. This tool takes no arguments and cannot trade,
+    connect keys or change any setting.
+    """
+    from mcp_servers.condor.condor_client import call_main_api
+
+    return await call_main_api("GET", "/portfolio/native")
+
+
 TOOL_PROFILES: dict[str, tuple] = resolve_profiles(globals(), PROFILE_TOOLS)
 register_tools(
     mcp, settings.tool_profile, settings.muted_tools, settings.execution_mode
