@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from condor.crypto_com_exchange import service as exchange_service
 from condor.web.models import WebUser
 from condor.web.routes import portfolio
 
@@ -17,9 +18,7 @@ async def test_exchange_balances_are_user_scoped_and_never_written_to_shared_cac
     original = deepcopy(state)
     sds = type("SDS", (), {"get_or_fetch": AsyncMock(return_value=state)})()
     monkeypatch.setattr(portfolio, "get_server_data_service", lambda: sds)
-    monkeypatch.setattr(
-        portfolio.exchange_service, "status", lambda uid: {"connected": uid == 1}
-    )
+    monkeypatch.setattr(exchange_service, "status", lambda uid: {"connected": uid == 1})
     app = AsyncMock(
         return_value={
             "connector": "Crypto.com Exchange",
@@ -30,7 +29,7 @@ async def test_exchange_balances_are_user_scoped_and_never_written_to_shared_cac
             "note": "Only the bot allocation may be traded.",
         }
     )
-    monkeypatch.setattr(portfolio.exchange_service, "portfolio", app)
+    monkeypatch.setattr(exchange_service, "portfolio", app)
     owner = await portfolio.get_portfolio("vm08", False, WebUser(id=1, role="admin"))
     other = await portfolio.get_portfolio("vm08", False, WebUser(id=2, role="admin"))
     assert owner.total_usd == 122
@@ -45,11 +44,9 @@ async def test_exchange_balances_are_user_scoped_and_never_written_to_shared_cac
 async def test_exchange_failure_is_visible_without_hiding_other_connectors(monkeypatch):
     sds = type("SDS", (), {"get_or_fetch": AsyncMock(return_value={})})()
     monkeypatch.setattr(portfolio, "get_server_data_service", lambda: sds)
+    monkeypatch.setattr(exchange_service, "status", lambda uid: {"connected": True})
     monkeypatch.setattr(
-        portfolio.exchange_service, "status", lambda uid: {"connected": True}
-    )
-    monkeypatch.setattr(
-        portfolio.exchange_service,
+        exchange_service,
         "portfolio",
         AsyncMock(side_effect=ValueError("unavailable")),
     )

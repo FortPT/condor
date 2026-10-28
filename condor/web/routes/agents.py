@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from pydantic import BaseModel, Field
 
+from condor import native_accounts, native_venues
 from condor.agents.attribution import (
     DeploymentRow,
     apply_bot_mode_pnl,
@@ -202,7 +203,18 @@ class RunningInstance(BaseModel):
 #: failed (server offline, bad credentials). Without it all three rendered as a
 #: session that traded nothing. The reason is all a refused caller gets: never
 #: the creator, never a figure.
-Unavailable = Literal["", "no_server", "no_access", "unreachable"]
+#:
+#: A native crew (Crypto.com Exchange, Kraken xStocks) has no Hummingbot server;
+#: its money is the venue's account equity. ``no_history`` — no equity has been
+#: recorded for that venue yet, so a change cannot be stated; ``no_ledger`` — the
+#: crew is paper-only and holds no account.
+Unavailable = Literal[
+    "", "no_server", "no_access", "unreachable", "no_history", "no_ledger"
+]
+
+#: ``pnl_basis`` of a figure that is the change in a native venue's account
+#: equity, not executor PnL. Empty means Hummingbot executors.
+PNL_BASIS_EQUITY = native_accounts.BASIS
 
 
 class StrategySummary(BaseModel):
@@ -227,6 +239,13 @@ class StrategySummary(BaseModel):
     #: Why the figures above are zero when it is not "nothing traded" — see
     #: ``Unavailable``. Empty on the normal, priced payload (CORR-706).
     unavailable: Unavailable = ""
+    #: See ``AgentPerformanceModel.pnl_basis``; ``pnl_since`` is when the
+    #: ``total_pnl`` window starts (unix seconds, 0.0 = unknown) and ``pnl_note``
+    #: the latest session's estimate note.
+    pnl_basis: str = ""
+    pnl_estimated: bool = False
+    pnl_note: str = ""
+    pnl_since: float = 0.0
     instances: list[RunningInstance] = []
 
 
@@ -257,6 +276,8 @@ class AgentSummary(BaseModel):
     #: overview could roll an agent's runs up but never fold its records
     #: (ARCH-324). A strategy's own ``server_name`` overrides it.
     server_name: str = ""
+    #: ``account_equity`` when the figures above are a native crew's equity change.
+    pnl_basis: str = ""
     instances: list[RunningInstance] = []
 
 
@@ -337,6 +358,14 @@ class AgentPerformanceModel(BaseModel):
     # for the same reason ``fees_known`` is: the numbers above are 0.0 in all
     # three cases and only this says which of them is "flat" ([[FEAT-137]]).
     reading: str = "ok"
+    #: What ``total_pnl`` measures: ``""`` = Hummingbot executors, ``account_equity``
+    #: = the change in a native venue's whole-account value (deposits and
+    #: withdrawals are not tracked). ``pnl_estimated`` says a boundary equity was
+    #: taken from the nearest sample rather than one at that moment; ``pnl_note``
+    #: says which.
+    pnl_basis: str = ""
+    pnl_estimated: bool = False
+    pnl_note: str = ""
 
     @classmethod
     def from_perf(cls, perf: AgentPerformance, **overrides) -> AgentPerformanceModel:
@@ -1349,6 +1378,79 @@ async def _get_client_for_strategy(
 # from one implementation. This module keeps only HTTP concerns and the caches.
 
 
+def _session_end_epoch(session_dir: Path | None) -> float:
+    """When a session that is no longer running last wrote anything (0.0 = unknown).
+
+    The status heartbeat when there is one, else the journal's last write.
+    """
+    from condor.runtime.registry_file import read_status
+
+    if session_dir is None:
+        return 0.0
+    stamp = (read_status(session_dir) or {}).get("updated_at")
+    if isinstance(stamp, (int, float)) and stamp > 0:
+        return float(stamp)
+    try:
+        return (session_dir / "journal.md").stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+async def _native_session_rows(
+    venue: native_venues.NativeVenue,
+    ids: list[tuple[str, int, str]],
+    strategy_dir: Path,
+    principal: int,
+) -> tuple[list[AgentPerformanceModel], native_accounts.NativePerformance]:
+    """Session rows for a native crew: the venue's account-equity change.
+
+    A native crew trades outside Hummingbot, so there are no executors to sum.
+    Each session's figure is the venue's equity at its end (now, while it runs)
+    minus its equity at its start, read from the value history; see
+    ``condor.native_accounts.performance`` for how a boundary is chosen and what
+    the figure does not capture.
+    """
+    from condor.agents.engine import get_all_engines
+    from condor.runtime.registry_file import LIVE_STATES, is_stale, read_status
+
+    engine_ids = {e.agent_id for e in get_all_engines().values()}
+    sessions = sorted((num, aid) for aid, num, kind in ids if kind == "session")
+    spans: list[native_accounts.SessionSpan] = []
+    for num, aid in sessions:
+        session_dir = find_session_dir(strategy_dir, num)
+        status = (read_status(session_dir) if session_dir else None) or {}
+        live = aid in engine_ids or (
+            status.get("state") in LIVE_STATES and not is_stale(status)
+        )
+        spans.append(
+            native_accounts.SessionSpan(
+                num=num,
+                start=session_start_epoch(strategy_dir, num),
+                end=0.0 if live else _session_end_epoch(session_dir),
+                live=live,
+            )
+        )
+    result = await native_accounts.performance(venue, principal, spans)
+    by_num = {s.num: s for s in result.sessions}
+    rows = []
+    for span, (_num, aid) in zip(spans, sessions):
+        figure = by_num.get(span.num)
+        rows.append(
+            AgentPerformanceModel(
+                agent_id=aid,
+                session_num=span.num,
+                kind="session",
+                started_at=span.start,
+                total_pnl=(figure.pnl or 0.0) if figure else 0.0,
+                reading="ok" if figure and figure.pnl is not None else "missing",
+                pnl_basis=PNL_BASIS_EQUITY,
+                pnl_estimated=bool(figure and figure.estimated),
+                pnl_note=figure.note if figure else "",
+            )
+        )
+    return rows, result
+
+
 async def _compute_strategy_performance(
     run_key: str, strategy_dir: Path, default_config: dict | None, principal: int
 ):
@@ -1375,18 +1477,28 @@ async def _compute_strategy_performance(
     """
     from condor.agents.performance import fetch_agent_performance_batch
 
-    priced = _may_use_strategy_server(
-        _strategy_server(strategy_dir, default_config), principal
-    )
-    cache_key = f"perf:{run_key}" if priced else f"perf:{run_key}:unpriced"
+    # A native crew has no Hummingbot server to price against: its money is the
+    # venue's account equity, which belongs to the user (not to a shared server),
+    # so its cache entry is per principal.
+    native = native_venues.for_agent(run_key.partition(".")[0])
+    if native is not None:
+        cache_key = f"perf:{run_key}:native:{principal}"
+    else:
+        priced = _may_use_strategy_server(
+            _strategy_server(strategy_dir, default_config), principal
+        )
+        cache_key = f"perf:{run_key}" if priced else f"perf:{run_key}:unpriced"
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached
 
     ids = enumerate_agent_ids(run_key, strategy_dir)
-    client, _server, unavailable = await _get_client_for_strategy(
-        strategy_dir, default_config, principal
-    )
+    if native is not None:
+        client, unavailable = None, ""
+    else:
+        client, _server, unavailable = await _get_client_for_strategy(
+            strategy_dir, default_config, principal
+        )
 
     # An experiment's identity is on disk, not in the backend: a dry run
     # simulates and so books nothing, which is why it used to be dropped twice
@@ -1402,6 +1514,12 @@ async def _compute_strategy_performance(
     # runtime-named (per-session config) bots.
     sessions: list[AgentPerformanceModel] = []
     fetch_failed = False
+    native_perf = None
+    if native is not None and ids:
+        sessions, native_perf = await _native_session_rows(
+            native, ids, strategy_dir, principal
+        )
+        unavailable = native_perf.unavailable
     if client and ids:
         from condor.agents.engine import get_all_engines
 
@@ -1535,6 +1653,12 @@ async def _compute_strategy_performance(
         "open_positions": sum(s.open_count for s in real_sessions),
         "trade_count": float(sum(s.trade_count for s in real_sessions)),
     }
+    if native_perf is not None:
+        # Account equity is one running figure, not a sum of sessions: the account
+        # also moves between sessions, which a sum would drop.
+        totals["total_pnl"] = native_perf.total_pnl
+        totals["open_positions"] = float(native_perf.open_positions)
+        totals["pnl_since"] = native_perf.since
 
     # A client came back, but it could not price this render: a connection
     # `get_client` still holds (it re-checks only every ~60s) to a backend that
@@ -1693,6 +1817,7 @@ async def _build_strategy_summary(strategy, user: WebUser) -> StrategySummary:
     )
 
     latest_session_pnl = 0.0
+    latest = None
     if sessions_perf:
         latest = max(
             (p for p in sessions_perf if p.kind == "session"),
@@ -1701,6 +1826,11 @@ async def _build_strategy_summary(strategy, user: WebUser) -> StrategySummary:
         )
         if latest:
             latest_session_pnl = latest.total_pnl
+    native = native_venues.for_agent(strategy.agent_slug)
+    equity_basis = native is not None and native.account
+    if equity_basis and latest is not None and latest.reading == "missing":
+        # A session whose start has no equity to compare with is not a $0.00.
+        unavailable = unavailable or "no_history"
 
     return StrategySummary(
         slug=strategy.slug,
@@ -1717,6 +1847,10 @@ async def _build_strategy_summary(strategy, user: WebUser) -> StrategySummary:
         open_positions=int(totals.get("open_positions", 0)),
         server_name=_strategy_server(strategy_dir, strategy.default_config),
         unavailable=unavailable,
+        pnl_basis=PNL_BASIS_EQUITY if equity_basis else "",
+        pnl_estimated=bool(latest and latest.pnl_estimated),
+        pnl_note=latest.pnl_note if latest else "",
+        pnl_since=float(totals.get("pnl_since", 0.0)),
         instances=instances,
     )
 
@@ -1768,6 +1902,22 @@ async def list_agents(user: WebUser = Depends(get_current_user)):
 
 def _aggregate_strategy_perf(strategies: list[StrategySummary]) -> dict[str, Any]:
     """Roll up per-strategy performance into agent-level aggregates for summary cards."""
+    # Strategies of one native crew measure the same account's equity, so adding
+    # them would count it twice: take one (priced first, then running, then the
+    # longest window) and add the rest of the strategies as usual.
+    equity = [s for s in strategies if s.pnl_basis == PNL_BASIS_EQUITY]
+    counted = [s for s in strategies if s.pnl_basis != PNL_BASIS_EQUITY]
+    if equity:
+        counted.append(
+            min(
+                equity,
+                key=lambda s: (
+                    bool(s.unavailable),
+                    s.status != "running",
+                    s.pnl_since or float("inf"),
+                ),
+            )
+        )
     return {
         "status": (
             "running" if any(s.status == "running" for s in strategies) else "idle"
@@ -1775,10 +1925,11 @@ def _aggregate_strategy_perf(strategies: list[StrategySummary]) -> dict[str, Any
         "session_count": sum(s.session_count for s in strategies),
         "experiment_count": sum(s.experiment_count for s in strategies),
         "tick_count": sum(s.tick_count for s in strategies),
-        "latest_session_pnl": sum(s.latest_session_pnl for s in strategies),
-        "total_pnl": sum(s.total_pnl for s in strategies),
+        "latest_session_pnl": sum(s.latest_session_pnl for s in counted),
+        "total_pnl": sum(s.total_pnl for s in counted),
         "total_volume": sum(s.total_volume for s in strategies),
-        "open_positions": sum(s.open_positions for s in strategies),
+        "open_positions": sum(s.open_positions for s in counted),
+        "pnl_basis": PNL_BASIS_EQUITY if equity else "",
         "instances": [inst for s in strategies for inst in s.instances],
     }
 
@@ -3742,6 +3893,30 @@ async def get_session_executors(
 
     strategy = _get_strategy(slug, sslug)
     agent_id = f"{_runkey(slug, sslug)}_{session_num}"
+    if native_venues.for_agent(slug) is not None:
+        # A native crew has no executors: the session's figure is its venue's
+        # equity change, from the same (cached) rollup as the loop card.
+        sessions, _totals, unavailable = await _compute_strategy_performance(
+            _runkey(slug, sslug),
+            strategy.home,
+            strategy.default_config,
+            _strategy_principal(strategy, user),
+        )
+        row = next(
+            (
+                s
+                for s in sessions
+                if s.kind == "session" and s.session_num == session_num
+            ),
+            AgentPerformanceModel(agent_id=agent_id, session_num=session_num),
+        )
+        return {
+            "executors": [],
+            "performance": row.model_dump(),
+            "pnl_series": [],
+            "deployments": [],
+            "unavailable": unavailable,
+        }
     client, _server, unavailable = await _get_client_for_strategy(
         strategy.home, strategy.default_config, _strategy_principal(strategy, user)
     )
