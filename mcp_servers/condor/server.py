@@ -1438,6 +1438,12 @@ def register_tools(
 # Registration happens at import: ``mcp`` is a module-level singleton and the
 # profile and the mute list are resolved from argv at import (settings), so the
 # server object is complete for anything that inspects it before startup.
+# Placing or reconciling an order reads the provider wallets before and after it
+# (about 3 s each), which overran the default 15 s tool budget: the order filled
+# but the call failed, leaving the ledger uncertain and trading paused.
+CRYPTO_COM_ORDER_TIMEOUT = 90.0
+
+
 @handle_errors("Crypto.com App")
 async def crypto_com_app(
     action: Literal[
@@ -1498,10 +1504,15 @@ async def crypto_com_app(
         )
     if action == "execute":
         return await call_main_api(
-            "POST", "/crypto-com/execute", {"quotation_id": quotation_id}
+            "POST",
+            "/crypto-com/execute",
+            {"quotation_id": quotation_id},
+            timeout=CRYPTO_COM_ORDER_TIMEOUT,
         )
     if action == "reconcile":
-        return await call_main_api("POST", "/crypto-com/reconcile")
+        return await call_main_api(
+            "POST", "/crypto-com/reconcile", timeout=CRYPTO_COM_ORDER_TIMEOUT
+        )
     if action == "predict":
         return await call_main_api(
             "POST",
