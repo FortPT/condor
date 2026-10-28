@@ -81,7 +81,7 @@ export default function App() {
                 }
               >
                 <Route path="/" element={<Agents />} />
-                <Route path="/crypto-com" element={<Navigate to="/trade?workspace=app" replace />} />
+                <Route path="/crypto-com" element={<Navigate to="/trade?workspace=crypto-exchange" replace />} />
                 {/* What every agent is doing is the conversation's Execution
                     panel now, read owner first (FEAT-114) — so this address is
                     a redirect into it rather than a page. Kept rather than

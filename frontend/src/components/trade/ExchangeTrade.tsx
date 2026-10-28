@@ -1,33 +1,38 @@
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { AppResult } from "@/components/settings/CryptoComApp";
-import { limitsSummary } from "@/components/settings/cryptoComLimits";
-import { useCryptoComStatus } from "@/hooks/useCredentials";
-import { useServer } from "@/hooks/useServer";
-import { api, apiFetch, type CandleData } from "@/lib/api";
+import { ExchangeResult } from "@/components/settings/CryptoComExchange";
+import { limitsSummary } from "@/components/settings/cryptoExchangeLimits";
+import { useCryptoExchangeStatus } from "@/hooks/useCredentials";
+import { apiFetch, type CandleData } from "@/lib/api";
 import { getThemeColors } from "@/lib/theme-colors";
 
-type Money = { amount?: string; currency?: string };
-export type AppCoin = {
-  rank?: number;
+export type ExchangeCoin = {
   symbol: string;
-  name?: string;
-  is_tradable?: boolean;
-  price_native?: Money;
-  percent_change_24h_native?: string;
-  percent_change_1w_native?: string;
-  percent_change_30d_native?: string;
-  volume_24h_native?: Money;
+  pair?: string;
+  price?: string;
+  bid?: string;
+  ask?: string;
+  spread_pct?: string;
+  change_24h_pct?: string | null;
+  volume_24h?: string;
+  min_quantity_step?: string | null;
 };
-type CoinList = { coins: AppCoin[] };
-type Quote = {
-  id: string;
-  countdown: number;
-  from_amount: { amount: string; currency: string };
-  to_amount: { amount: string; currency: string };
-  fee?: Money;
+type CoinList = { quote: string; coins: ExchangeCoin[] };
+type Candles = { pair: string; timeframe: string; candles: { t: number | string; o: string; h: string; l: string; c: string; v: string }[] };
+type Preview = {
+  pair: string;
+  side: Side;
+  quantity: string;
+  limit_price: string;
+  bid: string;
+  ask: string;
+  spread_pct: string;
+  estimated_average_price: string | null;
+  estimated_impact_pct: string | null;
+  book_covers_order: boolean;
 };
+type OrderBody = { side: Side; symbol: string; amount: string; max_slippage_pct?: string };
 type Side = "buy" | "sell";
 type Summary = {
   total: number; resolved: number; open: number; hit_target: number; stopped: number; expired: number;
@@ -45,30 +50,28 @@ export type Scorecard = {
   recent: { ts: number; symbol: string; verdict: string; target_pct: number; stop_pct: number; horizon_h: number; outcome: string; net_pct: number | null }[];
 };
 
-const base = "/api/v1/crypto-com";
-const INTERVALS = ["15m", "1h", "4h", "1d"] as const;
-const INTERVAL_SECONDS = { "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400 } as const;
+const base = "/api/v1/crypto-exchange";
+const INTERVALS = ["15m", "1h", "4h", "1D"] as const;
 const CANDLES = 200;
-// The App has no candle feed; public exchange candles in USDT are the chart.
-const CHART_VENUES = ["binance", "okx"] as const;
 const input = "w-full rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm";
 const button = "rounded border border-[var(--color-border)] px-3 py-2 text-sm disabled:opacity-40 aria-pressed:bg-[var(--color-surface-hover)]";
 const card = "rounded-lg border border-[var(--color-border)] p-4";
 const DECIMAL = /^\d{1,18}(\.\d{1,18})?$/;
 
-const num = (value?: string | number) => {
+const num = (value?: string | number | null) => {
+  if (value === null || value === undefined || value === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 };
-const eur = (value: number | null, digits = 2) =>
-  value === null ? "—" : `€${value.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
-const price = (value?: string) => {
+const digitsFor = (value: number) => (value >= 100 ? 2 : value >= 1 ? 3 : value >= 0.01 ? 4 : 8);
+/** A price or amount in the ledger quote currency, with the currency named rather than assumed. */
+const money = (value: number | null, quote: string, digits = 2) =>
+  value === null ? "—" : `${value.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })} ${quote}`.trim();
+const price = (value?: string | null) => {
   const parsed = num(value);
-  if (parsed === null) return "—";
-  const digits = parsed >= 100 ? 2 : parsed >= 1 ? 3 : parsed >= 0.01 ? 4 : 8;
-  return `€${parsed.toLocaleString(undefined, { maximumFractionDigits: digits })}`;
+  return parsed === null ? "—" : parsed.toLocaleString(undefined, { maximumFractionDigits: digitsFor(parsed) });
 };
-function Change({ value, label }: { value?: string; label?: string }) {
+function Change({ value, label }: { value?: string | null; label?: string }) {
   const parsed = num(value);
   if (parsed === null) return <span className="text-[var(--color-text-muted)]">—</span>;
   return <span className={parsed >= 0 ? "text-[var(--color-green)]" : "text-[var(--color-red)]"}>
@@ -115,7 +118,7 @@ function CandleChart({ rows }: { rows: CandleData[] }) {
     });
     return () => { disposed = true; cleanup(); };
   }, [rows]);
-  return <div ref={ref} data-testid="app-chart" className="h-full w-full" />;
+  return <div ref={ref} data-testid="exchange-chart" className="h-full w-full" />;
 }
 
 const signed = (value: number | null | undefined) =>
@@ -124,7 +127,7 @@ const signed = (value: number | null | undefined) =>
 /** Paper test of the trader's logged calls, scored against real prices after costs. */
 function ScorecardPanel() {
   const score = useQuery({
-    queryKey: ["crypto-com-scorecard"],
+    queryKey: ["crypto-exchange-scorecard"],
     queryFn: () => apiFetch<Scorecard>(`${base}/scorecard`),
     refetchInterval: 60000,
     retry: false,
@@ -141,7 +144,7 @@ function ScorecardPanel() {
   return <section className={card} aria-label="Scorecard">
     <h2 className="mb-1 font-semibold">Trader scorecard</h2>
     <p className="text-sm">
-      Paper test: each call the trader logs (coin, target, stop, time window) is scored later against real App prices after a {data.assumptions.round_trip_cost_pct}% round-trip cost. No money moves.
+      Paper test: each call the trader logs (coin, target, stop, time window) is scored later against real Exchange prices after a {data.assumptions.round_trip_cost_pct}% round-trip cost. No money moves.
     </p>
     <p className="mt-1 text-xs text-[var(--color-text-muted)]">
       Tracking {data.prices.coins} coins · {data.prices.snapshots} price snapshots over {data.prices.days} days · {resolved} of 30 resolved calls needed before trusting the result{data.enough_data ? " (reached)" : ""}.
@@ -173,16 +176,31 @@ function ScorecardPanel() {
   </section>;
 }
 
-export function AppTrade() {
-  const { server } = useServer();
+function PreviewDetails({ preview, quote, symbol, amount }: { preview: Preview; quote: string; symbol: string; amount: string }) {
+  const buy = preview.side === "buy";
+  return <div className="space-y-1">
+    <p className="font-medium">{buy ? "Buy" : "Sell"} up to {preview.quantity} {symbol} on {preview.pair}</p>
+    <p>{buy ? `Spending at most ${amount} ${quote}` : `Selling ${amount} ${symbol}`} · limit price {preview.limit_price} {quote}</p>
+    <p>Best bid {preview.bid} · best ask {preview.ask} · spread {preview.spread_pct}%</p>
+    <p>Estimated average price {preview.estimated_average_price ? `${preview.estimated_average_price} ${quote}` : "—"}
+      {preview.estimated_impact_pct !== null && <> · price impact {preview.estimated_impact_pct}%</>}</p>
+    {!preview.book_covers_order && <p className="text-[var(--color-red)]">The order book is too thin to fill the whole order. Expect a partial fill.</p>}
+    <p className="text-xs text-[var(--color-text-muted)]">Immediate-or-cancel limit order: it fills what it can at or better than the limit price right away and cancels the rest. It is never resubmitted automatically.</p>
+  </div>;
+}
+
+export function ExchangeTrade() {
   const qc = useQueryClient();
-  const status = useCryptoComStatus();
+  const status = useCryptoExchangeStatus();
   const data = status.data;
-  const positions = data?.ledger.positions ?? {};
+  const ledger = data?.ledger;
+  const quote = ledger?.quote ?? "USD";
+  const positions = ledger?.positions ?? {};
   const held = Object.keys(positions);
+  const uncertain = !!ledger?.uncertain_order;
 
   const top = useQuery({
-    queryKey: ["crypto-com-top"],
+    queryKey: ["crypto-exchange-top"],
     queryFn: () => apiFetch<CoinList>(`${base}/coins?keyword=`),
     refetchInterval: 30000,
     retry: false,
@@ -190,121 +208,86 @@ export function AppTrade() {
   const [search, setSearch] = useState("");
   const term = search.trim().toUpperCase();
   const found = useQuery({
-    queryKey: ["crypto-com-search", term],
+    queryKey: ["crypto-exchange-search", term],
     enabled: term.length > 0,
     queryFn: () => apiFetch<CoinList>(`${base}/coins?keyword=${encodeURIComponent(term)}`),
     retry: false,
   });
-  const missing = held.filter((symbol) => !top.data?.coins.some((coin) => coin.symbol === symbol));
-  const extra = useQueries({
-    queries: missing.map((symbol) => ({
-      queryKey: ["crypto-com-coin", symbol],
-      queryFn: () => apiFetch<CoinList>(`${base}/coins?keyword=${encodeURIComponent(symbol)}`),
-      staleTime: 30000,
-      retry: false,
-    })),
-  });
 
   const known = useMemo(() => {
-    const map = new Map<string, AppCoin>();
+    const map = new Map<string, ExchangeCoin>();
     for (const coin of top.data?.coins ?? []) map.set(coin.symbol, coin);
-    for (const result of extra) {
-      const match = result.data?.coins.find((coin) => held.includes(coin.symbol));
-      if (match) map.set(match.symbol, match);
-    }
     for (const coin of found.data?.coins ?? []) if (!map.has(coin.symbol)) map.set(coin.symbol, coin);
     return map;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [top.data, found.data, extra.map((result) => result.dataUpdatedAt).join(","), held.join(",")]);
+  }, [top.data, found.data]);
 
-  const listed = useMemo(() => {
-    const rows = term
-      ? (found.data?.coins ?? [])
-      : [...held.map((symbol): AppCoin => known.get(symbol) ?? { symbol }),
-        ...(top.data?.coins ?? []).filter((coin) => !held.includes(coin.symbol))];
-    return rows;
-  }, [term, found.data, top.data, known, held]);
+  // The server appends held coins to the top list, so a holding always has its live price.
+  const listed = useMemo(() => term
+    ? (found.data?.coins ?? [])
+    : [...held.map((symbol): ExchangeCoin => known.get(symbol) ?? { symbol }),
+      ...(top.data?.coins ?? []).filter((coin) => !held.includes(coin.symbol))],
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [term, found.data, top.data, known, held.join(",")]);
 
   const [symbol, setSymbol] = useState("BTC");
   const [side, setSide] = useState<Side>("buy");
   const [interval, setIntervalValue] = useState<(typeof INTERVALS)[number]>("1h");
   const coin = known.get(symbol);
-  const listedPrice = num(coin?.price_native?.amount);
 
   const candles = useQuery({
-    queryKey: ["app-candles", server, symbol, interval],
-    enabled: !!server,
+    queryKey: ["crypto-exchange-candles", symbol, interval],
     retry: false,
     staleTime: 20000,
     queryFn: async () => {
-      for (const connector of CHART_VENUES) {
-        try {
-          // Without a window the backend returns only the last few hours.
-          const end = Math.floor(Date.now() / 1000);
-          const rows = await api.getCandles(server!, connector, `${symbol}-USDT`, interval, CANDLES,
-            end - CANDLES * INTERVAL_SECONDS[interval], end);
-          if (rows.length) return { connector, rows };
-        } catch { /* try the next venue */ }
-      }
-      throw new Error(`No chart data for ${symbol}`);
+      const res = await apiFetch<Candles>(`${base}/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${interval}&count=${CANDLES}`);
+      const rows: CandleData[] = res.candles
+        .map((row) => ({ timestamp: Math.floor(Number(row.t) / 1000), open: Number(row.o), high: Number(row.h), low: Number(row.l), close: Number(row.c), volume: Number(row.v) }))
+        .filter((row) => [row.timestamp, row.open, row.high, row.low, row.close].every(Number.isFinite));
+      if (!rows.length) throw new Error(`No chart data for ${symbol}`);
+      return { pair: res.pair, rows };
     },
   });
 
-  // ── order ticket ──
+  // ── order ticket: preview first, then place ──
   const [amount, setAmount] = useState("");
-  const [quote, setQuote] = useState<Quote | null>(null);
-  const [expiresAt, setExpiresAt] = useState(0);
-  const [now, setNow] = useState(Date.now());
+  const [slippage, setSlippage] = useState("");
+  const [preview, setPreview] = useState<{ body: OrderBody; data: Preview } | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const [result, setResult] = useState<unknown>(null);
-  useEffect(() => {
-    if (!quote) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 500);
-    return () => window.clearInterval(timer);
-  }, [quote]);
-  const refresh = () => qc.invalidateQueries({ queryKey: ["crypto-com-status"] });
+  const refresh = () => qc.invalidateQueries({ queryKey: ["crypto-exchange-status"] });
   const heldUnits = positions[symbol]?.units;
-  const cash = num(data?.ledger.cash_eur);
+  const cash = num(ledger?.cash);
 
-  function reset() { setQuote(null); }
-  const requestQuote = useMutation({
-    mutationFn: () => apiFetch<Quote>(`${base}/quote`, {
-      method: "POST",
-      body: JSON.stringify(side === "buy"
-        ? { kind: "purchase", source: "EUR", target: symbol, amount }
-        : { kind: "sale", source: symbol, target: "EUR", amount }),
-    }),
-    onSuccess: (next) => { setQuote(next); setExpiresAt(Date.now() + next.countdown * 1000); setNow(Date.now()); },
+  function reset() { setPreview(null); setConfirming(false); }
+  const requestPreview = useMutation({
+    mutationFn: (body: OrderBody) => apiFetch<Preview>(`${base}/preview`, { method: "POST", body: JSON.stringify(body) }),
+    onSuccess: (next, body) => setPreview({ body, data: next }),
+    retry: false,
   });
-  const execute = useMutation({
-    mutationFn: (quotationId: string) => apiFetch(`${base}/execute`, { method: "POST", body: JSON.stringify({ quotation_id: quotationId }) }),
-    onSuccess: (next) => { setResult(next); refresh(); qc.invalidateQueries({ queryKey: ["crypto-com-coin"] }); },
-    onSettled: () => setQuote(null),
+  const place = useMutation({
+    mutationFn: (body: OrderBody) => apiFetch(`${base}/order`, { method: "POST", body: JSON.stringify(body) }),
+    onSuccess: (next) => { setResult(next); setAmount(""); },
+    // An order whose outcome is unknown fails with an error but changes the ledger, so always re-read the status.
+    onSettled: () => { reset(); refresh(); qc.invalidateQueries({ queryKey: ["crypto-exchange-top"] }); },
     retry: false,
   });
   const toggle = useMutation({
     mutationFn: (enabled: boolean) => apiFetch(`${base}/enabled`, { method: "PUT", body: JSON.stringify({ enabled }) }),
-    onSuccess: () => { setQuote(null); refresh(); },
+    onSuccess: () => reset(),
+    onSettled: () => refresh(),
   });
   const inspect = useMutation({ mutationFn: (path: string) => apiFetch(base + path), onSuccess: setResult });
   const reconcile = useMutation({
     mutationFn: () => apiFetch(`${base}/reconcile`, { method: "POST" }),
-    onSuccess: () => refresh(),
+    onSettled: () => refresh(),
     retry: false,
   });
-  const error = status.error || top.error || requestQuote.error || execute.error || toggle.error || inspect.error || reconcile.error;
+  const error = status.error || top.error || requestPreview.error || place.error || toggle.error || inspect.error || reconcile.error;
 
-  const remaining = quote ? Math.max(0, Math.ceil((expiresAt - now) / 1000)) : 0;
-  const expired = !!quote && remaining <= 0;
-  const effective = quote
-    ? side === "buy"
-      ? num(quote.from_amount.amount)! / num(quote.to_amount.amount)!
-      : num(quote.to_amount.amount)! / num(quote.from_amount.amount)!
-    : null;
-  const versusListed = effective !== null && listedPrice ? (effective / listedPrice - 1) * 100 : null;
-  // Positive means the quote is worse for you than the listed price.
-  const costPct = versusListed === null ? null : side === "buy" ? versusListed : -versusListed;
   const amountValid = DECIMAL.test(amount) && Number(amount) > 0;
-  const canQuote = !!data?.connected && amountValid && coin?.is_tradable !== false && !requestQuote.isPending && !execute.isPending;
+  const slippageValid = slippage === "" || (DECIMAL.test(slippage) && Number(slippage) > 0);
+  const synced = !!ledger?.synced;
+  const canPreview = !!data?.connected && synced && amountValid && slippageValid && !requestPreview.isPending && !place.isPending;
 
   function pick(next: string, nextSide?: Side) {
     setSymbol(next);
@@ -317,31 +300,33 @@ export function AppTrade() {
     else if (heldUnits) setAmount(fraction === 1 ? heldUnits : units(Number(heldUnits) * fraction));
   }
 
-  const valueRows = held.map((held_symbol) => {
-    const position = positions[held_symbol];
-    const row = known.get(held_symbol);
-    const value = num(position.units) !== null && num(row?.price_native?.amount) !== null
-      ? num(position.units)! * num(row?.price_native?.amount)! : null;
-    const cost = num(position.cost_eur);
-    return { symbol: held_symbol, units: position.units, cost, value, pnl: value !== null && cost ? (value / cost - 1) * 100 : null };
+  const valueRows = held.map((heldSymbol) => {
+    const position = positions[heldSymbol];
+    const bid = num(known.get(heldSymbol)?.bid);
+    const value = num(position.units) !== null && bid !== null ? num(position.units)! * bid : null;
+    const cost = num(position.cost);
+    return { symbol: heldSymbol, units: position.units, cost, value, pnl: value !== null && cost ? (value / cost - 1) * 100 : null };
   });
+  const botOrders = [...(ledger?.orders ?? [])].reverse().slice(0, 5);
 
   return <div className="space-y-4">
     <div className="flex flex-wrap items-center gap-3">
-      <h1 className="text-xl font-semibold">Crypto.com App</h1>
-      <span className="text-sm">{data?.connected ? "Agent Key saved" : "not connected"} · Trading: {data?.enabled ? "enabled" : "paused"}</span>
-      {data?.ledger && <span className="text-sm">Cash {eur(cash)} · {held.length} holdings</span>}
+      <h1 className="text-xl font-semibold">Crypto.com Exchange</h1>
+      <span className="text-sm">{data?.connected ? `API key saved (${data.environment})` : "not connected"} · Trading: {data?.enabled ? "enabled" : "paused"}</span>
+      {ledger && <span className="text-sm">Cash {money(cash, quote)} · {held.length} holdings</span>}
       <div className="ml-auto flex flex-wrap gap-2">
-        <button className={button} disabled={!data?.connected || toggle.isPending || !!data?.ledger.uncertain_order} onClick={() => toggle.mutate(!data?.enabled)}>{data?.enabled ? "Pause trading" : "Enable trading within allocation"}</button>
+        <button className={button} disabled={!data?.connected || toggle.isPending || (!data?.enabled && (uncertain || !synced))} onClick={() => toggle.mutate(!data?.enabled)}>{data?.enabled ? "Pause trading" : "Enable trading within allocation"}</button>
         <button className={button} disabled={!data?.connected || inspect.isPending} onClick={() => inspect.mutate("/accounts")}>Balances</button>
         <button className={button} disabled={!data?.connected || inspect.isPending} onClick={() => inspect.mutate("/history")}>History</button>
         <button className={button} disabled={!data?.connected || inspect.isPending} onClick={() => inspect.mutate("/valuation")}>Value allocation</button>
       </div>
     </div>
     {error && <p role="alert" className="text-sm text-[var(--color-red)]">{error.message}</p>}
-    {!!data?.ledger.uncertain_order && <div className={card}>
-      <p role="alert" className="text-sm text-[var(--color-red)]">An order needs reconciliation. Trading stays paused. Check Crypto.com history before any new submission.</p>
-      <button className={`${button} mt-2`} disabled={reconcile.isPending} onClick={() => reconcile.mutate()}>Reconcile from provider history</button>
+    {data && !data.connected && <p className="text-sm">Connect an Exchange API key in <a className="underline" href="/settings?tab=crypto-exchange">Settings</a> to trade.</p>}
+    {data?.connected && !synced && <p className="text-sm">The bot allocation has not been synced from the Exchange account. Use “Sync allocation from Exchange account” in <a className="underline" href="/settings?tab=crypto-exchange">Settings</a> before trading.</p>}
+    {uncertain && <div className={card}>
+      <p role="alert" className="text-sm text-[var(--color-red)]">An order needs reconciliation. Trading stays paused. Check the Exchange order history before any new submission.</p>
+      <button className={`${button} mt-2`} disabled={reconcile.isPending} onClick={() => reconcile.mutate()}>Reconcile from Exchange order history</button>
     </div>}
 
     <div className="grid gap-4 lg:grid-cols-[17rem_minmax(0,1fr)_20rem]">
@@ -356,21 +341,19 @@ export function AppTrade() {
             <span>
               <span className="font-medium">{row.symbol}</span>
               {held.includes(row.symbol) && <span className="ml-1 text-xs text-[var(--color-text-muted)]">held</span>}
-              {row.is_tradable === false && <span className="ml-1 text-xs text-[var(--color-text-muted)]">not tradable</span>}
             </span>
-            <span className="text-right"><span className="block">{price(row.price_native?.amount)}</span><span className="block text-xs"><Change value={row.percent_change_24h_native} /></span></span>
+            <span className="text-right"><span className="block">{price(row.price)}</span><span className="block text-xs"><Change value={row.change_24h_pct} /></span></span>
           </button>)}
-          {term && !found.isLoading && !listed.length && <p className="p-2 text-sm">No App coin matches “{term}”.</p>}
+          {term && !found.isLoading && !listed.length && <p className="p-2 text-sm">No Exchange coin matches “{term}” in {quote}.</p>}
         </div>
       </section>
 
       <section className={card} aria-label="Chart">
         <div className="mb-2 flex flex-wrap items-baseline gap-x-4 gap-y-1">
-          <h2 className="text-lg font-semibold">{symbol}{coin?.name ? <span className="ml-2 text-sm font-normal text-[var(--color-text-muted)]">{coin.name}</span> : null}</h2>
-          <span className="text-lg">{price(coin?.price_native?.amount)}</span>
-          <span className="text-sm"><Change value={coin?.percent_change_24h_native} label="24h " /></span>
-          <span className="text-sm"><Change value={coin?.percent_change_1w_native} label="1w " /></span>
-          <span className="text-sm"><Change value={coin?.percent_change_30d_native} label="30d " /></span>
+          <h2 className="text-lg font-semibold">{symbol}<span className="ml-2 text-sm font-normal text-[var(--color-text-muted)]">{symbol}/{quote}</span></h2>
+          <span className="text-lg">{price(coin?.price)}</span>
+          <span className="text-sm"><Change value={coin?.change_24h_pct} label="24h " /></span>
+          {coin?.spread_pct !== undefined && <span className="text-sm text-[var(--color-text-muted)]">spread {coin.spread_pct}%</span>}
           <div className="ml-auto flex gap-1" role="group" aria-label="Interval">
             {INTERVALS.map((value) => <button key={value} className={button} aria-pressed={interval === value} onClick={() => setIntervalValue(value)}>{value}</button>)}
           </div>
@@ -381,7 +364,7 @@ export function AppTrade() {
           {candles.data && <CandleChart rows={candles.data.rows} />}
         </div>
         <p className="mt-2 text-xs text-[var(--color-text-muted)]">
-          Chart: {candles.data ? `${candles.data.connector} ${symbol}/USDT` : "public exchange candles in USDT"}. The App prices and quotes are in EUR, so levels differ from the chart. Spreads apply when selling, so check the quote.
+          Chart: {candles.data ? `Exchange ${candles.data.pair}` : "Exchange candles"} ({interval}). Orders go to the public order book, so the preview shows the spread and price impact before you place anything.
         </p>
       </section>
 
@@ -390,10 +373,9 @@ export function AppTrade() {
           <button className={`${button} flex-1`} aria-pressed={side === "buy"} onClick={() => { setSide("buy"); setAmount(""); reset(); }}>Buy</button>
           <button className={`${button} flex-1`} aria-pressed={side === "sell"} onClick={() => { setSide("sell"); setAmount(""); reset(); }}>Sell</button>
         </div>
-        <p className="text-sm">{side === "buy" ? `Buy ${symbol} with EUR` : `Sell ${symbol} to EUR`}</p>
-        {coin?.is_tradable === false && <p className="text-sm text-[var(--color-red)]">{symbol} is not tradable in the App.</p>}
-        <form className="space-y-3" onChange={reset} onSubmit={(event) => { event.preventDefault(); reset(); requestQuote.mutate(); }}>
-          <label className="block text-sm">{side === "buy" ? "Amount to spend (EUR)" : `Amount to sell (${symbol})`}
+        <p className="text-sm">{side === "buy" ? `Buy ${symbol} with ${quote}` : `Sell ${symbol} for ${quote}`}</p>
+        <form className="space-y-3" onChange={reset} onSubmit={(event) => { event.preventDefault(); reset(); requestPreview.mutate({ side, symbol, amount, ...(slippage ? { max_slippage_pct: slippage } : {}) }); }}>
+          <label className="block text-sm">{side === "buy" ? `Amount to spend (${quote})` : `Amount to sell (${symbol})`}
             <input className={input} value={amount} inputMode="decimal" onChange={(event) => setAmount(event.target.value)} required />
           </label>
           <div className="flex gap-2">
@@ -401,46 +383,66 @@ export function AppTrade() {
               disabled={side === "sell" && !heldUnits} onClick={() => fill(fraction)}>{fraction === 1 ? "Max" : `${fraction * 100}%`}</button>)}
           </div>
           <p className="text-xs text-[var(--color-text-muted)]">
-            {side === "buy" ? `Cash available ${eur(cash)}.` : heldUnits ? `Held ${heldUnits} ${symbol}.` : `No ${symbol} held in the bot allocation.`}
+            {side === "buy" ? `Cash available ${money(cash, quote)}.` : heldUnits ? `Held ${heldUnits} ${symbol}.` : `No ${symbol} held in the bot allocation.`}
           </p>
-          <button className={`${button} w-full`} disabled={!canQuote}>Get quotation</button>
+          <label className="block text-sm">Max slippage (%)
+            <input className={input} value={slippage} inputMode="decimal" placeholder={data?.limits?.default_slippage_pct ? `default ${data.limits.default_slippage_pct}` : "default"} onChange={(event) => setSlippage(event.target.value)} />
+          </label>
+          <button className={`${button} w-full`} disabled={!canPreview}>Preview order</button>
         </form>
-        {quote && <div className="space-y-2 border-t border-[var(--color-border)] pt-3 text-sm">
-          <p>{side === "buy" ? "Spend" : "Sell"} {quote.from_amount.amount} {quote.from_amount.currency} → receive {quote.to_amount.amount} {quote.to_amount.currency}</p>
-          {effective !== null && <p>Effective price {price(String(effective))}{costPct !== null && <> · <span className={costPct >= 2 ? "text-[var(--color-red)]" : ""}>{costPct >= 0 ? "costs " : "saves "}{Math.abs(costPct).toFixed(2)}% vs listed</span></>}</p>}
-          {quote.fee?.amount !== undefined && <p>Fee {quote.fee.amount} {quote.fee.currency}</p>}
-          <p className="text-xs text-[var(--color-text-muted)]">{expired ? "Quotation expired. Request a new one." : `Quotation expires in ${remaining} seconds. Expired quotes are rejected by the server.`}</p>
-          <button className={`${button} w-full`} disabled={!data?.enabled || execute.isPending || expired} onClick={() => {
-            if (Date.now() >= expiresAt) { setQuote(null); return; }
-            execute.mutate(quote.id);
-          }}>Confirm & submit order</button>
-          {!data?.enabled && <p className="text-xs text-[var(--color-red)]">Trading is paused. Enable it above to submit.</p>}
+        {preview && <div className="space-y-2 border-t border-[var(--color-border)] pt-3 text-sm">
+          <PreviewDetails preview={preview.data} quote={quote} symbol={preview.body.symbol} amount={preview.body.amount} />
+          <button className={`${button} w-full`} disabled={!data?.enabled || place.isPending} onClick={() => setConfirming(true)}>Place order…</button>
+          {!data?.enabled && <p className="text-xs text-[var(--color-red)]">Trading is paused. Enable it above to place an order.</p>}
         </div>}
       </section>
     </div>
 
+    {confirming && preview && <div role="dialog" aria-modal="true" aria-label="Confirm order" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-md space-y-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-5 text-sm">
+        <h2 className="text-base font-semibold">Confirm order</h2>
+        <PreviewDetails preview={preview.data} quote={quote} symbol={preview.body.symbol} amount={preview.body.amount} />
+        <p className="text-xs text-[var(--color-text-muted)]">The numbers above are an estimate from the live order book; the Exchange fills the order at the time it is placed.</p>
+        <div className="flex gap-2">
+          <button className={`${button} flex-1`} disabled={place.isPending} onClick={() => setConfirming(false)}>Cancel</button>
+          <button className={`${button} flex-1`} disabled={!data?.enabled || place.isPending} onClick={() => place.mutate(preview.body)}>Confirm and place order</button>
+        </div>
+      </div>
+    </div>}
+
     <section className={card} aria-label="Holdings">
       <h2 className="mb-2 font-semibold">Bot holdings</h2>
       <table className="w-full text-left text-sm">
-        <thead><tr><th>Asset</th><th>Units</th><th>Cost</th><th>Listed value</th><th>vs cost</th><th></th></tr></thead>
+        <thead><tr><th>Asset</th><th>Units</th><th>Cost</th><th>Value at bid</th><th>vs cost</th><th></th></tr></thead>
         <tbody>
-          <tr><td>EUR cash</td><td>{data?.ledger.cash_eur ?? "—"}</td><td>—</td><td>{eur(cash)}</td><td>—</td><td></td></tr>
+          <tr><td>{quote} cash</td><td>{ledger?.cash ?? "—"}</td><td>—</td><td>{money(cash, quote)}</td><td>—</td><td></td></tr>
           {valueRows.map((row) => <tr key={row.symbol}>
-            <td>{row.symbol}</td><td>{row.units}</td><td>{eur(row.cost)}</td><td>{eur(row.value)}</td>
+            <td>{row.symbol}</td><td>{row.units}</td><td>{money(row.cost, quote)}</td><td>{money(row.value, quote)}</td>
             <td>{row.pnl === null ? "—" : <Change value={String(row.pnl)} />}</td>
             <td><button className={button} onClick={() => pick(row.symbol, "sell")}>Sell…</button></td>
           </tr>)}
         </tbody>
       </table>
-      <p className="mt-2 text-xs text-[var(--color-text-muted)]">Listed value uses App listing prices; selling realises less after the sale spread. Only the bot allocation is traded; the agent loop uses this same ledger.</p>
+      <p className="mt-2 text-xs text-[var(--color-text-muted)]">Value uses the live best bid, the price a sale would meet first. Cost for coins carried over at a sync restarts at their bid then. Only the bot allocation is traded; the agent loop uses this same ledger.</p>
     </section>
+
+    {botOrders.length > 0 && <section className={card} aria-label="Bot orders">
+      <h2 className="mb-2 font-semibold">Recent bot orders</h2>
+      <table className="w-full text-left text-sm">
+        <thead><tr><th>Time</th><th>Side</th><th>Asset</th><th>Status</th><th>Filled</th><th>Value</th><th>Fee</th></tr></thead>
+        <tbody>{botOrders.map((order) => <tr key={`${order.order_id ?? order.client_oid}-${order.time}`}>
+          <td>{new Date(order.time * 1000).toLocaleString()}</td><td>{order.side}</td><td>{order.symbol}</td><td>{order.status}</td>
+          <td>{order.quantity}</td><td>{order.value} {quote}</td><td>{order.fee} {order.fee_currency ?? ""}</td>
+        </tr>)}</tbody>
+      </table>
+    </section>}
 
     <section className={card}>
       <h2 className="mb-1 font-semibold">Bot allocation rules</h2>
-      <p className="text-sm">{limitsSummary(data?.limits)}</p>
-      <p className="mt-2 text-xs text-[var(--color-text-muted)]">Enabling execution does not start a loop or place an order. A stop is not a guaranteed exit price.</p>
+      <p className="text-sm">{limitsSummary(data?.limits, quote)}</p>
+      <p className="mt-2 text-xs text-[var(--color-text-muted)]">Enabling execution does not start a loop or place an order.</p>
     </section>
     <ScorecardPanel />
-    {result !== null && <AppResult value={result} />}
+    {result !== null && <ExchangeResult value={result} />}
   </div>;
 }

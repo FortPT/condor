@@ -297,7 +297,7 @@ def report(
     return {
         "assumptions": {
             "round_trip_cost_pct": cost_pct,
-            "basis": "buys ~listed price, sales 3.6-7.1% below it, trading fee waived (measured 2026-10-27)",
+            "basis": "Exchange estimate: taker fee up to 0.5% a side plus half a spread each way",
             "outcome_rule": "target or stop, whichever the price reaches first; otherwise the last price in the window",
         },
         "prices": {"snapshots": stats[0], "coins": stats[3], "days": round(days, 2)},

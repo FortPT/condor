@@ -15,12 +15,13 @@ vi.mock("@/pages/CreateExecutor", () => ({ CreateExecutor: () => {
 } }));
 vi.mock("@/components/ConnectKeysOverlay", () => ({ ConnectKeysOverlay: () => <div data-gate>Connect Exchange keys</div> }));
 
-const appStatus = { connected: true, enabled: false, ledger: { cash_eur: "26", positions: {}, uncertain_order: null } };
+const exchangeStatus = { connected: true, environment: "production", enabled: false, ledger: { quote: "USD", cash: "26", positions: {}, uncertain_order: null, synced: true } };
 const onlyReads = (calls: unknown[][]) => calls.every(([path, init]) =>
-  (path === "/api/v1/crypto-com/status" || path === "/api/v1/crypto-com/scorecard" || String(path).startsWith("/api/v1/crypto-com/coins?")) && !init);
+  (path === "/api/v1/crypto-exchange/status" || path === "/api/v1/crypto-exchange/scorecard" ||
+    String(path).startsWith("/api/v1/crypto-exchange/coins?") || String(path).startsWith("/api/v1/crypto-exchange/candles?")) && !init);
 vi.mock("@/lib/api", async () => ({
   apiFetch: request.fetch,
-  api: { getCredentials: request.credentials, getGatewayWallets: request.wallets, getCandles: vi.fn().mockRejectedValue(new Error("no candles")) },
+  api: { getCredentials: request.credentials, getGatewayWallets: request.wallets },
 }));
 let root: Root;
 let host: HTMLDivElement;
@@ -28,7 +29,7 @@ let qc: QueryClient;
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   request.fetch.mockReset().mockImplementation((path: string) => Promise.resolve(
-    path.includes("/coins") ? { coins: [] } : path.endsWith("/scorecard") ? {} : appStatus));
+    path.includes("/coins") ? { quote: "USD", coins: [] } : path.includes("/candles") ? { pair: "BTC_USD", timeframe: "1h", candles: [] } : path.endsWith("/scorecard") ? {} : exchangeStatus));
   request.credentials.mockReset().mockResolvedValue({ credentials: [] });
   request.wallets.mockReset().mockResolvedValue({ wallets: [] });
   host = document.createElement("div");
@@ -53,46 +54,50 @@ async function choose(label: string) {
   const button = Array.from(host.querySelectorAll("button")).find((b) => b.textContent === label)!;
   await act(async () => button.click());
 }
-it("opens the connected main App without Exchange keys and only reads status", async () => {
+it("opens the connected Crypto.com Exchange without Hummingbot keys and only reads", async () => {
   await render();
-  expect(host.textContent).toContain("Get quotation");
-  expect(host.textContent).toMatch(/Cash €26[.,]00/);
-  expect(host.textContent).not.toContain("€30");
-  expect(host.textContent).not.toContain("€5 initially");
+  expect(host.textContent).toContain("Preview order");
+  expect(host.textContent).toMatch(/Cash 26[.,]00 USD/);
+  expect(host.textContent).not.toContain("€");
   expect(host.querySelector("[data-gate]")).toBeNull();
   expect(host.querySelector("[data-workspace]")).toBeNull();
   expect(onlyReads(request.fetch.mock.calls)).toBe(true);
 });
-it("keeps Exchange-only accounts in Hummingbot", async () => {
+it("keeps Hummingbot-only accounts in Hummingbot", async () => {
   request.credentials.mockResolvedValue({ credentials: [{ connector: "crypto_com" }] });
-  request.fetch.mockResolvedValue({ connected: false, enabled: false, ledger: { cash_eur: "0", positions: {}, uncertain_order: null } });
+  request.fetch.mockResolvedValue({ connected: false, environment: "production", enabled: false, ledger: { quote: "USD", cash: "0", positions: {}, uncertain_order: null, synced: false } });
   await render();
   expect(host.querySelector("[data-workspace]")).not.toBeNull();
   expect(host.querySelector("[data-gate]")).toBeNull();
 });
-it("defaults to App with a Gateway wallet but no Exchange keys", async () => {
+it("defaults to the Exchange with a Gateway wallet but no Hummingbot keys", async () => {
   request.wallets.mockResolvedValue({ wallets: [{ walletAddresses: ["wallet"] }] });
   await render();
-  expect(host.textContent).toContain("Get quotation");
+  expect(host.textContent).toContain("Preview order");
   expect(host.querySelector("[data-gate]")).toBeNull();
 });
-it.each(["?type=grid", "?type=order", "?workspace=hummingbot", "?connector=crypto_com&pair=BTC-USDT"])("preserves explicit Exchange URL %s", async (search) => {
+it.each(["?type=grid", "?type=order", "?workspace=hummingbot", "?connector=crypto_com&pair=BTC-USDT"])("preserves explicit Hummingbot URL %s", async (search) => {
   await render("/trade" + search);
   expect(host.querySelector("[data-workspace]")?.textContent).toContain(search);
   expect(host.querySelector("[data-gate]")).not.toBeNull();
 });
-it("keeps Exchange gating when switching and allows returning to App", async () => {
+it("keeps Hummingbot gating when switching and allows returning to the Crypto.com Exchange", async () => {
   await render();
-  await choose("Hummingbot / Exchange");
+  await choose("Hummingbot");
   expect(host.querySelector("[data-gate]")).not.toBeNull();
-  await choose("Crypto.com App");
+  await choose("Crypto.com Exchange");
   expect(host.querySelector("[data-gate]")).toBeNull();
-  expect(host.textContent).toContain("Get quotation");
+  expect(host.textContent).toContain("Preview order");
   expect(onlyReads(request.fetch.mock.calls)).toBe(true);
 });
-it("offers explicit App even with Exchange keys without automatically enabling it", async () => {
+it("offers the explicit Crypto.com Exchange even with Hummingbot keys, without enabling it", async () => {
+  request.credentials.mockResolvedValue({ credentials: [{ connector: "binance" }] });
+  await render("/trade?workspace=crypto-exchange");
+  expect(host.textContent).toContain("Preview order");
+  expect(onlyReads(request.fetch.mock.calls)).toBe(true);
+});
+it("keeps the retired workspace=app link working", async () => {
   request.credentials.mockResolvedValue({ credentials: [{ connector: "binance" }] });
   await render("/trade?workspace=app");
-  expect(host.textContent).toContain("Get quotation");
-  expect(onlyReads(request.fetch.mock.calls)).toBe(true);
+  expect(host.textContent).toContain("Preview order");
 });

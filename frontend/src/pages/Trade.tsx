@@ -1,8 +1,8 @@
 import { Navigate, useSearchParams } from "react-router-dom";
 
 import { ConnectKeysOverlay } from "@/components/ConnectKeysOverlay";
-import { AppTrade } from "@/components/trade/AppTrade";
-import { useCredentials, useCryptoComStatus } from "@/hooks/useCredentials";
+import { ExchangeTrade } from "@/components/trade/ExchangeTrade";
+import { useCredentials, useCryptoExchangeStatus } from "@/hooks/useCredentials";
 import { useServer } from "@/hooks/useServer";
 import { CreateExecutor } from "@/pages/CreateExecutor";
 
@@ -10,11 +10,12 @@ export function Trade() {
   const [params, setParams] = useSearchParams();
   const { server } = useServer();
   const { hasKeys, credentials, isLoading: keysLoading } = useCredentials();
-  const status = useCryptoComStatus();
-  const workspace = params.get("workspace");
+  const status = useCryptoExchangeStatus();
+  // `workspace=exchange` has always meant the Hummingbot exchange workspace; `app` is the retired App link.
+  const workspace = params.get("workspace") === "app" ? "crypto-exchange" : params.get("workspace");
   const explicitExchange = workspace === "hummingbot" || workspace === "exchange" ||
     params.has("type") || params.has("connector") || params.has("pair");
-  const appWorkspace = workspace === "app" ||
+  const cryptoWorkspace = workspace === "crypto-exchange" ||
     (!explicitExchange && !!status.data?.connected && credentials.length === 0);
   const loading = !workspace && !explicitExchange && (keysLoading || status.isLoading);
 
@@ -25,10 +26,10 @@ export function Trade() {
     return <Navigate to={{ pathname: "/trade", search: `?${nextParams}` }} replace />;
   }
 
-  function selectWorkspace(next: "app" | "hummingbot") {
+  function selectWorkspace(next: "crypto-exchange" | "hummingbot") {
     const nextParams = new URLSearchParams(params);
     nextParams.set("workspace", next);
-    if (next === "app") {
+    if (next === "crypto-exchange") {
       nextParams.delete("type");
       nextParams.delete("connector");
       nextParams.delete("pair");
@@ -38,11 +39,11 @@ export function Trade() {
 
   return <div className="-m-6 flex h-[calc(100%+3rem)] flex-col">
     <div className="flex shrink-0 gap-2 border-b border-[var(--color-border)] p-3" role="group" aria-label="Trading account">
-      <button className="rounded border border-[var(--color-border)] px-3 py-2 text-sm aria-pressed:bg-[var(--color-surface-hover)]" aria-pressed={!loading && appWorkspace} onClick={() => selectWorkspace("app")}>Crypto.com App</button>
-      <button className="rounded border border-[var(--color-border)] px-3 py-2 text-sm aria-pressed:bg-[var(--color-surface-hover)]" aria-pressed={!loading && !appWorkspace} onClick={() => selectWorkspace("hummingbot")}>Hummingbot / Exchange</button>
+      <button className="rounded border border-[var(--color-border)] px-3 py-2 text-sm aria-pressed:bg-[var(--color-surface-hover)]" aria-pressed={!loading && cryptoWorkspace} onClick={() => selectWorkspace("crypto-exchange")}>Crypto.com Exchange</button>
+      <button className="rounded border border-[var(--color-border)] px-3 py-2 text-sm aria-pressed:bg-[var(--color-surface-hover)]" aria-pressed={!loading && !cryptoWorkspace} onClick={() => selectWorkspace("hummingbot")}>Hummingbot</button>
     </div>
     {loading ? <p role="status" className="p-6 text-sm">Loading trading accounts…</p> :
-      appWorkspace ? <div className="min-h-0 flex-1 overflow-auto p-6"><AppTrade /></div> :
+      cryptoWorkspace ? <div className="min-h-0 flex-1 overflow-auto p-6"><ExchangeTrade /></div> :
         <div className="relative min-h-0 flex-1 p-6">
           <CreateExecutor />
           {server && !keysLoading && !hasKeys && <ConnectKeysOverlay />}
