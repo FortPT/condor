@@ -222,8 +222,34 @@ describe("loopStats", () => {
     expect(loopStats(loop, [agentSummary()])).toEqual({
       latestSessionPnl: 12.5,
       unavailable: "",
+      pnlBasis: "",
+      pnlNote: "",
       sessionCount: 3,
       experimentCount: 1,
+    });
+  });
+
+  it("carries a native crew's PnL basis and the note on an estimated boundary", () => {
+    const loop = owner({
+      agentSlug: "brigado",
+      strategySlug: "brl_mm",
+      live: live(),
+    }) as never;
+    const base = agentSummary();
+    const native = {
+      ...base,
+      strategies: [
+        {
+          ...base.strategies[0],
+          pnl_basis: "account_equity",
+          pnl_note: "Session start estimated from the equity sample 2.0 h after it.",
+        },
+      ],
+    };
+
+    expect(loopStats(loop, [native])).toMatchObject({
+      pnlBasis: "account_equity",
+      pnlNote: "Session start estimated from the equity sample 2.0 h after it.",
     });
   });
 

@@ -223,6 +223,87 @@ describe("LoopsPanel", () => {
     expect(cards()[0].textContent).not.toContain("$0.00");
   });
 
+  // A native crew (Crypto.com Exchange, Kraken xStocks) trades outside
+  // Hummingbot: its figure is the account's equity change, computed from the
+  // venue's own history, so the card must print it like any other PnL.
+  describe("a native crew", () => {
+    function nativeAgent(over: Record<string, unknown>) {
+      const base = agentSummary({
+        slug: "crypto_com_exchange_trader",
+        name: "Crypto.com Exchange Trader",
+      });
+      return {
+        ...base,
+        strategies: [
+          {
+            ...base.strategies[0],
+            slug: "daily_spot",
+            pnl_basis: "account_equity",
+            ...over,
+          },
+        ],
+      };
+    }
+    const nativeLoop = () =>
+      owner({
+        agentSlug: "crypto_com_exchange_trader",
+        agentName: "Crypto.com Exchange Trader",
+        strategySlug: "daily_spot",
+        strategyName: "Daily spot",
+      });
+
+    it("shows its equity change as a real number, with what it measures on hover", async () => {
+      await render({
+        loops: [nativeLoop()],
+        agents: [nativeAgent({ latest_session_pnl: 1.234 })],
+      });
+
+      const pnl = cards()[0].querySelector<HTMLElement>("[data-loop-pnl]")!;
+      expect(pnl.textContent).toBe("+$1.23");
+      expect(pnl.title).toBe(
+        "Change in account equity since this session started (native crew)",
+      );
+    });
+
+    it("shows a loss as a negative figure and says so on hover when it is an estimate", async () => {
+      await render({
+        loops: [nativeLoop()],
+        agents: [
+          nativeAgent({
+            latest_session_pnl: -0.5,
+            pnl_estimated: true,
+            pnl_note: "Session start estimated from the equity sample 2.0 h after it.",
+          }),
+        ],
+      });
+
+      const pnl = cards()[0].querySelector<HTMLElement>("[data-loop-pnl]")!;
+      expect(pnl.textContent).toBe("-$0.50");
+      expect(pnl.title).toContain("native crew");
+      expect(pnl.title).toContain("estimated from the equity sample 2.0 h after it");
+    });
+
+    it("says why there is no figure instead of $0.00 when no equity is recorded yet", async () => {
+      await render({
+        loops: [nativeLoop()],
+        agents: [nativeAgent({ latest_session_pnl: 0, unavailable: "no_history" })],
+      });
+
+      const pnl = cards()[0].querySelector<HTMLElement>("[data-loop-pnl]")!;
+      expect(pnl.textContent).toBe("—");
+      expect(pnl.title).toBe("No equity history yet");
+      expect(cards()[0].textContent).not.toContain("$0.00");
+    });
+
+    it("an executor loop's figure carries no equity-change hover", async () => {
+      await render({ loops: [owner()], agents: [agentSummary()] });
+
+      const pnl = cards()[0].querySelector<HTMLElement>("[data-loop-pnl]")!;
+      expect(pnl.textContent).toBe("+$42.50");
+      expect(pnl.title).toBe("");
+    });
+  });
+
   it("degrades — no PnL, a session label instead of a run count — when the join misses", async () => {
     await render({
       loops: [owner({ live: live({ sessionNum: 7 }) })],
