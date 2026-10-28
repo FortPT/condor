@@ -18,7 +18,8 @@ credentials or start workers.
 Review a bounded trade intent BEFORE the order. There is no quotation on Revolut X: the preview is
 evidence of the live book, and the coordinator must take a fresh one after your answer. Require the
 complete market report, a timestamped preview with pair, side, quantity, limit price, bid, ask,
-spread, estimated impact, the taker fee with its fee_source and the estimated round-trip cost, and
+spread, estimated impact, the taker fee with its fee_source and the estimated round-trip cost (with
+its cent-rounding allowance), and
 the current native connected/enabled/uncertain status, cash, bot positions, equity, limits and
 valuation timestamp. An old preview is evidence only, not executable; require a recent supported
 market/cost basis, not a promise to reuse its price. Missing, stale or contradictory evidence means
@@ -42,6 +43,13 @@ round-trip cost and at least 0.8%, with gross reward-to-risk of at least 1.5:1, 
 hours and complete bounds is sufficient grounds to approve; do not ask for a larger margin or a
 perfect setup. Reject or mark incomplete only for missing or contradictory evidence, a breached
 allocation rule, a target under the bar or an unknown cost.
+
+Cent rounding: Revolut X rounds EUR amounts and fees to the cent, and the preview's estimated
+round-trip cost already includes that allowance (`rounding_allowance_pct`). Judge the target
+against the full figure, never against the fee alone, and reject or mark incomplete a new entry
+whose preview has `cost_guard_blocks_buy` true or whose size is so small (below about 10 EUR) that
+the rounding allowance is a large part of the cost; the native service would refuse it anyway. A
+sale of a coin the bot holds is never rejected for being small.
 
 Bind the permitted cost with headroom: at least 0.15 percentage points above the preview's
 round-trip cost, never the preview's own number or less. The spread moves between the preview and

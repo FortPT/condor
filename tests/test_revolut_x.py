@@ -830,6 +830,15 @@ class RevolutXTests(unittest.IsolatedAsyncioTestCase):
             "buy", "BTC", "0.0001", "0.0001", "72650.36", "0.00654", "EUR"
         )
         await self.svc.order(1, "buy", "BTC", "7.3")
+        self.assertEqual(self.svc.fee_rates(1)["source"], "estimate")  # too small
+        self.svc.record = info(
+            "buy", "BTC", "0.001", "0.001", "72650.36", "0.0654", "EUR"
+        )
+        self.svc.balances[0]["available"] = "400"
+        self.svc.set_enabled(1, False)
+        await self.svc.sync_from_account(1)
+        self.svc.set_enabled(1, True)
+        await self.svc.order(1, "buy", "BTC", "73")
         rates = self.svc.fee_rates(1)
         self.assertEqual(rates["source"], "observed")
         self.assertEqual(rates["taker_pct"], Decimal("0.09"))
@@ -1321,7 +1330,177 @@ class RevolutXTests(unittest.IsolatedAsyncioTestCase):
         await self.svc.reconcile(1)
         self.assertEqual(self.ledger(), before)
 
+    async def test_a_cent_rounded_fee_on_a_tiny_fill_is_not_learned_as_the_rate(self):
+        await self.synced()
+        self.svc.record = info(
+            "buy", "BTC", "0.00001373", "0.00001373", "72650.36", "0.01", "EUR"
+        )
+        await self.svc.order(1, "buy", "BTC", "1", None, allow_costly_buy=True)
+        self.assertIsNone(self.ledger()["observed_taker_fee_pct"])
+        self.assertEqual(self.svc.fee_rates(1)["source"], "estimate")
+
+    async def test_the_average_price_comes_from_the_fills_not_the_rounded_amount(self):
+        # The real sale of 2026-10-28: fills value 0.99557 for 0.00001368 BTC, but the
+        # order object reported the amount rounded down to 0.99 and a price of 72368.42.
+        self.svc.balances.append(
+            {
+                "currency": "BTC",
+                "available": "0.00001368",
+                "reserved": "0",
+                "total": "1",
+            }
+        )
+        await self.synced()
+        self.svc.record = info(
+            "sell",
+            "BTC",
+            "0.00001368",
+            "0.00001368",
+            "72368.42",
+            "0.01",
+            "EUR",
+            filled_amount="0.99",
+        )
+        self.svc.trades = [{"p": "72776", "q": "0.00001368", "im": False}]
+        result = (await self.svc.order(1, "sell", "BTC", "0.00001368"))["order"]
+        fills_value = Decimal("72776") * Decimal("0.00001368")
+        self.assertEqual(result["average_fill_price"], "72776")
+        self.assertEqual(result["reported_average_fill_price"], "72368.42")
+        self.assertEqual(result["filled_amount"], "0.99")  # raw value kept
+        self.assertIn("differs", result["price_note"])
+        self.assertEqual(Decimal(result["fills_value"]), fills_value)
+        self.assertEqual(
+            Decimal(result["rounding_cost_eur"]), fills_value - Decimal("0.99")
+        )
+        self.assertEqual(
+            Decimal(result["realised_cost_eur"]),
+            fills_value - Decimal("0.99") + Decimal("0.01"),
+        )
+        # the balance really moved by the reported 0.99 less the 0.01 fee
+        ledger = self.ledger()
+        self.assertEqual(Decimal(ledger["cash"]), Decimal("40") + Decimal("0.98"))
+        self.assertEqual(
+            ledger["orders"][-1]["rounding_cost_eur"], result["rounding_cost_eur"]
+        )
+
+    async def test_a_buy_with_a_base_currency_fee_reports_its_rounding_cost(self):
+        # The real buy of 2026-10-28: 1.00 EUR left the balance for fills worth 0.996945,
+        # and the fee was reported in BTC.
+        await self.synced()
+        self.svc.record = info(
+            "buy",
+            "BTC",
+            "0.00001373",
+            "0.00001373",
+            "72837.9",
+            "0.00000002",
+            "BTC",
+            filled_amount="1.00",
+        )
+        self.svc.trades = [{"p": "72610", "q": "0.00001373", "im": False}]
+        result = (
+            await self.svc.order(1, "buy", "BTC", "1", None, allow_costly_buy=True)
+        )["order"]
+        fills_value = Decimal("72610") * Decimal("0.00001373")
+        self.assertEqual(result["average_fill_price"], "72610")
+        self.assertEqual(Decimal(result["rounding_cost_eur"]), 1 - fills_value)
+        self.assertEqual(
+            Decimal(result["realised_cost_eur"]),
+            1 - fills_value + Decimal("0.00000002") * Decimal("72610"),
+        )
+        self.assertEqual(Decimal(self.ledger()["cash"]), Decimal("39"))
+
+    async def test_matching_reported_and_fills_prices_add_no_note(self):
+        await self.synced()
+        self.svc.record = info("buy", "BTC", "0.0001", "0.0001", "72650.36", "0.0065")
+        result = (await self.svc.order(1, "buy", "BTC", "7.3"))["order"]
+        self.assertNotIn("price_note", result)
+        self.assertEqual(result["average_fill_price"], "72650.36")
+        self.assertEqual(result["rounding_cost_eur"], "0")
+
+    # ── the cost guard ──
+
+    async def test_a_small_buy_that_cent_rounding_would_eat_is_refused_before_sending(
+        self,
+    ):
+        await self.synced()
+        self.svc.sent.clear()
+        preview = await self.svc.preview(1, "buy", "BTC", "1.5")
+        self.assertTrue(preview["cost_guard_blocks_buy"])
+        with self.assertRaises(ValueError) as caught:
+            await self.svc.order(1, "buy", "BTC", "1.5")
+        text = str(caught.exception)
+        self.assertIn("Refused, no order placed", text)
+        self.assertIn("EUR or more", text)
+        self.assertEqual(self.posts(), [])
+        self.assertIsNone(self.ledger()["uncertain_order"])
+        self.assertTrue(self.ledger()["enabled"])  # nothing paused, nothing sent
+
+    async def test_a_sale_is_never_blocked_by_the_cost_guard(self):
+        await self.synced()
+        self.svc.record = info("sell", "SUI", "0.5", "0.5", "3.0", "0.001")
+        preview = await self.svc.preview(1, "sell", "SUI", "0.5")
+        self.assertFalse(preview["cost_guard_blocks_buy"])
+        self.assertGreater(Decimal(preview["estimated_round_trip_pct"]), 1)
+        result = await self.svc.order(1, "sell", "SUI", "0.5")
+        self.assertEqual(result["order"]["status"], "filled")
+        self.assertEqual(len(self.posts()), 1)
+
+    async def test_a_big_enough_buy_passes_and_the_owner_can_override_a_small_one(self):
+        await self.synced()
+        self.svc.record = info("buy", "BTC", "0.00013723", "0.00013723", "72650.36")
+        big = await self.svc.preview(1, "buy", "BTC", "10")
+        self.assertFalse(big["cost_guard_blocks_buy"])
+        await self.svc.order(1, "buy", "BTC", "10")
+        self.assertEqual(len(self.posts()), 1)
+        self.svc.record = info("buy", "BTC", "0.00002", "0.00002", "72650.36")
+        with self.assertRaises(ValueError):
+            await self.svc.order(1, "buy", "ETH", "1.5")
+        await self.svc.order(1, "buy", "BTC", "1.5", None, allow_costly_buy=True)
+        self.assertEqual(len(self.posts()), 2)
+
+    async def test_the_override_is_strictly_boolean_true(self):
+        await self.synced()
+        with self.assertRaises(ValueError):
+            await self.svc.order(1, "buy", "BTC", "1.5", None, allow_costly_buy="yes")
+        self.assertEqual(self.posts(), [])
+
     # ── preview and market data ──
+
+    async def test_the_preview_adds_the_cent_rounding_allowance_at_small_sizes(self):
+        for spend, allowance, blocked in (
+            ("1.5", Decimal("1.334"), True),
+            ("10", Decimal("0.2"), False),
+            ("40", Decimal("0.05"), False),
+        ):
+            preview = await self.svc.preview(1, "buy", "BTC", spend)
+            notional = Decimal(preview["notional_eur"])
+            self.assertAlmostEqual(
+                Decimal(preview["rounding_allowance_pct"]),
+                allowance,
+                delta=Decimal("0.01"),
+            )
+            self.assertEqual(preview["rounding_allowance_eur"], "0.02")
+            self.assertEqual(
+                Decimal(preview["rounding_allowance_pct"]),
+                round(Decimal("0.02") / notional * 100, 3),
+            )
+            parts = preview["round_trip_components_pct"]
+            self.assertAlmostEqual(
+                Decimal(preview["estimated_round_trip_pct"]),
+                sum(map(Decimal, parts.values())),
+                delta=Decimal("0.002"),
+            )
+            self.assertEqual(Decimal(parts["taker_fees"]), Decimal("0.18"))
+            self.assertEqual(preview["cost_guard_blocks_buy"], blocked)
+            self.assertEqual(preview["cost_guard_max_round_trip_pct"], "1.0")
+            self.assertIn("cent", preview["rounding_note"])
+            self.assertEqual(preview["fee_source"], "estimate")  # still labelled
+
+    async def test_preview_of_a_sale_includes_the_allowance_but_never_blocks(self):
+        preview = await self.svc.preview(1, "sell", "BTC", "0.00001")
+        self.assertGreater(Decimal(preview["rounding_allowance_pct"]), 1)
+        self.assertFalse(preview["cost_guard_blocks_buy"])
 
     async def test_preview_prices_the_book_labels_the_fee_an_estimate_and_needs_no_key(
         self,
@@ -1349,9 +1528,10 @@ class RevolutXTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(preview["fee_source"], "estimate")
         self.assertIn("ESTIMATE", preview["fee_note"])
         spread = (Decimal("3.003") - Decimal("3.0")) / Decimal("3.003") * 100
+        allowance = Decimal("0.02") / Decimal(preview["notional_eur"]) * 100
         self.assertEqual(
             Decimal(preview["estimated_round_trip_pct"]),
-            round(spread + Decimal("0.18"), 3),
+            round(spread + Decimal("0.18") + allowance, 3),
         )
         self.assertEqual(preview["spread_pct"], str(round(spread, 3)))
 

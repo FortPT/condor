@@ -17,15 +17,20 @@ configuration). It is seeded from the account by :meth:`RevolutXService.sync_fro
 VERIFIED (official OpenAPI spec and the PUBLIC endpoints, read live): the signing
 formula (against an independently computed Ed25519 signature), the public pair
 configuration, tickers (EEA region), order book v2 and candles (interval in minutes: 1,
-5, 15, 30, 60, 240, 1440), and the documented shapes of the order object (``total_fee``
-and ``fee_currency`` are on it), balances, fills (``p``, ``q``, ``im``) and errors.
+5, 15, 30, 60, 240, 1440), and the documented shapes of the order object, balances,
+fills (``p``, ``q``, ``im``) and errors.
 
-NOT VERIFIED against a real account (the comments say so where it matters): everything
-behind the API key (the exact place-order body, the order and fills read-backs, which
-status an immediate-or-cancel order ends in, whether the fee fields are filled in, what
-fee the owner's plan really pays, API key permissions and IP rules) and how the
-signature treats a percent-encoded query. The first real order must be tiny; see
-``docs/revolut-x.md``.
+VERIFIED by a real 1 EUR BTC buy and sell on 2026-10-28: the place-order body below is
+accepted, ``GET /orders/{id}`` answers ``{"data": order}`` with ``total_fee`` and
+``fee_currency``, the fills read works and balances are a list. Revolut X rounds EUR
+amounts and fees to the cent (the order's ``filled_amount`` and ``average_fill_price``
+are rounded artefacts; the fills carry the real price), the buy fee is reported in the
+coin and the sell fee in EUR rounded to a cent, so at small sizes cent rounding, not the
+published rate, dominates the cost: see ``ROUNDING_ALLOWANCE_EUR_PER_LEG``.
+
+NOT VERIFIED against a real account (the comments say so where it matters): partial
+fills, refused orders, 429 behaviour and how the signature treats a percent-encoded
+query. See ``docs/revolut-x.md``.
 """
 
 from __future__ import annotations
@@ -82,6 +87,22 @@ ORDER_POLL_WAIT_SEC = 1.0
 # Revolut X publishes no fee endpoint. Until a real fill reports the truth the cost is
 # an ESTIMATE: the published EEA taker rate (maker is 0%). Always labelled as one.
 PUBLISHED_TAKER_FEE_PCT = Decimal("0.09")
+# Revolut X rounds EUR amounts and EUR fees to the cent. A real 1 EUR round trip (BTC/EUR,
+# 2026-10-28) lost 0.02 EUR (about 2%) against a modelled 0.19%. Assume up to this much
+# EUR lost to rounding on each leg, so small orders look as expensive as they are.
+ROUNDING_ALLOWANCE_EUR_PER_LEG = Decimal("0.01")
+# A BUY whose estimated round-trip cost (rounding allowance included) is above this many
+# percent is refused unless the owner's API passes ``allow_costly_buy``. Sells are never
+# blocked by it: an exit must always be possible.
+MAX_BUY_ROUND_TRIP_PCT = Decimal("1.0")
+# A cent-rounded EUR fee says little about the rate on a small fill (0.01 on 1 EUR reads as
+# 1%): the taker rate is learned only from a fill at least this large (EUR).
+OBSERVED_FEE_MIN_VALUE_EUR = Decimal("50")
+# The fills are trusted for the price only when they add up to the order's filled quantity
+# within this fraction, and a reported price further than this many percent from the
+# fills-derived one is called out.
+FILLS_QUANTITY_TOLERANCE = Decimal("0.005")
+PRICE_NOTE_PCT = Decimal("0.1")
 # Round-trip cost used by the scorecard when no spread is known.
 DEFAULT_ROUND_TRIP_COST_PCT = 0.35
 MAX_BYTES = 4 * 1024 * 1024
@@ -1029,6 +1050,10 @@ class RevolutXService:
     async def preview(self, user_id, side, symbol, value, slippage_pct=None):
         """Evidence of cost and depth from the live public book; it places nothing."""
         plan = await self._plan(user_id, side, symbol, value, slippage_pct)
+        return self._estimate(user_id, plan)["preview"]
+
+    def _estimate(self, user_id, plan):
+        """The preview of a planned order, plus the unrounded numbers the guard needs."""
         remaining, cost = plan["quantity"], Decimal(0)
         for level in plan["book"]["asks" if plan["side"] == "buy" else "bids"]:
             price, size = Decimal(level[0]), Decimal(level[1])
@@ -1047,17 +1072,38 @@ class RevolutXService:
             abs(average - reference) / reference * 100 if average is not None else None
         )
         fee = self.fee_rates(user_id)
-        round_trip = plan["spread_pct"] + 2 * fee["taker_pct"]
-        return {
+        notional = plan["quantity"] * plan["limit_price"]
+        allowance_eur = 2 * ROUNDING_ALLOWANCE_EUR_PER_LEG
+        allowance_pct = allowance_eur / notional * 100
+        others = plan["spread_pct"] + 2 * fee["taker_pct"] + (impact or Decimal(0))
+        round_trip = others + allowance_pct
+        blocked = plan["side"] == "buy" and round_trip > MAX_BUY_ROUND_TRIP_PCT
+        preview = {
             "pair": plan["pair"],
             "side": plan["side"],
             "taker_fee_pct": fmt(fee["taker_pct"]),
             "fee_source": fee["source"],
             "fee_note": fee["note"],
             "estimated_round_trip_pct": str(round(round_trip, 3)),
+            "round_trip_components_pct": {
+                "taker_fees": str(round(2 * fee["taker_pct"], 3)),
+                "spread": str(round(plan["spread_pct"], 3)),
+                "impact": str(round(impact, 3)) if impact is not None else "0",
+                "rounding_allowance": str(round(allowance_pct, 3)),
+            },
+            "rounding_allowance_eur": fmt(allowance_eur),
+            "rounding_allowance_pct": str(round(allowance_pct, 3)),
+            "rounding_note": (
+                f"Revolut X rounds EUR amounts and fees to the cent; up to "
+                f"{fmt(ROUNDING_ALLOWANCE_EUR_PER_LEG)} EUR per leg "
+                f"({fmt(allowance_eur)} EUR per round trip) is added to the cost, which "
+                "is why small orders look expensive"
+            ),
+            "cost_guard_max_round_trip_pct": str(MAX_BUY_ROUND_TRIP_PCT),
+            "cost_guard_blocks_buy": blocked,
             "quantity": fmt(plan["quantity"]),
             "limit_price": fmt(plan["limit_price"]),
-            "notional_eur": fmt(plan["quantity"] * plan["limit_price"]),
+            "notional_eur": fmt(notional),
             "bid": fmt(plan["bid"]),
             "ask": fmt(plan["ask"]),
             "spread_pct": str(round(plan["spread_pct"], 3)),
@@ -1066,6 +1112,13 @@ class RevolutXService:
                 str(round(impact, 3)) if impact is not None else None
             ),
             "book_covers_order": remaining <= 0,
+        }
+        return {
+            "preview": preview,
+            "round_trip": round_trip,
+            "others": others,
+            "notional": notional,
+            "allowance_pct": allowance_pct,
         }
 
     def _note_placed(self, user_id):
@@ -1077,7 +1130,11 @@ class RevolutXService:
             raise ValueError("Daily Revolut X order limit reached")
         placed.append(now)
 
-    async def order(self, user_id, side, symbol, value, slippage_pct=None):
+    async def order(
+        self, user_id, side, symbol, value, slippage_pct=None, allow_costly_buy=False
+    ):
+        """Place one order. ``allow_costly_buy`` is the owner's override of the cost guard
+        and is offered by the owner's API only, never by the MCP tool."""
         async with self.locks[user_id]:
             ledger = _read_ledger(user_id)
             if not ledger["enabled"] or ledger["uncertain_order"]:
@@ -1097,6 +1154,8 @@ class RevolutXService:
                         "Not enough bot cash for this purchase and its fee"
                     )
                 check_purchase(ledger, symbol, spend, equity)
+                if allow_costly_buy is not True:
+                    self._check_cost(self._estimate(user_id, plan))
             else:
                 position = ledger["positions"].get(symbol)
                 if not position or plan["quantity"] > Decimal(position["units"]):
@@ -1134,9 +1193,9 @@ class RevolutXService:
                 "time": time.time(),
             }
             _write(_root(user_id) / "ledger.json", ledger)
-            # UNVERIFIED body: the schema says client_order_id, symbol, side and
-            # order_configuration (exactly one of limit/market/...); the limit takes
-            # price plus base_size, and time_in_force gtc|ioc.
+            # VERIFIED by a real order (2026-10-28): client_order_id, symbol, side and
+            # order_configuration; the limit takes price plus base_size, time_in_force
+            # ioc and execution_instructions ["allow_taker"].
             body = {
                 "client_order_id": client_oid,
                 "symbol": plan["pair"],
@@ -1181,6 +1240,28 @@ class RevolutXService:
             )
             _write(_root(user_id) / "ledger.json", ledger)
             return {"order": self._summary(detail), "status": self.status(user_id)}
+
+    @staticmethod
+    def _check_cost(estimate):
+        """Refuse a buy that cent rounding and fees would eat. Nothing has been sent."""
+        round_trip = estimate["round_trip"]
+        if round_trip <= MAX_BUY_ROUND_TRIP_PCT:
+            return
+        room = MAX_BUY_ROUND_TRIP_PCT - estimate["others"]
+        if room > 0:
+            needed = (2 * ROUNDING_ALLOWANCE_EUR_PER_LEG / room * 100).quantize(
+                Decimal("1"), rounding="ROUND_UP"
+            )
+            advice = f"an order of about {needed} EUR or more would be cheaper"
+        else:
+            advice = "fees and spread alone are already above the limit"
+        raise ValueError(
+            f"Refused, no order placed: the estimated round-trip cost of this buy is "
+            f"{round_trip:.2f}% (cent-rounding allowance "
+            f"{estimate['allowance_pct']:.2f}% of a {estimate['notional']:.2f} EUR "
+            f"order), above the {MAX_BUY_ROUND_TRIP_PCT}% limit; {advice}. "
+            "Selling a position is never blocked by this."
+        )
 
     @staticmethod
     def _normalize(info):
@@ -1276,6 +1357,7 @@ class RevolutXService:
             "trades": count,
             "quantity": fmt(base),
             "value": fmt(value),
+            "average_price": fmt(value / base),
             "maker_trades": makers,
             "taker_trades": takers,
         }
@@ -1292,7 +1374,12 @@ class RevolutXService:
             "filled_quantity",
             "limit_price",
             "average_fill_price",
+            "reported_average_fill_price",
+            "price_note",
             "filled_amount",
+            "fills_value",
+            "rounding_cost_eur",
+            "realised_cost_eur",
             "total_fee",
             "fee_currency",
             "fee_source",
@@ -1312,7 +1399,23 @@ class RevolutXService:
         quantity = _decimal(detail.get("filled_quantity"), Decimal(0))
         average = _decimal(detail.get("average_fill_price"))
         value = _decimal(detail.get("filled_amount"), Decimal(0))
-        if value <= 0 and quantity > 0 and average:
+        # The fills carry the real price. The order's filled_amount and
+        # average_fill_price are rounded to the cent (a sale at 72776 reported 72368),
+        # so the price comes from the fills when they add up to the filled quantity.
+        fills = detail.get("fills") if isinstance(detail.get("fills"), dict) else {}
+        fills_qty = _decimal(fills.get("quantity"), Decimal(0))
+        fills_value = _decimal(fills.get("value"), Decimal(0))
+        fills_price = None
+        if (
+            quantity > 0
+            and fills_qty > 0
+            and fills_value > 0
+            and abs(fills_qty - quantity) <= quantity * FILLS_QUANTITY_TOLERANCE
+        ):
+            fills_price = fills_value / fills_qty
+        if value <= 0 and fills_price is not None:
+            value = fills_value
+        elif value <= 0 and quantity > 0 and average:
             value = quantity * average
         # The fee: the order object carries total_fee and fee_currency. When the real
         # figure is missing, the published taker rate is applied and LABELLED an
@@ -1360,12 +1463,39 @@ class RevolutXService:
                     position["units"] = fmt(Decimal(position["units"]) - out)
                     position["cost"] = fmt(Decimal(position["cost"]) - cost)
                 ledger["cash"] = fmt(Decimal(ledger["cash"]) + proceeds)
-            if fee_source == "reported" and fee_currency == QUOTE and value > 0:
-                # The first real fee tells the truth about the plan's rate.
+            if (
+                fee_source == "reported"
+                and fee_currency == QUOTE
+                and value >= OBSERVED_FEE_MIN_VALUE_EUR
+            ):
+                # The first real fee on a fill big enough to read tells the truth about
+                # the plan's rate; a cent-rounded fee on a tiny fill does not.
                 ledger["observed_taker_fee_pct"] = fmt(
                     (fee / value * 100).quantize(Decimal("0.0001"))
                 )
         detail["fee_source"] = fee_source
+        evidence = {}
+        if quantity > 0 and fills_price is not None:
+            # The ledger moves by the EUR amounts Revolut X reports (they are what the
+            # balance really did); the realised cost is those amounts, against the
+            # fills' value, plus the fee.
+            rounding = value - fills_value if side == "buy" else fills_value - value
+            evidence = {
+                "fills_value": fmt(fills_value),
+                "rounding_cost_eur": fmt(rounding),
+                "realised_cost_eur": fmt(rounding + fee_eur + fee_units * fills_price),
+            }
+            detail["reported_average_fill_price"] = detail.get("average_fill_price")
+            detail["average_fill_price"] = fmt(fills_price)
+            detail.update(evidence)
+            if average and abs(average - fills_price) / fills_price * 100 > (
+                PRICE_NOTE_PCT
+            ):
+                detail["price_note"] = (
+                    f"the order's reported average_fill_price {fmt(average)} differs "
+                    f"from the fills-derived {fmt(fills_price)}: Revolut X rounds EUR "
+                    "amounts to the cent, so the fills-derived price is used"
+                )
         ledger["uncertain_order"] = None
         ledger["orders"] = (
             ledger["orders"]
@@ -1382,6 +1512,7 @@ class RevolutXService:
                     "fee": fmt(fee),
                     "fee_currency": fee_currency,
                     "fee_source": fee_source,
+                    **evidence,
                 }
             ]
         )[-200:]

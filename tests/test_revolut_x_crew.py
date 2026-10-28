@@ -219,6 +219,32 @@ def test_trading_style_matches_the_owners_intraday_instruction_with_a_derived_ba
     assert "at least 0.8%" in analyst and "1.5:1" in analyst
 
 
+def test_the_crew_sizes_entries_against_cent_rounding_and_skips_a_tiny_account(
+    registry,
+):
+    loop = StrategyStore().get(COORDINATOR, "intraday")
+    coordinator = flat(registry.get(COORDINATOR).instructions)
+    text = flat(loop.instructions)
+    for prompt in (coordinator, text):
+        assert "rounds eur amounts and fees to the cent" in prompt
+        assert "rounding_allowance_pct" in prompt
+        assert "at least 10 eur" in prompt
+        assert "cost_guard_blocks_buy" in prompt
+        assert "under about 25 eur of bot equity" in prompt
+        assert "not worth day-trading" in prompt
+        assert "exits" in prompt
+    assert "too expensive" in coordinator and "pass" in coordinator
+    assert "never try to get around that refusal" in coordinator
+    reviewer = flat(registry.get(REVIEWER).instructions)
+    assert "rounding_allowance_pct" in reviewer
+    assert "never rejected for being small" in reviewer
+    analyst = flat(registry.get(ANALYST).instructions)
+    assert "cent-rounding allowance" in analyst
+    # the rounding figure comes from the preview too: no number is hard-coded
+    for slug in TOOLS:
+        assert "1%" not in flat(registry.get(slug).instructions)
+
+
 def test_the_daily_brake_is_five_percent_below_the_utc_day_opening_equity(registry):
     loop = StrategyStore().get(COORDINATOR, "intraday")
     for text in (
@@ -348,6 +374,13 @@ def test_native_tool_exposes_no_key_credentials_sync_enable_or_limit_mutation():
         "horizon_hours",
         "note",
     }
+
+
+def test_the_cost_guard_override_is_the_owners_api_only_never_the_crews_tool():
+    server = (ROOT / "mcp_servers/condor/server.py").read_text(encoding="utf-8")
+    assert "allow_costly_buy" not in server
+    route = (ROOT / "condor/web/routes/revolut_x.py").read_text(encoding="utf-8")
+    assert "allow_costly_buy" in route
 
 
 @pytest.mark.parametrize("name", ["revolut_x", "mcp__condor__revolut_x"])

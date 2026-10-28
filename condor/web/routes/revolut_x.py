@@ -31,6 +31,12 @@ class OrderRequest(BaseModel):
     max_slippage_pct: str = ""
 
 
+class PlaceOrder(OrderRequest):
+    # The owner's override of the cost guard that refuses a buy cent rounding would eat.
+    # Only this route takes it: the MCP tool the crew uses has no such argument.
+    allow_costly_buy: bool = False
+
+
 class Prediction(BaseModel):
     symbol: str
     verdict: str
@@ -158,10 +164,15 @@ async def preview(body: OrderRequest, user: WebUser = Depends(get_current_user))
 
 
 @router.post("/order")
-async def order(body: OrderRequest, user: WebUser = Depends(get_current_user)):
+async def order(body: PlaceOrder, user: WebUser = Depends(get_current_user)):
     try:
         return await service.order(
-            user.id, body.side, body.symbol, body.amount, body.max_slippage_pct or None
+            user.id,
+            body.side,
+            body.symbol,
+            body.amount,
+            body.max_slippage_pct or None,
+            allow_costly_buy=body.allow_costly_buy,
         )
     except ValueError as error:
         reject(error)
