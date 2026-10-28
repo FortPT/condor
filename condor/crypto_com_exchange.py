@@ -35,6 +35,10 @@ QUOTE_CURRENCIES = ("USD", "USDT", "USDC", "EUR")
 SIDES = {"buy": "BUY", "sell": "SELL"}
 FINAL_STATUSES = {"FILLED", "CANCELED", "CANCELLED", "REJECTED", "EXPIRED"}
 MAX_PARAM_LEVEL = 3
+_UNCERTAIN = (
+    "Order outcome needs reconciliation. Trading paused; check the Exchange order "
+    "history. Do not resubmit."
+)
 
 # Below this total bot equity (quote units) the bot may use all of its money
 # freely; only the equity floor and the single-asset cap apply. At or above it
@@ -837,11 +841,16 @@ class ExchangeService:
                 detail = await self._final_detail(
                     user_id, placed.get("order_id"), client_oid
                 )
+            except ExchangeError as error:
+                if not error.definite:
+                    raise ValueError(_UNCERTAIN) from None
+                # The Exchange answered and refused: no order exists, so there
+                # is nothing to reconcile and trading stays as it was.
+                ledger["uncertain_order"] = None
+                _write(_root(user_id) / "ledger.json", ledger)
+                raise ValueError(f"The Exchange rejected the order: {error}") from None
             except Exception:
-                raise ValueError(
-                    "Order outcome needs reconciliation. Trading paused; check the "
-                    "Exchange order history. Do not resubmit."
-                ) from None
+                raise ValueError(_UNCERTAIN) from None
             self._apply_fill(ledger, plan["side"], symbol, quote, detail)
             ledger["enabled"] = (
                 credentials_path(user_id).exists() and _read_ledger(user_id)["enabled"]
@@ -852,7 +861,11 @@ class ExchangeService:
     async def _detail(self, user_id, order_id, client_oid):
         params = {"order_id": str(order_id)} if order_id else {"client_oid": client_oid}
         result = await self.private(user_id, "get-order-detail", params)
-        return result.get("order_info", result)
+        detail = result.get("order_info", result)
+        if not detail:
+            # The Exchange answers code 0 with no result for an order it never saw.
+            raise ExchangeError(200, None, "order not found")
+        return detail
 
     async def _final_detail(self, user_id, order_id, client_oid):
         for attempt in range(ORDER_POLLS):
@@ -992,6 +1005,10 @@ class ExchangeError(ValueError):
         )
         self.status = status
         self.code = code
+        # A refusal that cannot have created an order: the Exchange processed the
+        # request and said no. A server-side failure (HTTP 5xx or an internal-error
+        # code) may still have created it, so that stays uncertain.
+        self.definite = status < 500 and not (isinstance(code, int) and code >= 50000)
 
 
 service = ExchangeService()
