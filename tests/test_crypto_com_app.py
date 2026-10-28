@@ -525,6 +525,63 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state["ledger"]["cash_eur"], "25")
         self.assertEqual(state["ledger"]["positions"]["BTC"]["units"], "0.001")
 
+    async def test_wallet_deltas_wait_for_balances_to_settle(self):
+        self.service.set_enabled(1, True)
+        quotation = await self.service.quote(1, "purchase", "EUR", "BTC", "5")
+        original = self.service.request
+        filled = False
+        reads_after_fill = 0
+
+        async def lagging_wallets(user_id, method, path, body=None):
+            nonlocal filled, reads_after_fill
+            if path.endswith("orders"):
+                filled = True
+                return {
+                    "ok": True,
+                    "transaction": {
+                        "id": "t1",
+                        "status": "done",
+                        "kind": "viban_purchase",
+                    },
+                }
+            if path == "/v1/fiat-account":
+                reads_after_fill += 1 if filled else 0
+                settled = filled and reads_after_fill > 2
+                return {
+                    "ok": True,
+                    "account": {
+                        "balances": [
+                            {
+                                "currency": "EUR",
+                                "amount": {"amount": "25" if settled else "30"},
+                            }
+                        ]
+                    },
+                }
+            if path == "/v1/crypto-account":
+                settled = filled and reads_after_fill > 2
+                return {
+                    "ok": True,
+                    "account": {
+                        "wallets": [
+                            {
+                                "currency": "BTC",
+                                "available": {"amount": "0.001" if settled else "0"},
+                                "balance": {"amount": "0.001" if settled else "0"},
+                            }
+                        ]
+                    },
+                }
+            return await original(user_id, method, path, body)
+
+        self.service.request = lagging_wallets
+        with patch.object(cdc, "WALLET_SETTLE_WAIT_SEC", 0):
+            await self.service.execute(1, quotation["id"])
+        state = self.service.status(1)
+        self.assertEqual(state["ledger"]["cash_eur"], "25")
+        self.assertEqual(state["ledger"]["positions"]["BTC"]["units"], "0.001")
+        self.assertIsNone(state["ledger"]["uncertain_order"])
+
     async def test_accounts_do_not_expose_zero_wallets_or_address_metadata(self):
         async def account_reply(user_id, method, path, body=None):
             return {
