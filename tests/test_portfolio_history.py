@@ -89,7 +89,6 @@ class MergeTests(unittest.TestCase):
         result = self.merged([], native)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].total_usd, 51.0)  # the last sample of the hour
-        )
 
     def test_a_source_the_hummingbot_history_already_counts_is_skipped(self):
         points = [Point(T0, 9.0)]
