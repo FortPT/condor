@@ -21,10 +21,10 @@ from pathlib import Path
 
 from condor.paths import data_dir
 
-# Conservative Exchange estimate: a taker fee of up to 0.5% a side plus half a
-# spread each way on liquid coins. The real fee comes back on each order and the
+# Exchange estimate at fee tier 1: a 0.5% taker fee each way (orders are immediate,
+# so they are taker orders) plus about 0.2% of spread on liquid coins. The real fee comes back on each order and the
 # multiples below re-score the history at 1.5x, 2x and 3x this cost.
-ROUND_TRIP_COST_PCT = 1.0
+ROUND_TRIP_COST_PCT = 1.2
 # A coin's price is stored at most this often, so a 5-minute loop plus an open
 # dashboard do not multiply rows.
 SNAPSHOT_MIN_GAP_SEC = 240

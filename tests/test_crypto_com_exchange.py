@@ -78,8 +78,28 @@ class FakeService(ex.ExchangeService):
 
     async def private(self, user_id, method, params=None):
         self.sent.append((method, params))
-        if method == "get-account-summary":
-            return {"accounts": self.balances}
+        if method == "user-balance":
+            return {
+                "data": [
+                    {
+                        "position_balances": [
+                            {
+                                "instrument_name": b["currency"],
+                                "quantity": b["balance"],
+                                "reserved_qty": str(
+                                    Decimal(b["balance"]) - Decimal(b["available"])
+                                ),
+                            }
+                            for b in self.balances
+                        ]
+                    }
+                ]
+            }
+        if method == "get-fee-rate":
+            return {
+                "effective_spot_maker_rate_bps": "25.0",
+                "effective_spot_taker_rate_bps": "50.0",
+            }
         if method == "create-order":
             if self.fail_create:
                 raise ValueError("Crypto.com Exchange unavailable")
@@ -288,6 +308,11 @@ class ExchangeTests(unittest.IsolatedAsyncioTestCase):
         preview = await self.svc.preview(1, "buy", "ETH", "8")
         self.assertTrue(preview["book_covers_order"])
         self.assertEqual(preview["estimated_average_price"], "2324.96")
+        self.assertEqual(preview["taker_fee_pct"], "0.5")
+        # one spread plus a taker fee each way
+        self.assertGreaterEqual(
+            Decimal(preview["estimated_round_trip_pct"]), Decimal("1")
+        )
         self.assertFalse([s for s in self.svc.sent if s[0] == "create-order"])
 
 

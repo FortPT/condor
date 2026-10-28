@@ -142,7 +142,7 @@ class ScorecardTests(unittest.TestCase):
         self.assertAlmostEqual(cheaper["trade_calls"]["avg_net_pct"], 8.0)
 
     def test_default_cost_is_the_exchange_round_trip_estimate(self):
-        self.assertEqual(sc.ROUND_TRIP_COST_PCT, 1.0)
+        self.assertEqual(sc.ROUND_TRIP_COST_PCT, 1.2)
 
     def test_only_open_calls_keep_a_coin_tracked(self):
         self.prices("SOL", [(0, 90)])

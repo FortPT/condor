@@ -80,8 +80,7 @@ Two things are stored in `scorecard.db` beside the ledger:
 Outcomes are not stored; `crypto_com_exchange(action="scorecard")` recomputes them
 from the prices: *target* if the price reaches it before the stop, *stopped* if the
 stop comes first, otherwise the last price inside the window; all net of
-`ROUND_TRIP_COST_PCT` (1%, a conservative Exchange estimate: up to 0.5% fee a side plus
-half a spread). The report also shows the average of all listed coins over the same
+`ROUND_TRIP_COST_PCT` (1.2%: the tier-1 taker fee of 0.5% each way plus about 0.2% of spread). The report also shows the average of all listed coins over the same
 windows as a baseline, and what each cost multiple (1x, 1.5x, 2x, 3x) would have
 returned. About 30 resolved calls are needed before the numbers mean anything.
 
