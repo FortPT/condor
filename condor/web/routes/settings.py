@@ -440,7 +440,15 @@ async def gateway_wallets(
         wallets = await client.accounts.list_gateway_wallets()
         return {"wallets": wallets}
     except Exception as e:
-        logger.exception("Failed to list gateway wallets from '%s'", server)
+        if getattr(e, "status", None) == 503:
+            # The API answers 503 when no Gateway container is running (DEX is
+            # optional). The page renders that as a muted note, so a stack trace
+            # on every load only buries real failures in the log.
+            logger.warning(
+                "Gateway is not running for '%s'; no wallets to list", server
+            )
+        else:
+            logger.exception("Failed to list gateway wallets from '%s'", server)
         raise upstream_error("Failed to list gateway wallets", e)
 
 

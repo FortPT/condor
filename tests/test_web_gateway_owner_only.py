@@ -256,3 +256,33 @@ def test_trader_can_still_read_gateway_state(env):
     wallets = http.get("/settings/gateway/wallets", params=P)
     assert wallets.status_code == 200
     assert wallets.json()["wallets"][0]["chain"] == CHAIN
+
+
+def test_gateway_offline_is_a_warning_not_a_traceback(env, caplog):
+    """No Gateway container (HTTP 503) is routine; keep tracebacks for real faults."""
+    import logging
+
+    import aiohttp
+
+    app, client = env
+
+    def failing(status):
+        async def list_gateway_wallets():
+            raise aiohttp.ClientResponseError(
+                request_info=None, history=(), status=status, message="boom"
+            )
+
+        return list_gateway_wallets
+
+    http = as_user(app, TRADER)
+    with caplog.at_level(logging.WARNING, logger=settings_routes.logger.name):
+        client.accounts.list_gateway_wallets = failing(503)
+        assert http.get("/settings/gateway/wallets", params=P).status_code == 502
+        offline = [r for r in caplog.records if "gateway" in r.getMessage().lower()]
+        assert offline and all(r.exc_info is None for r in offline)
+
+        caplog.clear()
+        client.accounts.list_gateway_wallets = failing(500)
+        assert http.get("/settings/gateway/wallets", params=P).status_code == 502
+        real = [r for r in caplog.records if "Failed to list gateway" in r.getMessage()]
+        assert real and real[0].exc_info is not None
