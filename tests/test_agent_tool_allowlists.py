@@ -66,6 +66,9 @@ RESTRICTED_CREW = {
     "kraken_xstocks_trader",
     "kraken_xstocks_analyst",
     "kraken_xstocks_risk_reviewer",
+    "revolut_x_trader",
+    "revolut_x_analyst",
+    "revolut_x_risk_reviewer",
 }
 
 
