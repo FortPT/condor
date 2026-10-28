@@ -213,6 +213,7 @@ class ExchangeService:
         self.locks = defaultdict(asyncio.Lock)
         self.calls = defaultdict(deque)
         self._instruments = (0.0, {})
+        self._fees = {}
 
     # ── credentials and switches ──
 
@@ -521,19 +522,41 @@ class ExchangeService:
     # ── account ──
 
     async def accounts(self, user_id):
-        result = await self.private(user_id, "get-account-summary")
+        # private/get-account-summary answers ERR_INTERNAL (50001) on the live
+        # Exchange; private/user-balance is the working balance read.
+        result = await self.private(user_id, "user-balance")
+        rows = (result.get("data") or [{}])[0].get("position_balances", [])
         funded = []
-        for row in result.get("accounts", []):
-            balance = _decimal(row.get("balance"), Decimal(0))
-            if balance > 0:
+        for row in rows:
+            quantity = _decimal(row.get("quantity"), Decimal(0))
+            if quantity > 0:
+                reserved = _decimal(row.get("reserved_qty"), Decimal(0))
                 funded.append(
                     {
-                        "currency": row.get("currency"),
-                        "balance": fmt(balance),
-                        "available": fmt(_decimal(row.get("available"), Decimal(0))),
+                        "currency": row.get("instrument_name"),
+                        "balance": fmt(quantity),
+                        "available": fmt(max(quantity - reserved, Decimal(0))),
                     }
                 )
         return {"accounts": funded}
+
+    async def fee_rates(self, user_id):
+        """The account's effective spot maker/taker rates, in percent (cached)."""
+        stamp, cached = self._fees.get(user_id, (0.0, None))
+        if cached and time.monotonic() - stamp < 600:
+            return cached
+        result = await self.private(user_id, "get-fee-rate")
+        rates = {}
+        for name, key in (
+            ("maker_pct", "effective_spot_maker_rate_bps"),
+            ("taker_pct", "effective_spot_taker_rate_bps"),
+        ):
+            bps = _decimal(result.get(key))
+            if bps is None:
+                raise ValueError("The Exchange returned no spot fee rate")
+            rates[name] = bps / 100
+        self._fees[user_id] = (time.monotonic(), rates)
+        return rates
 
     async def portfolio(self, user_id):
         """Whole Exchange account at the live last price, for the dashboard."""
@@ -728,9 +751,13 @@ class ExchangeService:
         impact = (
             abs(average - reference) / reference * 100 if average is not None else None
         )
+        taker = (await self.fee_rates(user_id))["taker_pct"]
+        round_trip = plan["spread_pct"] + 2 * taker
         return {
             "pair": plan["pair"],
             "side": plan["side"],
+            "taker_fee_pct": fmt(taker),
+            "estimated_round_trip_pct": str(round(round_trip, 3)),
             "quantity": fmt(plan["quantity"]),
             "limit_price": fmt(plan["limit_price"]),
             "bid": fmt(plan["bid"]),
