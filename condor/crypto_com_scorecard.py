@@ -31,8 +31,20 @@ ENTRY_MAX_AGE_SEC = 900
 PRICE_RETENTION_SEC = 90 * 86400
 MULTIPLES = (1.0, 1.5, 2.0, 3.0)
 MIN_RESOLVED_FOR_VERDICT = 30
-# Not a bet on the market: no baseline, no tracking.
-NOT_MARKET = {"USDT", "USDC", "USDS", "DAI", "WBTC"}
+# Not a bet on the market (stablecoins, wrapped and tokenized assets): no baseline, no tracking.
+# Stablecoins, wrapped and tokenized assets do not trade like market coins.
+NOT_MARKET = {
+    "USDT",
+    "USDC",
+    "USDS",
+    "DAI",
+    "WBTC",
+    "USD1",
+    "USDG",
+    "PYUSD",
+    "BUIDL",
+    "XAUT",
+}
 VERDICTS = {"trade", "pass"}
 SYMBOL = re.compile(r"[A-Z0-9]{1,24}")
 

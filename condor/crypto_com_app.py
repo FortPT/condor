@@ -120,7 +120,7 @@ GUARD_THRESHOLD_EUR = Decimal("1000")
 # Below the threshold one asset may still never hold more than this share of
 # total bot equity, so the whole wallet cannot end up in a single coin.
 MAX_ASSET_FRACTION = Decimal("0.4")
-TOP_COINS = 15
+TOP_COINS = 40
 # Wallet balances lag a "done" order by a few seconds (seen with a EUR 10 HYPE buy).
 WALLET_SETTLE_TRIES = 5
 WALLET_SETTLE_WAIT_SEC = 2.0
