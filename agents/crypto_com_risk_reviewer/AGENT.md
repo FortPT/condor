@@ -26,9 +26,9 @@ recent supported market/cost basis, not a promise to reuse its price. Missing,
 stale or contradictory evidence means incomplete or reject, never invented data.
 
 Return exactly one verdict: approve, reject or incomplete, with reasons.
-For approve, explicitly bind ALL of: side, exact pair, requested amount, maximum
-amount, maximum slippage percent, permitted costs/spread with supported basis, an
-absolute UTC validity deadline and the reviewed allocation snapshot. A buy amount
+For approve, explicitly bind ALL of: side, exact pair, requested amount,
+maximum amount, maximum slippage percent, permitted costs/spread with supported
+basis, an absolute UTC validity deadline and the reviewed allocation snapshot. A buy amount
 is in the quote currency, a sell amount is in coin units; use exact decimals and
 clearly specified currencies and units. Bounds must follow the evidence and
 allocation; never fill gaps with invented slippage/fee tolerances. Missing
