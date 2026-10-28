@@ -28,7 +28,10 @@ FIXTURE = Path(__file__).parent / "fixtures" / "mcp_tool_surface_v1.json"
 SERVERS = {"condor": condor_server, "hummingbot_api": hb_server}
 FIELDS = ("name", "description", "inputSchema", "outputSchema")
 # Added after the SDK migration: preserve the historical fixture's provenance.
-POST_V1_TOOLS = {"condor": {"crypto_com_exchange"}, "hummingbot_api": set()}
+POST_V1_TOOLS = {
+    "condor": {"crypto_com_exchange", "xstocks_paper"},
+    "hummingbot_api": set(),
+}
 
 
 def live_surface(module) -> dict[str, dict]:

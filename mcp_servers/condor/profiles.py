@@ -43,6 +43,7 @@ def canonical_tool_name(name: str) -> str:
 #: is written for the model.
 TOOL_DESCRIPTIONS: dict[str, str] = {
     "crypto_com_exchange": "Trade the Crypto.com Exchange within the owner's bot allocation",
+    "xstocks_paper": "Paper-trade tokenized US stocks on public data (no orders)",
     "delegate": "Hand a long task to a background agent instance",
     "send_notification": "Send the user a Telegram message",
     "manage_routines": "List, run, schedule and edit routines",
@@ -67,6 +68,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
 #: ``delegate(action="start")`` refused in code rather than by omission.
 COMMON_TOOLS: tuple[str, ...] = (
     "crypto_com_exchange",
+    "xstocks_paper",
     "delegate",
     "send_notification",
     "manage_routines",

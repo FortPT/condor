@@ -41,6 +41,7 @@ from condor.web.routes import (
     transcribe,
     updates,
     ws,
+    xstocks_paper,
 )
 
 
@@ -142,6 +143,7 @@ def create_app() -> FastAPI:
     app.include_router(servers.router, prefix="/api/v1")
     app.include_router(portfolio.router, prefix="/api/v1")
     app.include_router(crypto_com_exchange.router, prefix="/api/v1")
+    app.include_router(xstocks_paper.router, prefix="/api/v1")
     app.include_router(bots.router, prefix="/api/v1")
     app.include_router(controller_performance.router, prefix="/api/v1")
     app.include_router(archived.router, prefix="/api/v1")
