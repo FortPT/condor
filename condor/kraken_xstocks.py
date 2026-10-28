@@ -46,6 +46,7 @@ ASSET_CLASS = xstocks_paper.ASSET_CLASS
 QUOTE = "USD"
 # Kraken's name for US dollars in balances; "USD" is accepted defensively.
 USD_ASSETS = ("ZUSD", "USD")
+EUR_ASSETS = ("ZEUR", "EUR")
 SIDES = ("buy", "sell")
 # QueryOrders / ClosedOrders `status`: pending | open | closed | canceled | expired.
 FINAL_STATUSES = {"closed", "canceled", "cancelled", "expired"}
@@ -375,9 +376,25 @@ class KrakenXStocksService:
             raise KrakenError(status, errors, secret_values)
         return data.get("result") or {}
 
-    async def public(self, path, params=None):
+    async def public(self, path, params=None, *, asset_class=True):
         """A public Kraken read; the paper test's reader adds ``asset_class``."""
-        return await self.paper._get(path, params or {})
+        return await self.paper._get(path, params or {}, asset_class=asset_class)
+
+    async def eur_usd(self):
+        """USD per euro from Kraken's plain EURUSD pair, or None (cached a minute)."""
+        stamp, cached = getattr(self, "_eur_usd", (0.0, None))
+        if cached and time.monotonic() - stamp < 60:
+            return cached
+        try:
+            result = await self.public("Ticker", {"pair": "EURUSD"}, asset_class=False)
+            ticker = next(iter(result.values()), {})
+            rate = _decimal(ticker["c"][0])
+        except (ValueError, KeyError, IndexError, TypeError):
+            return None
+        if not rate or rate <= 0:
+            return None
+        self._eur_usd = (time.monotonic(), rate)
+        return rate
 
     async def private(self, user_id, method, params=None):
         import aiohttp
@@ -616,6 +633,8 @@ class KrakenXStocksService:
             token = currency
             if currency in USD_ASSETS:
                 token, price = "USD", Decimal(1)
+            elif currency in EUR_ASSETS:
+                token, price = "EUR", await self.eur_usd()
             elif market:
                 token = market["wsbase"]
                 price = self._touch(tickers.get(market["pair"]) or {})[2]
