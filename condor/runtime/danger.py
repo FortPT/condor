@@ -46,7 +46,7 @@ LEVERAGE_TOOL = "set_account_position_mode_and_leverage"
 #: The native live-order tools. Only ``order`` moves money (the rest read, or log a
 #: paper call); a configured loop may place it without a prompt, an attended
 #: session confirms it.
-LIVE_ORDER_TOOLS = {"crypto_com_exchange", "kraken_xstocks"}
+LIVE_ORDER_TOOLS = {"crypto_com_exchange", "kraken_xstocks", "revolut_x"}
 
 # Tools that require user confirmation before execution
 DANGEROUS_TOOLS = {

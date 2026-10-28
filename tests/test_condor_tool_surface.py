@@ -26,6 +26,7 @@ EXPECTED_TOOLS = {
     "crypto_com_exchange",
     "xstocks_paper",
     "kraken_xstocks",
+    "revolut_x",
     "control_agent",
     "delegate",
     "get_available_models",

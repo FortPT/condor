@@ -1,7 +1,7 @@
 """Value history for the accounts Condor reads itself.
 
-Hummingbot records its own portfolio history, but the Crypto.com Exchange and the
-Kraken xStocks account are read by Condor's native modules, so the dashboard's
+Hummingbot records its own portfolio history, but the Crypto.com Exchange, the Kraken
+xStocks account and Revolut X are read by Condor's native modules, so the dashboard's
 Portfolio Evolution chart used to leave them out. This keeps one small value
 sample per account every few minutes (USD, whole account at the last traded
 price) so the chart route can add them. Nothing here touches money.
@@ -26,7 +26,8 @@ log = logging.getLogger(__name__)
 
 EXCHANGE = "Crypto.com Exchange"
 KRAKEN = "Kraken xStocks"
-SOURCES = (EXCHANGE, KRAKEN)
+REVOLUT = "Revolut X"
+SOURCES = (EXCHANGE, KRAKEN, REVOLUT)
 SAMPLE_EVERY_SEC = 300
 # A second sample inside this gap (an open dashboard plus the timer) is dropped.
 MIN_GAP_SEC = 240
@@ -151,15 +152,17 @@ def merge(points, native, interval_seconds: int, skip=(), point_type=None):
     return merged
 
 
-async def sample_user(user_id: int, exchange=None, kraken=None) -> None:
+async def sample_user(user_id: int, exchange=None, kraken=None, revolut=None) -> None:
     """Take one sample of each connected native account for the user."""
-    if exchange is None or kraken is None:
+    if exchange is None or kraken is None or revolut is None:
         from condor.crypto_com_exchange import service as exchange_service
         from condor.kraken_xstocks import service as kraken_service
+        from condor.revolut_x import service as revolut_service
 
         exchange = exchange or exchange_service
         kraken = kraken or kraken_service
-    for source, service in ((EXCHANGE, exchange), (KRAKEN, kraken)):
+        revolut = revolut or revolut_service
+    for source, service in ((EXCHANGE, exchange), (KRAKEN, kraken), (REVOLUT, revolut)):
         try:
             if not service.status(user_id)["connected"]:
                 continue
@@ -173,7 +176,7 @@ async def sample_user(user_id: int, exchange=None, kraken=None) -> None:
 
 def _users() -> list[int]:
     found: set[int] = set()
-    for folder in ("crypto_com_exchange", "kraken_xstocks"):
+    for folder in ("crypto_com_exchange", "kraken_xstocks", "revolut_x"):
         root = data_dir() / folder
         if root.is_dir():
             found.update(int(p.name) for p in root.iterdir() if p.name.isdigit())

@@ -16,6 +16,7 @@ from condor.fetchers.portfolio import (
     dedupe_unified_accounts,
 )
 from condor.kraken_xstocks import service as kraken_service
+from condor.revolut_x import service as revolut_service
 from condor.server_data_service import ServerDataType, get_server_data_service
 from condor.web.auth import require_server_access
 from condor.web.models import (
@@ -171,6 +172,20 @@ async def get_portfolio(
             logger.warning("Kraken portfolio unavailable (%s)", type(error).__name__)
             notes.append(
                 "Kraken xStocks could not be valued. Its holdings are excluded from this total; check the Kraken xStocks settings and retry."
+            )
+    # Revolut X is not a Hummingbot connector, so nothing else counts this account.
+    if revolut_service.status(user.id)["connected"]:
+        try:
+            # Revolut X credentials belong to the user too, never the shared cache.
+            revolut_view = await revolut_service.portfolio(user.id)
+            portfolio_history.record(
+                user.id, portfolio_history.REVOLUT, revolut_view["total_usd"]
+            )
+            connectors.append(ConnectorBalance(**revolut_view))
+        except Exception as error:
+            logger.warning("Revolut X portfolio unavailable (%s)", type(error).__name__)
+            notes.append(
+                "Revolut X could not be valued. Its holdings are excluded from this total; check the Revolut X settings and retry."
             )
     total_usd = sum(c.total_usd for c in connectors)
     return PortfolioResponse(

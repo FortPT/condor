@@ -63,6 +63,15 @@ class MergeTests(unittest.TestCase):
     def merged(self, points, native, **kwargs):
         return ph.merge(points, native, 3600, point_type=Point, **kwargs)
 
+    def test_revolut_x_history_joins_the_chart_without_replacing_the_others(self):
+        points = [Point(T0, 100.0), Point(T0 + 3600, 101.0)]
+        native = {
+            ph.EXCHANGE: [(T0, 10.0)],
+            ph.REVOLUT: [(T0, 20.0), (T0 + 3600, 22.0)],
+        }
+        result = self.merged(points, native)
+        self.assertEqual([p.total_usd for p in result], [130.0, 133.0])
+
     def test_native_accounts_are_added_to_the_hummingbot_total(self):
         points = [Point(T0, 9.0, {"EUR": 9.0}), Point(T0 + 3600, 9.5, {"EUR": 9.5})]
         native = {ph.EXCHANGE: [(T0, 48.0), (T0 + 3600, 49.0)]}
@@ -132,6 +141,33 @@ class RecorderTests(unittest.IsolatedAsyncioTestCase):
         rows = ph.series(1, since=0)
         self.assertEqual(list(rows), [ph.EXCHANGE])
         self.assertEqual(rows[ph.EXCHANGE][0][1], 48.2)
+
+    async def test_revolut_x_is_sampled_as_its_own_source(self):
+        await ph.sample_user(
+            1,
+            exchange=FakeService(False, 48.2),
+            kraken=FakeService(True, 9.0),
+            revolut=FakeService(True, 61.5),
+        )
+        rows = ph.series(1, since=0)
+        self.assertEqual(set(rows), {ph.KRAKEN, ph.REVOLUT})
+        self.assertEqual(ph.REVOLUT, "Revolut X")
+        self.assertIn(ph.REVOLUT, ph.SOURCES)
+        self.assertEqual(rows[ph.REVOLUT][0][1], 61.5)
+
+    async def test_a_failing_revolut_x_does_not_stop_the_other_accounts(self):
+        await ph.sample_user(
+            1,
+            exchange=FakeService(True, 48.2),
+            kraken=FakeService(False, 0),
+            revolut=FakeService(True, None),
+        )
+        self.assertEqual(list(ph.series(1, since=0)), [ph.EXCHANGE])
+
+    def test_users_with_only_a_revolut_x_folder_are_recorded(self):
+        folder = os.path.join(self.tmp.name, "revolut_x", "7")
+        os.makedirs(folder)
+        self.assertEqual(ph._users(), [7])
 
     async def test_a_disconnected_account_records_nothing(self):
         await ph.sample_user(
