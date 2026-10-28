@@ -94,6 +94,7 @@ export function KrakenXStocks() {
     <div>
       <h1 className="text-xl font-semibold">Kraken xStocks</h1>
       <p className="mt-1 text-sm text-[var(--color-text-muted)]">Tokenized US stocks on Kraken, traded in USD through your Kraken API key. Claude and agent loops use this same account and its enforced allocation.</p>
+      <a className="mt-1 inline-block text-sm underline" href="/trade?workspace=kraken-xstocks">View Kraken xStocks on the Trade page</a>
     </div>
     {status.isLoading && <p role="status" className="text-sm">Loading status…</p>}
     {failures.filter(([, failed]) => failed).map(([label, , error]) =>

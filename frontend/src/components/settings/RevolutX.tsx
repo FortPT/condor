@@ -130,6 +130,7 @@ export function RevolutX() {
     <div>
       <h1 className="text-xl font-semibold">Revolut X</h1>
       <p className="mt-1 text-sm text-[var(--color-text-muted)]">Crypto on the Revolut X exchange, traded in EUR through an API key whose signing key Condor creates on this server. Claude and agent loops use this same account and its enforced allocation.</p>
+      <a className="mt-1 inline-block text-sm underline" href="/trade?workspace=revolut-x">View Revolut X on the Trade page</a>
     </div>
     {status.isLoading && <p role="status" className="text-sm">Loading status…</p>}
     {failures.filter(([, failed]) => failed).map(([label, , error]) =>

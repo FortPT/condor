@@ -101,3 +101,37 @@ it("keeps the retired workspace=app link working", async () => {
   await render("/trade?workspace=app");
   expect(host.textContent).toContain("Preview order");
 });
+it.each([["revolut-x", "Revolut X"], ["kraken-xstocks", "Kraken xStocks"]])("opens the read-only %s panel from its URL without Hummingbot keys", async (key, title) => {
+  await render(`/trade?workspace=${key}`);
+  expect(host.querySelector("h1")?.textContent).toBe(title);
+  expect(host.querySelector(`[data-venue="${key}"]`)).not.toBeNull();
+  expect(host.textContent).not.toContain("Preview order");
+  expect(host.querySelector("[data-gate]")).toBeNull();
+  expect(host.querySelector("[data-workspace]")).toBeNull();
+  const pressed = Array.from(host.querySelectorAll("button[aria-pressed='true']")).map((b) => b.textContent);
+  expect(pressed).toContain(title);
+  expect(pressed).not.toContain("Hummingbot");
+  expect(pressed).not.toContain("Crypto.com Exchange");
+  // the native panel only reads its own routes (and the Crypto.com status the page itself polls)
+  expect(request.fetch.mock.calls.every(([path, init]) => !init && (String(path).startsWith(`/api/v1/${key}/`) || String(path).startsWith("/api/v1/crypto-exchange/")))).toBe(true);
+});
+it("switches between the Crypto.com Exchange, Kraken xStocks, Revolut X and Hummingbot tabs", async () => {
+  await render();
+  expect(host.textContent).toContain("Preview order");
+  await choose("Revolut X");
+  expect(host.querySelector("h1")?.textContent).toBe("Revolut X");
+  expect(host.textContent).not.toContain("Preview order");
+  await choose("Kraken xStocks");
+  expect(host.querySelector("h1")?.textContent).toBe("Kraken xStocks");
+  await choose("Hummingbot");
+  expect(host.querySelector("[data-gate]")).not.toBeNull();
+  expect(host.querySelector("h1")).toBeNull();
+  await choose("Crypto.com Exchange");
+  expect(host.textContent).toContain("Preview order");
+  expect(host.querySelector("[data-venue]")).toBeNull();
+});
+it("never makes Kraken xStocks or Revolut X the default account", async () => {
+  await render("/trade");
+  expect(host.querySelector("[data-venue]")).toBeNull();
+  expect(host.textContent).toContain("Preview order");
+});
