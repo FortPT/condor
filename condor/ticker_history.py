@@ -25,8 +25,10 @@ Only prices are stored. Volumes are already 24h rolling and need no reference.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -54,8 +56,24 @@ _loaded: set[str] = set()
 _listener_installed = False
 
 
+def _file_id(server: str) -> str:
+    """A file name for this server, even when its name is not a runtime id.
+
+    Server names are free text ("FortPT VM-08"), but :func:`paths.safe_id` takes
+    only letters, digits, dot, dash and underscore. A name that fails it is
+    flattened to those and given a short hash, so two names that flatten alike
+    still get two files, and nothing here can leave the directory.
+    """
+    try:
+        return paths.safe_id(server)
+    except paths.UnsafeIdError:
+        text = str(server)
+        readable = re.sub(r"[^A-Za-z0-9_-]+", "_", text).strip("_")[:60] or "server"
+        return f"{readable}-{hashlib.sha256(text.encode()).hexdigest()[:8]}"
+
+
 def _path(server: str) -> Path:
-    return paths.state_dir("ticker_history") / f"{paths.safe_id(server)}.json"
+    return paths.state_dir("ticker_history") / f"{_file_id(server)}.json"
 
 
 def reset() -> None:
