@@ -4,7 +4,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import { KrakenXStocks, failureText } from "./KrakenXStocks";
+import { failureText } from "./failureText";
+import { KrakenXStocks } from "./KrakenXStocks";
 
 const request = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/api", () => ({ apiFetch: request }));

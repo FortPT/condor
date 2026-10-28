@@ -3,19 +3,13 @@ import { useState } from "react";
 
 import { useKrakenXStocksStatus, type KrakenXStocksStatus } from "@/hooks/useCredentials";
 import { apiFetch } from "@/lib/api";
+import { failureText } from "@/components/settings/failureText";
 
 const base = "/api/v1/kraken-xstocks";
 const input = "w-full rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm";
 const button = "rounded border border-[var(--color-border)] px-3 py-2 text-sm disabled:opacity-40";
 
 type SyncResult = KrakenXStocksStatus & { skipped: string[] };
-
-/** A failure is always shown with some text: an empty message must never read as "nothing happened". */
-export function failureText(error: unknown): string {
-  if (error instanceof Error && error.message) return error.message;
-  if (typeof error === "string" && error) return error;
-  return "the server gave no reason (check the browser console and the Condor log)";
-}
 
 function limitsSummary(limits: KrakenXStocksStatus["limits"]): string {
   if (!limits?.guards_apply_from) return "";
