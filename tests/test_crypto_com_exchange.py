@@ -50,6 +50,7 @@ class FakeService(ex.ExchangeService):
         ]
         self.order_detail = None
         self.fail_create = False
+        self.reject_create = None
         self.detail_missing = False
 
     def environment(self, user_id):
@@ -101,12 +102,16 @@ class FakeService(ex.ExchangeService):
                 "effective_spot_taker_rate_bps": "50.0",
             }
         if method == "create-order":
+            if self.reject_create:
+                raise ex.ExchangeError(*self.reject_create)
             if self.fail_create:
                 raise ValueError("Crypto.com Exchange unavailable")
             return {"order_id": "o1", "client_oid": params["client_oid"]}
         if method == "get-order-detail":
             if self.detail_missing:
                 raise ex.ExchangeError(200, 213, "not found")
+            if not self.order_detail:
+                return {}
             return {**self.order_detail, "client_oid": self._oid()}
         if method == "get-order-history":
             return {"data": []}
@@ -256,6 +261,38 @@ class ExchangeTests(unittest.IsolatedAsyncioTestCase):
             await self.svc.order(1, "sell", "ETH", "0.1")
 
     # ── uncertain outcomes ──
+
+    async def test_a_definite_rejection_is_not_an_uncertain_order(self):
+        await self.synced()
+        self.svc.reject_create = (401, 40101, "Authentication failure")
+        with self.assertRaises(ValueError) as caught:
+            await self.svc.order(1, "sell", "SHIB", "1000000")
+        self.assertIn("rejected", str(caught.exception))
+        self.assertIn("40101", str(caught.exception))
+        ledger = self.ledger()
+        self.assertIsNone(ledger["uncertain_order"])
+        self.assertTrue(ledger["enabled"])
+        self.assertEqual(ledger["positions"]["SHIB"]["units"], "1215909")
+
+    async def test_a_server_side_failure_stays_uncertain(self):
+        await self.synced()
+        self.svc.reject_create = (400, 50001, "ERR_INTERNAL")
+        with self.assertRaises(ValueError) as caught:
+            await self.svc.order(1, "buy", "ETH", "8")
+        self.assertIn("reconciliation", str(caught.exception))
+        self.assertIsNotNone(self.ledger()["uncertain_order"])
+
+    async def test_an_empty_order_detail_means_the_order_does_not_exist(self):
+        await self.synced()
+        self.svc.fail_create = True
+        with self.assertRaises(ValueError):
+            await self.svc.order(1, "buy", "ETH", "8")
+        ledger = self.ledger()
+        ledger["uncertain_order"]["time"] -= 600
+        ex._write(ex._root(1) / "ledger.json", ledger)
+        self.svc.order_detail = {}
+        status = await self.svc.reconcile(1)
+        self.assertIsNone(status["ledger"]["uncertain_order"])
 
     async def test_a_failed_send_pauses_trading_until_reconciled(self):
         await self.synced()
