@@ -93,6 +93,24 @@ def test_snapshot_survives_a_restart():
     assert age == HOUR
 
 
+def test_a_server_name_with_a_space_is_recorded_and_read_back():
+    """'FortPT VM-08' is a real server name and not a runtime id."""
+    name = "FortPT VM-08"
+    ticker_history.record(name, pool(BTC_USDT=100.0), now=0.0)
+    ticker_history.reset()
+
+    ref = ticker_history.reference(name, now=HOUR)
+    assert ref is not None and ref[0]["binance"]["BTC-USDT"] == 100.0
+    stored = ticker_history._path(name)
+    assert stored.parent == paths.state_dir("ticker_history")
+    assert stored.exists()
+
+
+def test_server_names_that_flatten_alike_keep_separate_files():
+    assert ticker_history._path("a b") != ticker_history._path("a_b")
+    assert ticker_history._path("a/../b").parent == paths.state_dir("ticker_history")
+
+
 def test_a_corrupt_file_costs_the_history_not_the_process():
     path = paths.state_dir("ticker_history") / "srv.json"
     path.parent.mkdir(parents=True, exist_ok=True)
