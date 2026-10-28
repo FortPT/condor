@@ -1450,31 +1450,34 @@ def register_tools(
 # Registration happens at import: ``mcp`` is a module-level singleton and the
 # profile and the mute list are resolved from argv at import (settings), so the
 # server object is complete for anything that inspects it before startup.
-# Placing or reconciling an order reads the provider wallets before and after it
-# (about 3 s each), which overran the default 15 s tool budget: the order filled
-# but the call failed, leaving the ledger uncertain and trading paused.
+# Placing an order waits for the Exchange to report it final (a few seconds), which
+# can overrun the default 15 s tool budget; a call that fails after the order filled
+# would leave the ledger uncertain and trading paused.
 CRYPTO_COM_ORDER_TIMEOUT = 90.0
 
 
-@handle_errors("Crypto.com App")
-async def crypto_com_app(
+@handle_errors("Crypto.com Exchange")
+async def crypto_com_exchange(
     action: Literal[
         "status",
         "valuation",
         "accounts",
         "history",
         "coins",
-        "quote",
-        "execute",
+        "candles",
+        "book",
+        "preview",
+        "order",
         "reconcile",
         "predict",
         "scorecard",
     ],
-    kind: Literal["purchase", "sale", "exchange"] = "purchase",
-    source: str = "EUR",
-    target: str = "",
+    side: Literal["buy", "sell"] = "buy",
+    symbol: str = "",
     amount: str = "",
-    quotation_id: str = "",
+    max_slippage_pct: str = "",
+    timeframe: str = "1h",
+    count: str = "100",
     keyword: str = "",
     verdict: Literal["trade", "pass"] = "pass",
     target_pct: str = "",
@@ -1482,55 +1485,68 @@ async def crypto_com_app(
     horizon_hours: str = "",
     note: str = "",
 ) -> dict:
-    """Trade on the user's Crypto.com MAIN APP, separately from Hummingbot Exchange.
+    """Trade spot on the user's Crypto.com EXCHANGE within the bot's allocation.
 
     status: bot allocation, enable state, positions and enforced limits. valuation:
-    current liquidation quotation value in EUR (pauses on EUR 2 floor). accounts:
-    available account cash/crypto. coins: search a symbol/name (EUR prices); an
-    empty keyword lists the top 40 coins by rank with is_tradable and changes.
-    quote: purchase EUR→crypto, sale crypto→EUR, or exchange crypto→crypto;
-    amount is the SOURCE quantity as a decimal string. execute: submit the
-    quotation_id returned by quote within its countdown. Never retry an order
-    after an uncertain outcome; inspect history instead. predict: log one scorecard
-    call for the coin in `target` (verdict trade|pass, target_pct, stop_pct,
-    horizon_hours, short note); paper only, it never trades. scorecard: how the
-    logged calls scored against real prices after costs. A restarted process,
-    disconnected account or paused trading invalidates pending quotes.
+    equity at the live best bid (pauses at the equity floor). accounts: Exchange
+    balances. history: recent orders. coins: top pairs by 24h volume in the quote
+    currency with bid, ask, spread and lot size; a keyword filters by symbol.
+    candles: OHLCV for `symbol` (timeframe 1m, 5m, 15m, 30m, 1h, 2h, 4h, 12h, 1D, 7D,
+    14D or 1M; count up to 300). book: top order-book levels. preview: size and price
+    an order from the live book without placing it. order: buy (`amount` is the QUOTE
+    currency to spend) or sell (`amount` is the number of coin UNITS); it is an
+    immediate-or-cancel limit order priced `max_slippage_pct` (default 0.3, max 2)
+    through the touch, sized down to the pair's lot size. Never retry an order after
+    an uncertain outcome; use reconcile. predict: log one scorecard call for `symbol`
+    (verdict trade|pass, target_pct, stop_pct, horizon_hours, short note); paper
+    only, it never trades. scorecard: how the logged calls scored against real prices
+    after costs.
 
-    The owner must connect and enable the account in Settings. These tools cannot
-    change credentials or enable trading. Execution enforces the bot allocation
-    and the EUR 2 equity floor at any size. Below EUR 1000 total bot equity the cash reserve,
-    position-count and 1/6 limits are lifted and no single asset may exceed 40% of
-    bot equity; from EUR 1000 the 50% cash reserve, three positions and 1/6 limit
-    apply. No withdrawal, leverage or access to unallocated holdings.
-    A configured autonomous loop may execute without per-order prompts; an
-    attended manual request should show the quotation before executing it.
+    The owner connects the API key, syncs the allocation and enables trading in
+    Settings. These tools cannot change credentials, sync or enable trading. Orders
+    enforce the bot allocation, the equity floor and, below 1000 of total bot equity,
+    a 40% cap per asset; from 1000 the 50% cash reserve, three positions and one-sixth
+    limit apply. No withdrawal, margin, leverage or access to unallocated holdings.
+    A configured autonomous loop may order without per-order prompts; an attended
+    manual request should show the preview before ordering.
     """
+    from urllib.parse import urlencode
+
     from mcp_servers.condor.condor_client import call_main_api
 
-    if action == "quote":
+    if action == "order":
         return await call_main_api(
             "POST",
-            "/crypto-com/quote",
-            {"kind": kind, "source": source, "target": target, "amount": amount},
-        )
-    if action == "execute":
-        return await call_main_api(
-            "POST",
-            "/crypto-com/execute",
-            {"quotation_id": quotation_id},
+            "/crypto-exchange/order",
+            {
+                "side": side,
+                "symbol": symbol,
+                "amount": amount,
+                "max_slippage_pct": max_slippage_pct,
+            },
             timeout=CRYPTO_COM_ORDER_TIMEOUT,
+        )
+    if action == "preview":
+        return await call_main_api(
+            "POST",
+            "/crypto-exchange/preview",
+            {
+                "side": side,
+                "symbol": symbol,
+                "amount": amount,
+                "max_slippage_pct": max_slippage_pct,
+            },
         )
     if action == "reconcile":
         return await call_main_api(
-            "POST", "/crypto-com/reconcile", timeout=CRYPTO_COM_ORDER_TIMEOUT
+            "POST", "/crypto-exchange/reconcile", timeout=CRYPTO_COM_ORDER_TIMEOUT
         )
     if action == "predict":
         return await call_main_api(
             "POST",
-            "/crypto-com/predict",
+            "/crypto-exchange/predict",
             {
-                "symbol": target,
+                "symbol": symbol,
                 "verdict": verdict,
                 "target_pct": target_pct,
                 "stop_pct": stop_pct,
@@ -1539,12 +1555,20 @@ async def crypto_com_app(
             },
         )
     if action == "coins":
-        from urllib.parse import urlencode
-
         return await call_main_api(
-            "GET", "/crypto-com/coins?" + urlencode({"keyword": keyword})
+            "GET", "/crypto-exchange/coins?" + urlencode({"keyword": keyword})
         )
-    result = await call_main_api("GET", "/crypto-com/" + action)
+    if action == "candles":
+        return await call_main_api(
+            "GET",
+            "/crypto-exchange/candles?"
+            + urlencode({"symbol": symbol, "timeframe": timeframe, "count": count}),
+        )
+    if action == "book":
+        return await call_main_api(
+            "GET", "/crypto-exchange/book?" + urlencode({"symbol": symbol})
+        )
+    result = await call_main_api("GET", "/crypto-exchange/" + action)
     return {"data": result}
 
 

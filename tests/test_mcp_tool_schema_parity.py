@@ -28,7 +28,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "mcp_tool_surface_v1.json"
 SERVERS = {"condor": condor_server, "hummingbot_api": hb_server}
 FIELDS = ("name", "description", "inputSchema", "outputSchema")
 # Added after the SDK migration: preserve the historical fixture's provenance.
-POST_V1_TOOLS = {"condor": {"crypto_com_app"}, "hummingbot_api": set()}
+POST_V1_TOOLS = {"condor": {"crypto_com_exchange"}, "hummingbot_api": set()}
 
 
 def live_surface(module) -> dict[str, dict]:
@@ -98,8 +98,8 @@ def test_output_schemas_are_unchanged(key, frozen):
     assert not drifted
 
 
-def test_crypto_com_app_schema_exposes_no_credential_or_enable_arguments():
-    tool = live_surface(condor_server)["crypto_com_app"]
+def test_crypto_com_exchange_schema_exposes_no_credential_or_enable_arguments():
+    tool = live_surface(condor_server)["crypto_com_exchange"]
     properties = tool["inputSchema"]["properties"]
     assert set(properties["action"]["enum"]) == {
         "status",
@@ -107,8 +107,10 @@ def test_crypto_com_app_schema_exposes_no_credential_or_enable_arguments():
         "accounts",
         "history",
         "coins",
-        "quote",
-        "execute",
+        "candles",
+        "book",
+        "preview",
+        "order",
         "reconcile",
         "predict",
         "scorecard",

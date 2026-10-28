@@ -18,7 +18,7 @@ assert Path("frontend/dist/index.html").is_file(), "Native frontend bundle is mi
 async def check_mcp_children():
     # Match the agent's uv command, not the parent's explicit --no-sync launch.
     for module, flags, expected in (
-        ("condor", ["--profile", "tick", "--user-id", "1"], "crypto_com_app"),
+        ("condor", ["--profile", "tick", "--user-id", "1"], "crypto_com_exchange"),
         ("hummingbot_api", ["--profile", "tick"], "get_prices"),
     ):
         parameters = StdioServerParameters(

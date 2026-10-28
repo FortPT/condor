@@ -356,7 +356,7 @@ function ConnectorRow({
                 title={connector.note}
                 className="rounded bg-[var(--color-surface-hover)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]"
               >
-                {connector.connector === "Crypto.com App" ? "App account" : "unified"}
+                {connector.connector === "Crypto.com Exchange" ? "Exchange account" : "unified"}
               </span>
             )}
           </div>
@@ -937,12 +937,12 @@ export function Portfolio() {
 
   const totalUsd = data?.total_usd ?? 0;
   const connectors = data?.connectors ?? [];
-  const hasApp = connectors.some((connector) => connector.connector === "Crypto.com App");
+  const hasExchange = connectors.some((connector) => connector.connector === "Crypto.com Exchange");
 
   // Compute portfolio PnL from history (follows period selector)
   const historyPoints = periodHistory?.points ?? [];
   const portfolioPnl =
-    !hasApp && historyPoints.length >= 2
+    !hasExchange && historyPoints.length >= 2
       ? historyPoints[historyPoints.length - 1].total_usd - historyPoints[0].total_usd
       : null;
 
@@ -991,7 +991,7 @@ export function Portfolio() {
       />
 
       {data?.notes?.map((note) => <p key={note} role="alert" className="text-sm text-[var(--color-red)]">{note}</p>)}
-      {hasApp && <p className="text-sm text-[var(--color-text-muted)]">Crypto.com App is included in the current total and assets below. The historical chart covers Hummingbot accounts only; App performance is not yet recorded. <a className="underline" href="/trade?workspace=app">Open Crypto.com trading</a></p>}
+      {hasExchange && <p className="text-sm text-[var(--color-text-muted)]">Crypto.com Exchange is included in the current total and assets below. The historical chart covers Hummingbot accounts only; Exchange performance is not yet recorded. <a className="underline" href="/trade?workspace=crypto-exchange">Open Crypto.com trading</a></p>}
 
       {/* Portfolio Evolution + Top Holdings side by side */}
       <div className="flex flex-col lg:flex-row gap-4">

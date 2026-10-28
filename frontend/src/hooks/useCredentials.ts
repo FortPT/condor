@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useServer } from "@/hooks/useServer";
 import { api, apiFetch } from "@/lib/api";
 import { credentialsQuery, gatewayWalletsQuery } from "@/lib/queryClient";
-import type { CryptoComLimits } from "@/components/settings/cryptoComLimits";
+import type { CryptoExchangeLimits } from "@/components/settings/cryptoExchangeLimits";
 
 export function useCredentials() {
   const { server } = useServer();
@@ -33,21 +33,32 @@ export function useCredentials() {
   return { hasKeys, isLoading, credentials };
 }
 
-type CryptoComStatus = {
-  connected: boolean;
-  enabled: boolean;
-  ledger: {
-    cash_eur: string;
-    positions: Record<string, { units: string; cost_eur: string }>;
-    uncertain_order: unknown;
-  };
-  limits?: CryptoComLimits;
+export type ExchangeLedger = {
+  quote: string;
+  cash: string;
+  positions: Record<string, { units: string; cost: string }>;
+  uncertain_order: unknown;
+  enabled?: boolean;
+  orders?: {
+    time: number; side: string; symbol: string; order_id?: string | null; client_oid?: string | null;
+    status: string; quantity: string; value: string; fee: string; fee_currency?: string | null;
+  }[];
+  floor?: string;
+  synced: boolean;
 };
 
-export function useCryptoComStatus() {
+export type CryptoExchangeStatus = {
+  connected: boolean;
+  environment: "production" | "uat";
+  enabled: boolean;
+  ledger: ExchangeLedger;
+  limits?: CryptoExchangeLimits;
+};
+
+export function useCryptoExchangeStatus() {
   return useQuery({
-    queryKey: ["crypto-com-status"],
-    queryFn: () => apiFetch<CryptoComStatus>("/api/v1/crypto-com/status"),
+    queryKey: ["crypto-exchange-status"],
+    queryFn: () => apiFetch<CryptoExchangeStatus>("/api/v1/crypto-exchange/status"),
     refetchInterval: 10000,
     retry: false,
   });

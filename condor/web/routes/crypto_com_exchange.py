@@ -1,33 +1,34 @@
-"""Native App account/trading surface, scoped to the authenticated Condor user."""
+"""Native Exchange account/trading surface, scoped to the authenticated Condor user."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, SecretStr
 
-from condor.crypto_com_app import service
+from condor.crypto_com_exchange import service
 from condor.web.auth import get_current_user
 from condor.web.models import WebUser
 
-router = APIRouter(prefix="/crypto-com", tags=["crypto-com"])
+router = APIRouter(prefix="/crypto-exchange", tags=["crypto-exchange"])
 
 
 class Credentials(BaseModel):
     api_key: SecretStr
     api_secret: SecretStr
+    environment: str = "production"
 
 
 class Enable(BaseModel):
     enabled: bool
 
 
-class Quote(BaseModel):
-    kind: str
-    source: str
-    target: str
+class Sync(BaseModel):
+    quote: str | None = None
+
+
+class OrderRequest(BaseModel):
+    side: str
+    symbol: str
     amount: str
-
-
-class Execute(BaseModel):
-    quotation_id: str
+    max_slippage_pct: str = ""
 
 
 class Prediction(BaseModel):
@@ -52,7 +53,10 @@ async def status(user: WebUser = Depends(get_current_user)):
 async def credentials(body: Credentials, user: WebUser = Depends(get_current_user)):
     try:
         service.save_credentials(
-            user.id, body.api_key.get_secret_value(), body.api_secret.get_secret_value()
+            user.id,
+            body.api_key.get_secret_value(),
+            body.api_secret.get_secret_value(),
+            body.environment,
         )
         return service.status(user.id)
     except ValueError as error:
@@ -68,6 +72,14 @@ async def disconnect(user: WebUser = Depends(get_current_user)):
 async def enabled(body: Enable, user: WebUser = Depends(get_current_user)):
     try:
         return service.set_enabled(user.id, body.enabled)
+    except ValueError as error:
+        reject(error)
+
+
+@router.post("/sync")
+async def sync(body: Sync, user: WebUser = Depends(get_current_user)):
+    try:
+        return await service.sync_from_account(user.id, body.quote)
     except ValueError as error:
         reject(error)
 
@@ -107,6 +119,51 @@ async def coins(
         reject(error)
 
 
+@router.get("/candles")
+async def candles(
+    symbol: str = Query(..., max_length=24),
+    timeframe: str = Query("1h", max_length=4),
+    count: int = Query(100, ge=1, le=300),
+    user: WebUser = Depends(get_current_user),
+):
+    try:
+        return await service.candles(user.id, symbol, timeframe, count)
+    except ValueError as error:
+        reject(error)
+
+
+@router.get("/book")
+async def book(
+    symbol: str = Query(..., max_length=24),
+    depth: int = Query(10, ge=1, le=50),
+    user: WebUser = Depends(get_current_user),
+):
+    try:
+        return await service.book(user.id, symbol, depth)
+    except ValueError as error:
+        reject(error)
+
+
+@router.post("/preview")
+async def preview(body: OrderRequest, user: WebUser = Depends(get_current_user)):
+    try:
+        return await service.preview(
+            user.id, body.side, body.symbol, body.amount, body.max_slippage_pct or None
+        )
+    except ValueError as error:
+        reject(error)
+
+
+@router.post("/order")
+async def order(body: OrderRequest, user: WebUser = Depends(get_current_user)):
+    try:
+        return await service.order(
+            user.id, body.side, body.symbol, body.amount, body.max_slippage_pct or None
+        )
+    except ValueError as error:
+        reject(error)
+
+
 @router.post("/predict")
 async def predict(body: Prediction, user: WebUser = Depends(get_current_user)):
     try:
@@ -127,24 +184,6 @@ async def predict(body: Prediction, user: WebUser = Depends(get_current_user)):
 async def scorecard(user: WebUser = Depends(get_current_user)):
     try:
         return service.scorecard(user.id)
-    except ValueError as error:
-        reject(error)
-
-
-@router.post("/quote")
-async def quote(body: Quote, user: WebUser = Depends(get_current_user)):
-    try:
-        return await service.quote(
-            user.id, body.kind, body.source, body.target, body.amount
-        )
-    except ValueError as error:
-        reject(error)
-
-
-@router.post("/execute")
-async def execute(body: Execute, user: WebUser = Depends(get_current_user)):
-    try:
-        return await service.execute(user.id, body.quotation_id)
     except ValueError as error:
         reject(error)
 

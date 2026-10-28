@@ -12,7 +12,7 @@ HOUR = 3600
 
 
 def coin(symbol, price):
-    return {"symbol": symbol, "price_native": {"currency": "EUR", "amount": str(price)}}
+    return {"symbol": symbol, "price_native": {"currency": "USD", "amount": str(price)}}
 
 
 class ScorecardTests(unittest.TestCase):
@@ -119,7 +119,7 @@ class ScorecardTests(unittest.TestCase):
         self.assertTrue(self.call("ETH", "pass", target=6, stop=5)["recorded"])
         before = sc.report(1, now=T0 + HOUR)
         self.assertEqual(before["trade_calls"]["open"], 1)
-        report = sc.report(1, now=T0 + 25 * HOUR)
+        report = sc.report(1, now=T0 + 25 * HOUR, cost_pct=5)
         trade = report["trade_calls"]
         self.assertEqual(
             (trade["resolved"], trade["hit_target"], trade["beat_costs"]), (1, 1, 1)
@@ -140,6 +140,9 @@ class ScorecardTests(unittest.TestCase):
         # a cheaper cost assumption re-scores the whole history
         cheaper = sc.report(1, now=T0 + 25 * HOUR, cost_pct=2)
         self.assertAlmostEqual(cheaper["trade_calls"]["avg_net_pct"], 8.0)
+
+    def test_default_cost_is_the_exchange_round_trip_estimate(self):
+        self.assertEqual(sc.ROUND_TRIP_COST_PCT, 1.0)
 
     def test_only_open_calls_keep_a_coin_tracked(self):
         self.prices("SOL", [(0, 90)])

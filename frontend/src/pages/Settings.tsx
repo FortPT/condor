@@ -20,7 +20,7 @@ import { AgentsSettings } from "@/components/settings/AgentsSettings";
 import { ApiKeysSettings } from "@/components/settings/ApiKeysSettings";
 import { ApiServerSettings } from "@/components/settings/ApiServerSettings";
 import { CustomProvidersSettings } from "@/components/settings/CustomProvidersSettings";
-import { CryptoComApp } from "@/components/settings/CryptoComApp";
+import { CryptoComExchange } from "@/components/settings/CryptoComExchange";
 import { GatewaySettings } from "@/components/settings/GatewaySettings";
 import { NotificationsSettings } from "@/components/settings/NotificationsSettings";
 import { ServersSettings } from "@/components/settings/ServersSettings";
@@ -33,7 +33,7 @@ import { useServer } from "@/hooks/useServer";
 import { useAuth } from "@/lib/auth";
 
 type TabKey =
-  | "crypto-com"
+  | "crypto-exchange"
   | "agents"
   | "api"
   | "gateway"
@@ -84,7 +84,7 @@ function buildGroups(server: string | null, isAdmin: boolean): TabGroup[] {
     {
       label: "Account",
       tabs: [
-        { key: "crypto-com", label: "Crypto.com App", icon: KeyRound },
+        { key: "crypto-exchange", label: "Crypto.com Exchange", icon: KeyRound },
         { key: "notifications", label: "Notifications", icon: Bell },
         { key: "privacy", label: "Privacy", icon: Shield },
       ],
@@ -117,7 +117,9 @@ export function Settings() {
 
   const groups = buildGroups(server, isAdmin);
   const tabs = groups.flatMap((g) => g.tabs);
-  const requested = (params.get("tab") as TabKey) || "servers";
+  // Links from before the App integration moved to the Exchange keep working.
+  const rawTab = params.get("tab");
+  const requested = ((rawTab === "crypto-com" ? "crypto-exchange" : rawTab) as TabKey) || "servers";
   const available = tabs.some((t) => t.key === requested);
   // A deep link to ?tab=admin or ?tab=updates from a seat that is not (or no
   // longer) an admin falls back rather than rendering an empty page.
@@ -204,7 +206,7 @@ export function Settings() {
         <div className="min-w-0 flex-1">
           {/* Tab content */}
           {tab === "servers" && <ServersSettings />}
-          {tab === "crypto-com" && <CryptoComApp settings />}
+          {tab === "crypto-exchange" && <CryptoComExchange settings />}
           {tab === "agents" && <AgentsSettings />}
           {tab === "api" && <ApiServerSettings />}
           {tab === "gateway" && <GatewaySettings />}
