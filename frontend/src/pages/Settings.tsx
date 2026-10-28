@@ -1,5 +1,6 @@
 import {
   Bell,
+  Bitcoin,
   Brain,
   Download,
   KeyRound,
@@ -25,6 +26,7 @@ import { CryptoComExchange } from "@/components/settings/CryptoComExchange";
 import { GatewaySettings } from "@/components/settings/GatewaySettings";
 import { KrakenXStocks } from "@/components/settings/KrakenXStocks";
 import { NotificationsSettings } from "@/components/settings/NotificationsSettings";
+import { RevolutX } from "@/components/settings/RevolutX";
 import { ServersSettings } from "@/components/settings/ServersSettings";
 import { SharingSettings } from "@/components/settings/SharingSettings";
 import { TelemetrySettings } from "@/components/settings/TelemetrySettings";
@@ -37,6 +39,7 @@ import { useAuth } from "@/lib/auth";
 type TabKey =
   | "crypto-exchange"
   | "kraken-xstocks"
+  | "revolut-x"
   | "agents"
   | "api"
   | "gateway"
@@ -89,6 +92,7 @@ function buildGroups(server: string | null, isAdmin: boolean): TabGroup[] {
       tabs: [
         { key: "crypto-exchange", label: "Crypto.com Exchange", icon: KeyRound },
         { key: "kraken-xstocks", label: "Kraken xStocks", icon: TrendingUp },
+        { key: "revolut-x", label: "Revolut X", icon: Bitcoin },
         { key: "notifications", label: "Notifications", icon: Bell },
         { key: "privacy", label: "Privacy", icon: Shield },
       ],
@@ -212,6 +216,7 @@ export function Settings() {
           {tab === "servers" && <ServersSettings />}
           {tab === "crypto-exchange" && <CryptoComExchange settings />}
           {tab === "kraken-xstocks" && <KrakenXStocks />}
+          {tab === "revolut-x" && <RevolutX />}
           {tab === "agents" && <AgentsSettings />}
           {tab === "api" && <ApiServerSettings />}
           {tab === "gateway" && <GatewaySettings />}

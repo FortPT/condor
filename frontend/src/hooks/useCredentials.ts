@@ -75,6 +75,39 @@ export type KrakenXStocksStatus = {
   };
 };
 
+export type RevolutXStatus = {
+  connected: boolean;
+  has_signing_key: boolean;
+  has_api_key: boolean;
+  /** The PUBLIC half of the signing key, for the owner to register at Revolut X. */
+  public_key: string | null;
+  venue: string;
+  quote: string;
+  enabled: boolean;
+  ledger: ExchangeLedger & { observed_taker_fee_pct?: string | null };
+  limits?: {
+    floor?: string;
+    reserve_fraction?: string;
+    position_fraction?: string;
+    max_positions?: number;
+    guards_apply_from?: string;
+    max_asset_fraction_below_threshold?: string;
+    default_slippage_pct?: string;
+    pairs?: string;
+    session?: string;
+    taker_fee_pct_estimate?: string;
+  };
+};
+
+export function useRevolutXStatus() {
+  return useQuery({
+    queryKey: ["revolut-x-status"],
+    queryFn: () => apiFetch<RevolutXStatus>("/api/v1/revolut-x/status"),
+    refetchInterval: 10000,
+    retry: false,
+  });
+}
+
 export function useKrakenXStocksStatus() {
   return useQuery({
     queryKey: ["kraken-xstocks-status"],
