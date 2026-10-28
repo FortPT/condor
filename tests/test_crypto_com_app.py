@@ -262,7 +262,7 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         self.service.request = AsyncMock(return_value={"ok": True, "coins": [row]})
         result = await self.service.coins(1, "")
         path = self.service.request.await_args.args[2]
-        self.assertIn("page_size=15", path)
+        self.assertIn("page_size=40", path)
         self.assertNotIn("keyword", path)
         self.assertEqual(result["coins"][0]["symbol"], "BTC")
         self.assertNotIn("description", result["coins"][0])

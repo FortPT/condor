@@ -20,7 +20,7 @@ sizes new positions at most one sixth of current equity. Existing positions are
 not topped up. **These guards apply only from EUR 1000 total bot equity**
 (`GUARD_THRESHOLD_EUR`); below that the bot may hold any number of positions and
 add to existing ones, but no single asset may exceed **40% of total bot equity**
-(`MAX_ASSET_FRACTION`). An empty `coins` keyword lists the top 15 coins by rank. Stop new exposure at **EUR 2 total bot
+(`MAX_ASSET_FRACTION`). An empty `coins` keyword lists the top 40 coins by rank. Stop new exposure at **EUR 2 total bot
 equity** at any size, not EUR 2 of losses; profits increase the allocation. No guaranteed exit price or guaranteed profit.
 
 **Trade → Crypto.com App** is the single place to trade the App: a top-coins list
@@ -35,7 +35,7 @@ Settings → Crypto.com App. The limits shown on both pages come from the server
 Before trusting the trader with a lower cost hurdle, its calls are scored against
 real prices. Two things are stored in `scorecard.db` beside the ledger:
 
-* **Prices**: the listed EUR price of every coin the coin list returns (top 15, held
+* **Prices**: the listed EUR price of every coin the coin list returns (top 40, held
   coins and coins with an open call), at most once per 4 minutes per coin, kept 90 days.
 * **Calls**: logged by the trader with `crypto_com_app(action="predict", target="SOL",
   verdict="trade"|"pass", target_pct, stop_pct, horizon_hours, note)`. One open call per

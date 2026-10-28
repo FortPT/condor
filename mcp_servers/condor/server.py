@@ -1469,7 +1469,7 @@ async def crypto_com_app(
     status: bot allocation, enable state, positions and enforced limits. valuation:
     current liquidation quotation value in EUR (pauses on EUR 2 floor). accounts:
     available account cash/crypto. coins: search a symbol/name (EUR prices); an
-    empty keyword lists the top 15 coins by rank with is_tradable and changes.
+    empty keyword lists the top 40 coins by rank with is_tradable and changes.
     quote: purchase EUR→crypto, sale crypto→EUR, or exchange crypto→crypto;
     amount is the SOURCE quantity as a decimal string. execute: submit the
     quotation_id returned by quote within its countdown. Never retry an order
