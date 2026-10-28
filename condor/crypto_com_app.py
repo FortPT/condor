@@ -121,6 +121,9 @@ GUARD_THRESHOLD_EUR = Decimal("1000")
 # total bot equity, so the whole wallet cannot end up in a single coin.
 MAX_ASSET_FRACTION = Decimal("0.4")
 TOP_COINS = 15
+# Wallet balances lag a "done" order by a few seconds (seen with a EUR 10 HYPE buy).
+WALLET_SETTLE_TRIES = 5
+WALLET_SETTLE_WAIT_SEC = 2.0
 TOP_COIN_FIELDS = {
     "rank",
     "symbol",
@@ -447,10 +450,16 @@ class AppService:
             raise ValueError("Wallet snapshot missing; manual reconciliation required")
         source, spent = self._quote_amount(quote, "from")
         target, received = self._quote_amount(quote, "to")
-        after = await self.accounts(user_id)
-        debit = Decimal(before["source"]) - self._wallet_total(after, source)
-        credit = self._wallet_total(after, target) - Decimal(before["target"])
-        if debit != spent or credit != received:
+        # Balances settle shortly after the order reports done: re-read before refusing.
+        for attempt in range(WALLET_SETTLE_TRIES):
+            after = await self.accounts(user_id)
+            debit = Decimal(before["source"]) - self._wallet_total(after, source)
+            credit = self._wallet_total(after, target) - Decimal(before["target"])
+            if debit == spent and credit == received:
+                break
+            if attempt + 1 < WALLET_SETTLE_TRIES:
+                await asyncio.sleep(WALLET_SETTLE_WAIT_SEC)
+        else:
             raise ValueError(
                 "Final wallet changes do not match the quote; keep trading paused"
             )
