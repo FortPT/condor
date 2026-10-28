@@ -30,7 +30,10 @@ ON_COMPLETE_CHOICES = ("notify", "resume")
 
 # Long enough to cover an ask's model/tool latency without holding the caller's
 # turn open indefinitely. An ask is blocking, so this bound is the caller's too.
-ASK_TIMEOUT_SEC = 180.0
+# 180 s cut off a market analyst that fetches candles for six coins (it can run
+# 3+ minutes), which reached the caller as a bare "Failed to reach main process
+# API" and cost the tick its analysis.
+ASK_TIMEOUT_SEC = 420.0
 
 # The default wall-clock budget for a background task, stated here only so the
 # tool can tell the caller what it is getting when it asks for nothing. The
