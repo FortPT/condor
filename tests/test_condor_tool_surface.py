@@ -24,6 +24,7 @@ from mcp_servers.condor.tools import servers as servers_tool
 
 EXPECTED_TOOLS = {
     "crypto_com_exchange",
+    "xstocks_paper",
     "control_agent",
     "delegate",
     "get_available_models",

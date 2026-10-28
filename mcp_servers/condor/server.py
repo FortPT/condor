@@ -1572,6 +1572,63 @@ async def crypto_com_exchange(
     return {"data": result}
 
 
+@handle_errors("xStocks paper")
+async def xstocks_paper(
+    action: Literal["status", "coins", "candles", "predict", "scorecard"],
+    symbol: str = "",
+    timeframe: str = "15m",
+    count: str = "96",
+    keyword: str = "",
+    verdict: Literal["trade", "pass"] = "pass",
+    target_pct: str = "",
+    stop_pct: str = "",
+    horizon_hours: str = "",
+    note: str = "",
+) -> dict:
+    """Paper-trade tokenized US stocks (Kraken xStocks) on public data; no orders, no money.
+
+    status: whether the regular US session is open, and the round-trip cost the
+    scorecard assumes. coins: the most traded xStocks in USD with bid, ask, spread,
+    24h dollar volume, 24h range and the move since the open; a keyword filters by
+    ticker. candles: OHLCV for `symbol` (timeframe 5m, 15m, 30m, 1h, 4h or 1D; count
+    up to 300). predict: log one paper call for `symbol` (verdict trade|pass,
+    target_pct, stop_pct, horizon_hours 1-168, short note); it never trades.
+    scorecard: how the logged calls scored against later prices after costs.
+
+    This tool has no account, credentials or order action. It cannot place, size
+    or cancel anything; every call is a paper call.
+    """
+    from urllib.parse import urlencode
+
+    from mcp_servers.condor.condor_client import call_main_api
+
+    if action == "predict":
+        return await call_main_api(
+            "POST",
+            "/xstocks-paper/predict",
+            {
+                "symbol": symbol,
+                "verdict": verdict,
+                "target_pct": target_pct,
+                "stop_pct": stop_pct,
+                "horizon_hours": horizon_hours,
+                "note": note,
+            },
+        )
+    if action == "coins":
+        return await call_main_api(
+            "GET", "/xstocks-paper/coins?" + urlencode({"keyword": keyword})
+        )
+    if action == "candles":
+        return await call_main_api(
+            "GET",
+            "/xstocks-paper/candles?"
+            + urlencode({"symbol": symbol, "timeframe": timeframe, "count": count}),
+        )
+    result = await call_main_api("GET", "/xstocks-paper/" + action)
+    return {"data": result}
+
+
 TOOL_PROFILES: dict[str, tuple] = resolve_profiles(globals(), PROFILE_TOOLS)
 register_tools(
     mcp, settings.tool_profile, settings.muted_tools, settings.execution_mode

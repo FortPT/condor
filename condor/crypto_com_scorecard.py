@@ -50,14 +50,21 @@ VERDICTS = {"trade", "pass"}
 SYMBOL = re.compile(r"[A-Z0-9]{1,24}")
 
 
-def _db(user_id: int) -> Path:
+#: Where a venue's scorecard lives; each venue keeps its own prices and calls.
+DEFAULT_VENUE = "crypto_com_exchange"
+VENUE = re.compile(r"[a-z0-9_]{1,40}")
+
+
+def _db(user_id: int, venue: str = DEFAULT_VENUE) -> Path:
     if not isinstance(user_id, int) or user_id <= 0:
         raise ValueError("Invalid account owner")
-    return data_dir() / "crypto_com_exchange" / str(user_id) / "scorecard.db"
+    if not isinstance(venue, str) or not VENUE.fullmatch(venue):
+        raise ValueError("Invalid scorecard venue")
+    return data_dir() / venue / str(user_id) / "scorecard.db"
 
 
-def _connect(user_id: int) -> sqlite3.Connection:
-    path = _db(user_id)
+def _connect(user_id: int, venue: str = DEFAULT_VENUE) -> sqlite3.Connection:
+    path = _db(user_id, venue)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     conn = sqlite3.connect(path, timeout=10)
     conn.executescript("""
@@ -84,7 +91,9 @@ def _number(value, name, low, high):
     return number
 
 
-def record_snapshot(user_id: int, coins, now: float | None = None) -> int:
+def record_snapshot(
+    user_id: int, coins, now: float | None = None, *, venue: str = DEFAULT_VENUE
+) -> int:
     """Store the listed price (in the account's quote currency) of each coin; returns how many rows were added."""
     now = int(now if now is not None else time.time())
     rows = []
@@ -99,7 +108,7 @@ def record_snapshot(user_id: int, coins, now: float | None = None) -> int:
             rows.append((symbol, quoted))
     if not rows:
         return 0
-    with closing(_connect(user_id)) as conn:
+    with closing(_connect(user_id, venue)) as conn:
         recent = dict(
             conn.execute(
                 "SELECT symbol, MAX(ts) FROM prices WHERE ts > ? GROUP BY symbol",
@@ -113,9 +122,11 @@ def record_snapshot(user_id: int, coins, now: float | None = None) -> int:
     return len(fresh)
 
 
-def latest_price(user_id: int, symbol: str, now: float | None = None):
+def latest_price(
+    user_id: int, symbol: str, now: float | None = None, *, venue: str = DEFAULT_VENUE
+):
     now = int(now if now is not None else time.time())
-    with closing(_connect(user_id)) as conn:
+    with closing(_connect(user_id, venue)) as conn:
         row = conn.execute(
             "SELECT ts, price FROM prices WHERE symbol = ? AND ts <= ? ORDER BY ts DESC LIMIT 1",
             (symbol, now),
@@ -123,10 +134,12 @@ def latest_price(user_id: int, symbol: str, now: float | None = None):
     return row if row and now - row[0] <= ENTRY_MAX_AGE_SEC else None
 
 
-def tracked_symbols(user_id: int, now: float | None = None) -> list[str]:
+def tracked_symbols(
+    user_id: int, now: float | None = None, *, venue: str = DEFAULT_VENUE
+) -> list[str]:
     """Coins with a still-open prediction, so their prices keep being recorded."""
     now = int(now if now is not None else time.time())
-    with closing(_connect(user_id)) as conn:
+    with closing(_connect(user_id, venue)) as conn:
         rows = conn.execute(
             "SELECT DISTINCT symbol FROM predictions WHERE ts + horizon_h * 3600 > ?",
             (now,),
@@ -135,7 +148,16 @@ def tracked_symbols(user_id: int, now: float | None = None) -> list[str]:
 
 
 def record_prediction(
-    user_id, symbol, verdict, target_pct, stop_pct, horizon_hours, note="", now=None
+    user_id,
+    symbol,
+    verdict,
+    target_pct,
+    stop_pct,
+    horizon_hours,
+    note="",
+    now=None,
+    *,
+    venue=DEFAULT_VENUE,
 ):
     """Log one call. Needs a recent listed price; one open call per coin."""
     now = int(now if now is not None else time.time())
@@ -148,10 +170,10 @@ def record_prediction(
     stop = _number(stop_pct, "stop_pct", 0.1, 100)
     horizon = _number(horizon_hours, "horizon_hours", 1, 168)
     note = " ".join(str(note or "").split())[:200]
-    price = latest_price(user_id, symbol, now)
+    price = latest_price(user_id, symbol, now, venue=venue)
     if price is None:
         raise ValueError(f"No recent listed price for {symbol}; list the coin first")
-    with closing(_connect(user_id)) as conn:
+    with closing(_connect(user_id, venue)) as conn:
         open_call = conn.execute(
             "SELECT id FROM predictions WHERE symbol = ? AND ts + horizon_h * 3600 > ?",
             (symbol, now),
@@ -253,10 +275,14 @@ def _summary(rows):
 
 
 def report(
-    user_id: int, now: float | None = None, cost_pct: float = ROUND_TRIP_COST_PCT
+    user_id: int,
+    now: float | None = None,
+    cost_pct: float = ROUND_TRIP_COST_PCT,
+    *,
+    venue: str = DEFAULT_VENUE,
 ) -> dict:
     now = int(now if now is not None else time.time())
-    with closing(_connect(user_id)) as conn:
+    with closing(_connect(user_id, venue)) as conn:
         conn.row_factory = sqlite3.Row
         predictions = [
             dict(row) for row in conn.execute("SELECT * FROM predictions ORDER BY ts")
