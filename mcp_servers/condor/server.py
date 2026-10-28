@@ -1751,11 +1751,133 @@ async def kraken_xstocks(
     return {"data": result}
 
 
+# Same reasoning as the Exchange: an order waits for Revolut X to report it final.
+REVOLUT_X_ORDER_TIMEOUT = 90.0
+
+
+@handle_errors("Revolut X")
+async def revolut_x(
+    action: Literal[
+        "status",
+        "valuation",
+        "accounts",
+        "history",
+        "coins",
+        "candles",
+        "book",
+        "preview",
+        "order",
+        "reconcile",
+        "predict",
+        "scorecard",
+    ],
+    side: Literal["buy", "sell"] = "buy",
+    symbol: str = "",
+    amount: str = "",
+    max_slippage_pct: str = "",
+    timeframe: str = "15m",
+    count: str = "96",
+    keyword: str = "",
+    verdict: Literal["trade", "pass"] = "pass",
+    target_pct: str = "",
+    stop_pct: str = "",
+    horizon_hours: str = "",
+    note: str = "",
+) -> dict:
+    """Trade crypto on Revolut X (EUR pairs) within the bot's allocation.
+
+    status: bot allocation, enable state, positions and enforced limits. valuation:
+    equity in EUR at the live best bid (pauses at the equity floor). accounts: Revolut X
+    balances. history: recent final orders. coins: the most traded EUR pairs (a coin is
+    BTC, not BTC-EUR) with bid, ask, spread, 24h euro volume, 24h change and range; a
+    keyword filters by coin. candles: OHLCV for `symbol` (timeframe 1m, 5m, 15m, 30m, 1h,
+    4h or 1D; count up to 300). book: top order-book levels. preview: size and price an
+    order from the live book without placing it, with the taker fee (an ESTIMATE until a
+    real fill reports the truth) and the estimated round-trip cost. order: buy (`amount`
+    is the EUR to spend) or sell (`amount` is the number of coin UNITS); it is an
+    immediate-or-cancel limit order priced `max_slippage_pct` (default 0.3, max 2)
+    through the touch, sized down to the pair's lot and price steps. Never retry an order
+    after an uncertain outcome; use reconcile. predict: log one scorecard call for
+    `symbol` (verdict trade|pass, target_pct, stop_pct, horizon_hours, short note); paper
+    only, it never trades. scorecard: how the logged calls scored against real prices
+    after costs.
+
+    The owner generates the signing key, saves the API key, syncs the allocation and
+    enables trading in Settings. These tools cannot change credentials, keys, sync or
+    enable trading. Orders only ever trade EUR pairs, enforce the bot allocation, the
+    equity floor and, below 1000 of total bot equity, a 40% cap per coin; from 1000 the
+    50% cash reserve, three positions and one-sixth limit apply. Crypto trades around the
+    clock, so there is no session rule. No withdrawal, margin, leverage or access to
+    unallocated holdings. A configured autonomous loop may order without per-order
+    prompts; an attended manual request should show the preview before ordering.
+    """
+    from urllib.parse import urlencode
+
+    from mcp_servers.condor.condor_client import call_main_api
+
+    if action == "order":
+        return await call_main_api(
+            "POST",
+            "/revolut-x/order",
+            {
+                "side": side,
+                "symbol": symbol,
+                "amount": amount,
+                "max_slippage_pct": max_slippage_pct,
+            },
+            timeout=REVOLUT_X_ORDER_TIMEOUT,
+        )
+    if action == "preview":
+        return await call_main_api(
+            "POST",
+            "/revolut-x/preview",
+            {
+                "side": side,
+                "symbol": symbol,
+                "amount": amount,
+                "max_slippage_pct": max_slippage_pct,
+            },
+        )
+    if action == "reconcile":
+        return await call_main_api(
+            "POST", "/revolut-x/reconcile", timeout=REVOLUT_X_ORDER_TIMEOUT
+        )
+    if action == "predict":
+        return await call_main_api(
+            "POST",
+            "/revolut-x/predict",
+            {
+                "symbol": symbol,
+                "verdict": verdict,
+                "target_pct": target_pct,
+                "stop_pct": stop_pct,
+                "horizon_hours": horizon_hours,
+                "note": note,
+            },
+        )
+    if action == "coins":
+        return await call_main_api(
+            "GET", "/revolut-x/coins?" + urlencode({"keyword": keyword})
+        )
+    if action == "candles":
+        return await call_main_api(
+            "GET",
+            "/revolut-x/candles?"
+            + urlencode({"symbol": symbol, "timeframe": timeframe, "count": count}),
+        )
+    if action == "book":
+        return await call_main_api(
+            "GET", "/revolut-x/book?" + urlencode({"symbol": symbol})
+        )
+    result = await call_main_api("GET", "/revolut-x/" + action)
+    return {"data": result}
+
+
 @handle_errors("native portfolio")
 async def native_portfolio() -> dict:
-    """Read the owner's Crypto.com Exchange and Kraken xStocks accounts (USD, read-only).
+    """Read the owner's Crypto.com Exchange, Kraken xStocks and Revolut X accounts (USD, read-only).
 
-    Hummingbot's `get_portfolio_overview` cannot see these two accounts, which
+    Hummingbot's `get_portfolio_overview` cannot see these accounts, which
     Condor trades itself, so on its own it reads as an empty portfolio for them.
     This returns, for each: whether it is connected; the whole account's value in
     USD split into cash and positions (each with its USD value); the bot
@@ -1763,7 +1885,8 @@ async def native_portfolio() -> dict:
     trading is enabled, whether an order is uncertain); and the change in account
     equity since the value history began and over the last 24 hours. The change is
     only the difference between two account readings: deposits and withdrawals are
-    not tracked, so a deposit reads as a gain.
+    not tracked, so a deposit reads as a gain. Revolut X's ledger is in EUR (its
+    `quote`), while every account value and change here is in USD.
 
     Report these figures next to the Hummingbot ones, not instead of them. Kraken
     xStocks is the same Kraken account Hummingbot's `kraken` connector may also

@@ -153,7 +153,7 @@ async def get_portfolio(
 
 @router.get("/portfolio/native")
 async def get_native_portfolio(user: WebUser = Depends(get_current_user)):
-    """Crypto.com Exchange and Kraken xStocks for the caller, read-only.
+    """Crypto.com Exchange, Kraken xStocks and Revolut X for the caller, read-only.
 
     What the chat agent's ``native_portfolio`` tool returns: Hummingbot cannot see
     these accounts, so its own portfolio tool reads as empty without them.

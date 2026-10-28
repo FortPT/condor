@@ -188,7 +188,7 @@ function DashboardStrip({
           pnl={convertFromUsd(agentPnl)}
           pnlTitle={
             agents.some((a) => a.pnl_basis === ACCOUNT_EQUITY)
-              ? "Includes the change in account equity of native crews (Crypto.com Exchange, Kraken xStocks); deposits and withdrawals are not tracked"
+              ? "Includes the change in account equity of native crews (Crypto.com Exchange, Kraken xStocks, Revolut X); deposits and withdrawals are not tracked"
               : undefined
           }
           details={`${agents.length} total · ${agentSessions} session${agentSessions !== 1 ? "s" : ""}`}

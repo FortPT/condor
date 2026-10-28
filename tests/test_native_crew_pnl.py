@@ -19,6 +19,7 @@ from condor import native_accounts as na
 from condor import native_venues
 from condor import portfolio_history as ph
 from condor.crypto_com_exchange import service as exchange_service
+from condor.revolut_x import service as revolut_service
 from condor.runtime import loops as loops_module
 from condor.runtime.registry_file import BOOT_ID
 from condor.web.models import WebUser
@@ -110,6 +111,35 @@ def test_no_recorded_equity_is_no_history_not_a_zero(tmp_path, monkeypatch):
     assert unavailable == "no_history"
     assert totals["total_pnl"] == 0.0
     assert [(s.reading, s.total_pnl) for s in sessions] == [("missing", 0.0)]
+
+
+def test_the_revolut_x_crew_reads_its_usd_account_equity_change(tmp_path, monkeypatch):
+    """Revolut X keeps its ledger in euros, but the loop card shows the whole
+    account's change in USD from the value history, like the other native crews."""
+    make_session(tmp_path, 1, T0, state="running")
+    ph.record(7, ph.REVOLUT, 60.0, now=T0 - 60)
+
+    async def portfolio(user_id):
+        return {"total_usd": 64.5, "balances": [], "note": ""}
+
+    monkeypatch.setattr(revolut_service, "portfolio", portfolio)
+    monkeypatch.setattr(
+        revolut_service,
+        "status",
+        lambda user_id: {
+            "connected": True,
+            "enabled": True,
+            "ledger": {"quote": "EUR", "positions": {"SUI": {}}},
+        },
+    )
+    sessions, totals, unavailable = compute(
+        tmp_path, run_key="revolut_x_trader.intraday"
+    )
+    assert unavailable == ""
+    assert sessions[0].pnl_basis == "account_equity"
+    assert sessions[0].total_pnl == pytest.approx(4.5)
+    assert totals["total_pnl"] == pytest.approx(4.5)
+    assert totals["open_positions"] == 1.0
 
 
 def test_the_paper_crew_reports_that_it_has_no_ledger(tmp_path):

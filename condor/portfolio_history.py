@@ -1,7 +1,7 @@
 """Value history for the accounts Condor reads itself.
 
-Hummingbot records its own portfolio history, but the Crypto.com Exchange and the
-Kraken xStocks account are read by Condor's native modules, so the dashboard's
+Hummingbot records its own portfolio history, but the Crypto.com Exchange, the Kraken
+xStocks account and Revolut X are read by Condor's native modules, so the dashboard's
 Portfolio Evolution chart used to leave them out. This keeps one small value
 sample per account every few minutes (USD, whole account at the last traded
 price) so the chart route can add them. Nothing here touches money.
@@ -27,6 +27,7 @@ log = logging.getLogger(__name__)
 
 EXCHANGE = native_venues.get("crypto_com_exchange").label
 KRAKEN = native_venues.get("kraken_xstocks").label
+REVOLUT = native_venues.get("revolut_x").label
 SOURCES = tuple(v.label for v in native_venues.account_venues())
 SAMPLE_EVERY_SEC = 300
 # A second sample inside this gap (an open dashboard plus the timer) is dropped.

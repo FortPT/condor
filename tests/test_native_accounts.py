@@ -16,6 +16,7 @@ from condor import portfolio_history as ph
 T0 = 1_790_000_000
 EXCHANGE = native_venues.get("crypto_com_exchange")
 KRAKEN = native_venues.get("kraken_xstocks")
+REVOLUT = native_venues.get("revolut_x")
 PAPER = native_venues.get("xstocks_paper")
 
 
@@ -85,6 +86,7 @@ def perf(venue, spans, service, now, user=1):
 def test_agents_map_to_their_venue_and_others_to_none():
     assert native_venues.for_agent("crypto_com_exchange_trader") is EXCHANGE
     assert native_venues.for_agent("kraken_xstocks_trader") is KRAKEN
+    assert native_venues.for_agent("revolut_x_trader") is REVOLUT
     assert native_venues.for_agent("xstocks_paper_trader") is PAPER
     assert native_venues.for_agent("adaptive_grid_trader") is None
 
@@ -311,10 +313,12 @@ def test_overview_reports_each_account_with_cash_positions_ledger_and_equity_cha
             total=48.0, positions={"BTC": {"units": "0.001", "cost": "27"}}
         ),
         "kraken_xstocks": FakeService(connected=False),
+        "revolut_x": FakeService(connected=False),
     }
     out = run(na.overview(1, services=services, now=T0))
     assert out["total_usd"] == 48.0
-    exchange, kraken = out["venues"]
+    exchange, kraken, revolut = out["venues"]
+    assert revolut["connected"] is False and revolut["connector"] == "Revolut X"
     assert exchange["connected"] is True
     assert exchange["account"]["total_usd"] == 48.0
     assert exchange["account"]["cash_usd"] == 20.0
@@ -340,9 +344,10 @@ def test_overview_says_so_when_a_venue_cannot_be_valued_and_leaves_it_out_of_the
     services = {
         "crypto_com_exchange": FakeService(error=ValueError("down")),
         "kraken_xstocks": FakeService(total=9.0),
+        "revolut_x": FakeService(connected=False),
     }
     out = run(na.overview(1, services=services, now=T0))
-    exchange, kraken = out["venues"]
+    exchange, kraken, _revolut = out["venues"]
     assert "Could not be valued" in exchange["error"]
     assert "account" not in exchange
     assert out["total_usd"] == 9.0
@@ -351,3 +356,100 @@ def test_overview_says_so_when_a_venue_cannot_be_valued_and_leaves_it_out_of_the
         "reason": "no_history",
         "basis": na.BASIS_LABEL,
     }
+
+
+# ── Revolut X: one registry entry, a euro ledger valued in USD ──
+
+
+class EuroService(FakeService):
+    """Revolut X reports its ledger in EUR but values the account in USD."""
+
+    def status(self, user_id):
+        status = super().status(user_id)
+        status["ledger"]["quote"] = "EUR"
+        status["ledger"]["cash"] = "40"
+        return status
+
+    async def portfolio(self, user_id):
+        self.calls += 1
+        return {
+            "connector": "Revolut X",
+            "total_usd": self.total,
+            "balances": [
+                {"token": "EUR", "total": 40, "available": 40, "usd_value": 44.5},
+                {"token": "SUI", "total": 5, "available": 5, "usd_value": 16.7},
+            ],
+            "note": "Euros converted at the USDC/EUR rate.",
+        }
+
+
+def test_revolut_x_is_registered_once_and_is_a_real_valued_account():
+    assert [v.key for v in native_venues.VENUES].count("revolut_x") == 1
+    assert REVOLUT.label == "Revolut X"
+    assert REVOLUT.module == "condor.revolut_x"
+    assert REVOLUT.agents == ("revolut_x_trader",)
+    assert REVOLUT in native_venues.account_venues()
+    assert "Revolut X" in ph.SOURCES and ph.REVOLUT == "Revolut X"
+    assert "Revolut X could not be valued" in REVOLUT.unvalued_note
+
+
+def test_revolut_x_joins_the_dashboard_views_and_the_history_once():
+    services = {
+        "crypto_com_exchange": FakeService(total=48.0, connected=False),
+        "kraken_xstocks": FakeService(total=9.0, connected=False),
+        "revolut_x": EuroService(total=61.2),
+    }
+    result = run(na.collect_views(1, services=services))
+    assert [v["connector"] for v in result.views] == ["Revolut X"]
+    assert [v["total_usd"] for v in result.views] == [61.2]
+    assert [v for _, v in ph.series(1, since=0)[ph.REVOLUT]] == [61.2]
+    # Hummingbot's kraken connector never stands in for Revolut X.
+    kept = run(na.collect_views(1, skip=("kraken_xstocks",), services=services))
+    assert [v["total_usd"] for v in kept.views] == [61.2]
+
+
+def test_revolut_x_failing_is_its_own_note():
+    services = {
+        "crypto_com_exchange": FakeService(total=48.0),
+        "kraken_xstocks": FakeService(connected=False),
+        "revolut_x": FakeService(error=ValueError("no EUR/USD rate")),
+    }
+    result = run(na.collect_views(1, services=services))
+    assert [v["total_usd"] for v in result.views] == [48.0]
+    assert result.notes == [REVOLUT.unvalued_note]
+
+
+def test_the_history_recorder_samples_revolut_x_from_the_registry():
+    run(ph.sample_user(1, revolut_x=EuroService(total=61.2)))
+    assert ph.series(1, since=0)[ph.REVOLUT][0][1] == 61.2
+
+
+def test_revolut_x_equity_change_is_measured_in_usd_not_euros():
+    sample(REVOLUT, T0 - 86400, 55.0)
+    services = {
+        "crypto_com_exchange": FakeService(connected=False),
+        "kraken_xstocks": FakeService(connected=False),
+        "revolut_x": EuroService(total=61.2),
+    }
+    out = run(na.overview(1, services=services, now=T0))
+    revolut = out["venues"][2]
+    assert revolut["ledger"]["quote"] == "EUR"
+    assert revolut["ledger"]["cash"] == "40"
+    # Cash is the EUR balance valued in USD (not 40), and counted once.
+    assert revolut["account"]["cash_usd"] == 44.5
+    assert [p["token"] for p in revolut["account"]["positions"]] == ["SUI"]
+    assert revolut["account"]["total_usd"] == 61.2
+    assert out["total_usd"] == 61.2
+    assert revolut["equity_change"]["since_first_sample"]["change_usd"] == 6.2
+
+
+def test_a_revolut_x_session_pnl_is_its_usd_equity_change():
+    sample(REVOLUT, T0 - 100, 55.0)
+    out = perf(
+        REVOLUT,
+        [na.SessionSpan(1, T0, live=True)],
+        EuroService(total=61.2),
+        now=T0 + 3600,
+    )
+    assert out.unavailable == ""
+    assert out.sessions[0].pnl == pytest.approx(6.2)
