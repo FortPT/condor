@@ -64,7 +64,7 @@ HB_PROFILES = {
 }
 
 CONDOR_COMMON = {
-    "crypto_com_app",
+    "crypto_com_exchange",
     "delegate",
     "send_notification",
     "manage_routines",

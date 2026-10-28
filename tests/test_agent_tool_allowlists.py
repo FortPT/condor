@@ -59,7 +59,7 @@ NOT_CALLS: dict[str, set[str]] = {
 # These specialists intentionally cannot administer the framework. Their exact
 # capabilities and consultation policy are pinned in test_crypto_com_crew.py.
 RESTRICTED_CREW = {
-    "crypto_com_app_trader",
+    "crypto_com_exchange_trader",
     "crypto_com_market_analyst",
     "crypto_com_risk_reviewer",
 }

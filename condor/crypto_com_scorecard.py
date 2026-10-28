@@ -1,9 +1,9 @@
-"""Paper scorecard for the Crypto.com App trader.
+"""Paper scorecard for the Crypto.com Exchange trader.
 
 It answers one question before real money rides on it: do the trader's calls
 beat the cost of trading? Two things are stored, and nothing else:
 
-* price snapshots of App coins (taken whenever the coin list is read), and
+* price snapshots of Exchange coins (taken whenever the coin list is read), and
 * predictions the trader logs (coin, target %, stop %, time window).
 
 Outcomes are never stored. They are recomputed from the snapshots on every
@@ -21,9 +21,10 @@ from pathlib import Path
 
 from condor.paths import data_dir
 
-# Measured on the live App on 2026-10-27: buys fill within 0.3% of the listed
-# price, sales come out 3.6-7.1% below it, the 0.8% trading fee is waived.
-ROUND_TRIP_COST_PCT = 5.0
+# Conservative Exchange estimate: a taker fee of up to 0.5% a side plus half a
+# spread each way on liquid coins. The real fee comes back on each order and the
+# multiples below re-score the history at 1.5x, 2x and 3x this cost.
+ROUND_TRIP_COST_PCT = 1.0
 # A coin's price is stored at most this often, so a 5-minute loop plus an open
 # dashboard do not multiply rows.
 SNAPSHOT_MIN_GAP_SEC = 240
@@ -52,7 +53,7 @@ SYMBOL = re.compile(r"[A-Z0-9]{1,24}")
 def _db(user_id: int) -> Path:
     if not isinstance(user_id, int) or user_id <= 0:
         raise ValueError("Invalid account owner")
-    return data_dir() / "crypto_com_app" / str(user_id) / "scorecard.db"
+    return data_dir() / "crypto_com_exchange" / str(user_id) / "scorecard.db"
 
 
 def _connect(user_id: int) -> sqlite3.Connection:
@@ -61,7 +62,7 @@ def _connect(user_id: int) -> sqlite3.Connection:
     conn = sqlite3.connect(path, timeout=10)
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS prices (
-            ts INTEGER NOT NULL, symbol TEXT NOT NULL, eur REAL NOT NULL,
+            ts INTEGER NOT NULL, symbol TEXT NOT NULL, price REAL NOT NULL,
             PRIMARY KEY (ts, symbol));
         CREATE INDEX IF NOT EXISTS prices_symbol_ts ON prices (symbol, ts);
         CREATE TABLE IF NOT EXISTS predictions (
@@ -84,18 +85,18 @@ def _number(value, name, low, high):
 
 
 def record_snapshot(user_id: int, coins, now: float | None = None) -> int:
-    """Store the listed EUR price of each coin; returns how many rows were added."""
+    """Store the listed price (in the account's quote currency) of each coin; returns how many rows were added."""
     now = int(now if now is not None else time.time())
     rows = []
     for coin in coins or []:
         symbol = coin.get("symbol") if isinstance(coin, dict) else None
         price = (coin.get("price_native") or {}).get("amount") if symbol else None
         try:
-            eur = float(price)
+            quoted = float(price)
         except (TypeError, ValueError):
             continue
-        if symbol and SYMBOL.fullmatch(symbol) and eur > 0:
-            rows.append((symbol, eur))
+        if symbol and SYMBOL.fullmatch(symbol) and quoted > 0:
+            rows.append((symbol, quoted))
     if not rows:
         return 0
     with closing(_connect(user_id)) as conn:
@@ -116,7 +117,7 @@ def latest_price(user_id: int, symbol: str, now: float | None = None):
     now = int(now if now is not None else time.time())
     with closing(_connect(user_id)) as conn:
         row = conn.execute(
-            "SELECT ts, eur FROM prices WHERE symbol = ? AND ts <= ? ORDER BY ts DESC LIMIT 1",
+            "SELECT ts, price FROM prices WHERE symbol = ? AND ts <= ? ORDER BY ts DESC LIMIT 1",
             (symbol, now),
         ).fetchone()
     return row if row and now - row[0] <= ENTRY_MAX_AGE_SEC else None
@@ -167,13 +168,13 @@ def record_prediction(
             (now, symbol, verdict, price[1], target, stop, horizon, note),
         )
         conn.commit()
-    return {"recorded": True, "id": cursor.lastrowid, "entry_eur": price[1]}
+    return {"recorded": True, "id": cursor.lastrowid, "entry_price": price[1]}
 
 
 def evaluate(prediction: dict, series, now: float, cost_pct: float) -> dict:
     """Score one call from the prices after it. Pure: no clock, no storage.
 
-    ``series`` is ``[(ts, eur), ...]`` ascending. A target is hit when the price
+    ``series`` is ``[(ts, price), ...]`` ascending. A target is hit when the price
     reaches ``entry * (1 + target%)`` before it falls to ``entry * (1 - stop%)``;
     the first snapshot to cross a line decides, and a call that does neither by
     the end of its window is scored at the last price inside the window.
@@ -219,11 +220,11 @@ def _baseline(conn, prediction, now):
         if symbol in NOT_MARKET:
             continue
         first = conn.execute(
-            "SELECT eur FROM prices WHERE symbol = ? AND ts BETWEEN ? AND ? ORDER BY ts LIMIT 1",
+            "SELECT price FROM prices WHERE symbol = ? AND ts BETWEEN ? AND ? ORDER BY ts LIMIT 1",
             (symbol, start - 600, start + 600),
         ).fetchone()
         last = conn.execute(
-            "SELECT eur FROM prices WHERE symbol = ? AND ts <= ? AND ts > ? ORDER BY ts DESC LIMIT 1",
+            "SELECT price FROM prices WHERE symbol = ? AND ts <= ? AND ts > ? ORDER BY ts DESC LIMIT 1",
             (symbol, end, start),
         ).fetchone()
         if first and last:
@@ -263,7 +264,7 @@ def report(
         scored = []
         for prediction in predictions:
             series = conn.execute(
-                "SELECT ts, eur FROM prices WHERE symbol = ? AND ts > ? AND ts <= ? ORDER BY ts",
+                "SELECT ts, price FROM prices WHERE symbol = ? AND ts > ? AND ts <= ? ORDER BY ts",
                 (prediction["symbol"], prediction["ts"], now),
             ).fetchall()
             result = evaluate(prediction, [(r[0], r[1]) for r in series], now, cost_pct)

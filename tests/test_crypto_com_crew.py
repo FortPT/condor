@@ -15,12 +15,12 @@ from condor.agents.strategy import StrategyStore
 from condor.runtime.toolsets import allowlist_mutes, every_tool_name
 
 ROOT = Path(__file__).resolve().parents[1]
-COORDINATOR = "crypto_com_app_trader"
+COORDINATOR = "crypto_com_exchange_trader"
 ANALYST = "crypto_com_market_analyst"
 REVIEWER = "crypto_com_risk_reviewer"
 TOOLS = {
     COORDINATOR: {
-        "crypto_com_app",
+        "crypto_com_exchange",
         "delegate",
         "get_market_data",
         "get_prices",
@@ -86,11 +86,11 @@ def test_consultation_references_resolve_and_market_precedes_bounded_intent_revi
         assert all(registry.get(slug) is not None for slug in targets)
         assert text.index(ANALYST) < text.index(REVIEWER)
         assert "sequential" in text
-        assert "bounded" in text and "quote ID" in text
+        assert "bounded" in text and "preview" in text
     assert (
-        loop.instructions.index('action="quote"')
+        loop.instructions.index('action="preview"')
         < loop.instructions.index(f'agent="{REVIEWER}"')
-        < loop.instructions.index('action="execute"')
+        < loop.instructions.index('action="order"')
     )
 
 
@@ -109,32 +109,30 @@ def test_authored_protocol_denies_missing_review_and_checks_every_final_quote_bo
             "incomplete",
         ):
             assert condition in text
-        for guard in ("no order", "journal", "notify", "fresh final", "new review"):
+        for guard in ("no order", "journal", "notify", "fresh preview", "new review"):
             assert guard in text
         assert "never enable" in text
         assert "native" in text and "guards" in text
     for field in (
-        "quote id",
-        "kind",
-        "currency",
-        "requested source amount",
-        "maximum source amount",
-        "minimum received amount",
+        "preview",
+        "side",
+        "exact pair",
+        "requested amount",
+        "maximum amount",
+        "maximum slippage percent",
         "costs/spread",
         "utc validity deadline",
         "allocation snapshot",
-        "countdown",
+        "fresh preview",
     ):
         assert field in reviewer
     assert "unknown cost basis means incomplete, never approval" in reviewer
-    assert (
-        "indicative quote id as evidence, explicitly not an executable id" in reviewer
-    )
+    assert "no quotation on the exchange" in reviewer
     assert "out-of-bounds" in reviewer and "expired" in reviewer
     assert (
         loop.index('agent="crypto_com_risk_reviewer"')
-        < loop.index("request one fresh final quote")
-        < loop.index('action="execute"')
+        < loop.index("take one fresh preview")
+        < loop.index('action="order"')
     )
     for slug in TOOLS:
         instructions = registry.get(slug).instructions
@@ -149,7 +147,7 @@ def test_native_tool_exposes_no_enable_credentials_or_money_limit_mutation():
     tool = next(
         node
         for node in tree.body
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "crypto_com_app"
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "crypto_com_exchange"
     )
     actions = set(ast.literal_eval(tool.args.args[0].annotation.slice))
     assert actions == {
@@ -158,19 +156,22 @@ def test_native_tool_exposes_no_enable_credentials_or_money_limit_mutation():
         "accounts",
         "history",
         "coins",
-        "quote",
-        "execute",
+        "candles",
+        "book",
+        "preview",
+        "order",
         "reconcile",
         "predict",
         "scorecard",
     }
     assert {arg.arg for arg in tool.args.args} == {
         "action",
-        "kind",
-        "source",
-        "target",
+        "side",
+        "symbol",
         "amount",
-        "quotation_id",
+        "max_slippage_pct",
+        "timeframe",
+        "count",
         "keyword",
         "verdict",
         "target_pct",

@@ -25,12 +25,15 @@ def decide(allowed, tool, *, callback=None, options=OPTIONS):
 
 
 @pytest.mark.parametrize(
-    "name", ["Bash", "Read", "Write", "Task", "mcp__condor__crypto_com_app"]
+    "name", ["Bash", "Read", "Write", "Task", "mcp__condor__crypto_com_exchange"]
 )
 def test_market_analyst_cannot_escape_its_read_only_tools(name):
     result = decide(
         ["get_prices", "get_market_data", "trading_agent_journal_read"],
-        {"tool": name, "input": {"action": "execute", "quotation_id": "stub"}},
+        {
+            "tool": name,
+            "input": {"action": "order", "side": "buy", "symbol": "ETH", "amount": "5"},
+        },
     )
     assert result["outcome"] == REJECT["outcome"]
 
@@ -48,19 +51,19 @@ def test_coordinator_execution_retains_original_risk_decision_and_arguments():
     calls = []
     outcome = {**CANCEL, "reason": "dry run cannot execute"}
     tool = {
-        "tool": "mcp__condor__crypto_com_app",
-        "input": {"action": "execute", "quotation_id": "stub"},
+        "tool": "mcp__condor__crypto_com_exchange",
+        "input": {"action": "order", "side": "buy", "symbol": "ETH", "amount": "5"},
     }
 
     async def risk(tool_call, options):
         calls.append((tool_call, options))
         return outcome
 
-    result = decide(["crypto_com_app"], tool, callback=risk)
+    result = decide(["crypto_com_exchange"], tool, callback=risk)
     assert result is outcome
     assert calls[0][0] is tool
     assert calls[0][1] is OPTIONS
-    denied = decide(["crypto_com_app"], {"tool": "Bash"}, callback=risk)
+    denied = decide(["crypto_com_exchange"], {"tool": "Bash"}, callback=risk)
     assert denied["outcome"] == REJECT["outcome"]
     assert len(calls) == 1
 
