@@ -11,6 +11,7 @@ import {
   Shield,
   ShieldCheck,
   Sparkles,
+  TrendingUp,
   type LucideIcon,
 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
@@ -22,6 +23,7 @@ import { ApiServerSettings } from "@/components/settings/ApiServerSettings";
 import { CustomProvidersSettings } from "@/components/settings/CustomProvidersSettings";
 import { CryptoComExchange } from "@/components/settings/CryptoComExchange";
 import { GatewaySettings } from "@/components/settings/GatewaySettings";
+import { KrakenXStocks } from "@/components/settings/KrakenXStocks";
 import { NotificationsSettings } from "@/components/settings/NotificationsSettings";
 import { ServersSettings } from "@/components/settings/ServersSettings";
 import { SharingSettings } from "@/components/settings/SharingSettings";
@@ -34,6 +36,7 @@ import { useAuth } from "@/lib/auth";
 
 type TabKey =
   | "crypto-exchange"
+  | "kraken-xstocks"
   | "agents"
   | "api"
   | "gateway"
@@ -85,6 +88,7 @@ function buildGroups(server: string | null, isAdmin: boolean): TabGroup[] {
       label: "Account",
       tabs: [
         { key: "crypto-exchange", label: "Crypto.com Exchange", icon: KeyRound },
+        { key: "kraken-xstocks", label: "Kraken xStocks", icon: TrendingUp },
         { key: "notifications", label: "Notifications", icon: Bell },
         { key: "privacy", label: "Privacy", icon: Shield },
       ],
@@ -207,6 +211,7 @@ export function Settings() {
           {/* Tab content */}
           {tab === "servers" && <ServersSettings />}
           {tab === "crypto-exchange" && <CryptoComExchange settings />}
+          {tab === "kraken-xstocks" && <KrakenXStocks />}
           {tab === "agents" && <AgentsSettings />}
           {tab === "api" && <ApiServerSettings />}
           {tab === "gateway" && <GatewaySettings />}

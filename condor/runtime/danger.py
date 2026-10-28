@@ -43,6 +43,11 @@ LEVERAGED_EXECUTOR_TOOLS = CREATE_EXECUTOR_TOOLS - {"create_lp_executor"}
 #: caller never opened, and including a human's (SEC-558).
 LEVERAGE_TOOL = "set_account_position_mode_and_leverage"
 
+#: The native live-order tools. Only ``order`` moves money (the rest read, or log a
+#: paper call); a configured loop may place it without a prompt, an attended
+#: session confirms it.
+LIVE_ORDER_TOOLS = {"crypto_com_exchange", "kraken_xstocks"}
+
 # Tools that require user confirmation before execution
 DANGEROUS_TOOLS = {
     "place_order",
@@ -432,7 +437,7 @@ def _executor_amount(tool_name: str, input_data: dict[str, Any]) -> str:
 def is_dangerous_tool_call(tool_call: dict[str, Any]) -> bool:
     """Check if a tool call requires user confirmation."""
     tool_name = tool_call_name(tool_call)
-    if tool_name == "crypto_com_exchange":
+    if tool_name in LIVE_ORDER_TOOLS:
         return _has_dangerous_action(tool_call, {"order"})
 
     # Direct dangerous tools
@@ -585,7 +590,7 @@ def is_mutating_tool_call(tool_call: dict[str, Any]) -> bool:
     which is one exposure and not two.
     """
     tool_name = tool_call_name(tool_call)
-    if tool_name == "crypto_com_exchange":
+    if tool_name in LIVE_ORDER_TOOLS:
         return _is_mutating_action(
             tool_call,
             {"order"},

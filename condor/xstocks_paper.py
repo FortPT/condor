@@ -109,8 +109,12 @@ class XStocksPaper:
             raise ValueError(f"Kraken rejected the request: {safe[:80]}")
         return data.get("result") or {}
 
-    async def pairs(self) -> dict:
-        """``{"AAPL": "AAPLxUSD", ...}`` for the online USD-quoted xStocks."""
+    async def pair_rows(self) -> dict:
+        """``{"AAPLxUSD": <AssetPairs row>, ...}`` for the online USD xStocks (cached).
+
+        The live service reads the lot, tick and minimum-order fields from these
+        rows, so both share one cache and one definition of "an xStock pair".
+        """
         stamp, cached = self._pairs
         if cached and time.monotonic() - stamp < 3600:
             return cached
@@ -124,9 +128,16 @@ class XStocksPaper:
                 and row.get("status") == "online"
                 and base.endswith("x")
             ):
-                found[base[:-1].upper()] = name
+                found[name] = row
         self._pairs = (time.monotonic(), found)
         return found
+
+    async def pairs(self) -> dict:
+        """``{"AAPL": "AAPLxUSD", ...}`` for the online USD-quoted xStocks."""
+        return {
+            str(row["wsname"]).split("/")[0][:-1].upper(): name
+            for name, row in (await self.pair_rows()).items()
+        }
 
     async def status(self) -> dict:
         return {

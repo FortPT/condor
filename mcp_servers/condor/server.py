@@ -1629,6 +1629,128 @@ async def xstocks_paper(
     return {"data": result}
 
 
+# Same reasoning as the Exchange: an order waits for Kraken to report it final.
+KRAKEN_XSTOCKS_ORDER_TIMEOUT = 90.0
+
+
+@handle_errors("Kraken xStocks")
+async def kraken_xstocks(
+    action: Literal[
+        "status",
+        "valuation",
+        "accounts",
+        "history",
+        "coins",
+        "candles",
+        "book",
+        "preview",
+        "order",
+        "reconcile",
+        "predict",
+        "scorecard",
+    ],
+    side: Literal["buy", "sell"] = "buy",
+    symbol: str = "",
+    amount: str = "",
+    max_slippage_pct: str = "",
+    timeframe: str = "15m",
+    count: str = "96",
+    keyword: str = "",
+    verdict: Literal["trade", "pass"] = "pass",
+    target_pct: str = "",
+    stop_pct: str = "",
+    horizon_hours: str = "",
+    note: str = "",
+) -> dict:
+    """Trade tokenized US stocks (Kraken xStocks, quoted in USD) within the bot's allocation.
+
+    status: bot allocation, enable state, positions, enforced limits and whether the
+    regular US session is open. valuation: equity at the live best bid (pauses at the
+    equity floor). accounts: Kraken balances. history: recent closed orders. coins: the
+    most traded xStocks with bid, ask, spread, 24h dollar volume and range; a keyword
+    filters by ticker. candles: OHLCV for `symbol` (timeframe 5m, 15m, 30m, 1h, 4h or
+    1D; count up to 300). book: top order-book levels. preview: size and price an order
+    from the live book without placing it, with the account's taker fee and the
+    estimated round-trip cost. order: buy (`amount` is the USD to spend) or sell
+    (`amount` is the number of stock UNITS, fractions allowed); it is an
+    immediate-or-cancel limit order priced `max_slippage_pct` (default 0.3, max 2)
+    through the touch, sized down to the pair's lot size. Never retry an order after an
+    uncertain outcome; use reconcile. predict: log one scorecard call for `symbol`
+    (verdict trade|pass, target_pct, stop_pct, horizon_hours, short note); paper only,
+    it never trades. scorecard: how the logged calls scored against real prices after
+    costs.
+
+    The owner connects the API key, syncs the allocation and enables trading in
+    Settings. These tools cannot change credentials, sync or enable trading. Orders
+    only ever trade xStocks pairs in USD, are refused outside the regular US session
+    (Mon-Fri 09:30-16:00 New York), and enforce the bot allocation, the equity floor and,
+    below 1000 of total bot equity, a 40% cap per stock; from 1000 the 50% cash reserve,
+    three positions and one-sixth limit apply. No withdrawal, margin, leverage or access
+    to unallocated holdings. A configured autonomous loop may order without per-order
+    prompts; an attended manual request should show the preview before ordering.
+    """
+    from urllib.parse import urlencode
+
+    from mcp_servers.condor.condor_client import call_main_api
+
+    if action == "order":
+        return await call_main_api(
+            "POST",
+            "/kraken-xstocks/order",
+            {
+                "side": side,
+                "symbol": symbol,
+                "amount": amount,
+                "max_slippage_pct": max_slippage_pct,
+            },
+            timeout=KRAKEN_XSTOCKS_ORDER_TIMEOUT,
+        )
+    if action == "preview":
+        return await call_main_api(
+            "POST",
+            "/kraken-xstocks/preview",
+            {
+                "side": side,
+                "symbol": symbol,
+                "amount": amount,
+                "max_slippage_pct": max_slippage_pct,
+            },
+        )
+    if action == "reconcile":
+        return await call_main_api(
+            "POST", "/kraken-xstocks/reconcile", timeout=KRAKEN_XSTOCKS_ORDER_TIMEOUT
+        )
+    if action == "predict":
+        return await call_main_api(
+            "POST",
+            "/kraken-xstocks/predict",
+            {
+                "symbol": symbol,
+                "verdict": verdict,
+                "target_pct": target_pct,
+                "stop_pct": stop_pct,
+                "horizon_hours": horizon_hours,
+                "note": note,
+            },
+        )
+    if action == "coins":
+        return await call_main_api(
+            "GET", "/kraken-xstocks/coins?" + urlencode({"keyword": keyword})
+        )
+    if action == "candles":
+        return await call_main_api(
+            "GET",
+            "/kraken-xstocks/candles?"
+            + urlencode({"symbol": symbol, "timeframe": timeframe, "count": count}),
+        )
+    if action == "book":
+        return await call_main_api(
+            "GET", "/kraken-xstocks/book?" + urlencode({"symbol": symbol})
+        )
+    result = await call_main_api("GET", "/kraken-xstocks/" + action)
+    return {"data": result}
+
+
 TOOL_PROFILES: dict[str, tuple] = resolve_profiles(globals(), PROFILE_TOOLS)
 register_tools(
     mcp, settings.tool_profile, settings.muted_tools, settings.execution_mode

@@ -29,7 +29,7 @@ SERVERS = {"condor": condor_server, "hummingbot_api": hb_server}
 FIELDS = ("name", "description", "inputSchema", "outputSchema")
 # Added after the SDK migration: preserve the historical fixture's provenance.
 POST_V1_TOOLS = {
-    "condor": {"crypto_com_exchange", "xstocks_paper"},
+    "condor": {"crypto_com_exchange", "xstocks_paper", "kraken_xstocks"},
     "hummingbot_api": set(),
 }
 
@@ -119,6 +119,28 @@ def test_crypto_com_exchange_schema_exposes_no_credential_or_enable_arguments():
         "scorecard",
     }
     assert not {"api_key", "api_secret", "enabled", "user_id"} & properties.keys()
+
+
+def test_kraken_xstocks_schema_exposes_no_credential_or_enable_arguments():
+    tool = live_surface(condor_server)["kraken_xstocks"]
+    properties = tool["inputSchema"]["properties"]
+    assert set(properties["action"]["enum"]) == {
+        "status",
+        "valuation",
+        "accounts",
+        "history",
+        "coins",
+        "candles",
+        "book",
+        "preview",
+        "order",
+        "reconcile",
+        "predict",
+        "scorecard",
+    }
+    assert (
+        not {"api_key", "api_secret", "enabled", "user_id", "pair"} & properties.keys()
+    )
 
 
 def test_instructions_are_handed_to_the_sdk_unchanged():
