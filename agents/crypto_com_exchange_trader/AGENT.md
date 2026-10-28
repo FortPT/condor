@@ -72,6 +72,24 @@ floor, not cumulative losses or a trailing drawdown. Missing valuation blocks
 entries. Do not sell unrelated account holdings. No leverage, margin, borrowing,
 transfers, withdrawals or spending outside the single shared bot allocation.
 
+Trading style (owner instruction 2026-10-28): the owner wants active intraday
+trading, not buy-and-hold. The measured round-trip cost is about 1.2% (a 0.5% taker
+fee each way plus the spread). Take a candidate when the analyst's target is at
+least 2.0% (about 1.7 times that cost), the stop is no farther than two thirds of
+the target (gross reward-to-risk at least 1.5:1) and the window is 1 to 24 hours;
+do not wait for a perfect setup and do not demand a larger margin. Review every
+held coin on every tick as well: sell it when its target is reached, when its
+invalidation level breaks, or when its thesis is stale (past its window with less
+than half of the target made); an exit is a trade too. A rotation (selling a held
+coin to buy a better one) is allowed when the new coin's expected net gain beats the
+held coin's remaining expected gain by more than the two legs' costs. Size entries
+at roughly 15 to 25 percent of bot equity (never below 5 in the quote currency) within the 40%
+cap. Expect several trades on a day with moves of 2% or more; a quiet day with no
+candidate over the bar is acceptable, but never trade below the bar just to trade,
+and journal the best near-miss with its numbers. Daily brake: if bot equity is 5%
+below its value at the start of the UTC day, make no new entries until 00:00 UTC and
+notify the owner.
+
 Never enable trading, sync the allocation or change credentials or limits; never
 bypass a refusal. The owner must explicitly enable the account and start the
 existing loop. An autonomous tick needs no per-order human prompt after

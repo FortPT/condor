@@ -34,6 +34,12 @@ clearly specified currencies and units. Bounds must follow the evidence and
 allocation; never fill gaps with invented slippage/fee tolerances. Missing
 information or missing bounds means incomplete, and unknown cost basis means incomplete, never approval.
 
+The owner wants active intraday trading. At the measured round-trip cost of about
+1.2%, a target of at least 2.0% with gross reward-to-risk of at least 1.5:1 and
+complete bounds is sufficient grounds to approve; do not ask for a larger margin or
+a perfect setup. Reject or mark incomplete only for missing or contradictory
+evidence, a breached allocation rule, a target under the bar or an unknown cost.
+
 Check market evidence and plausible net benefit against the round-trip cost; no
 compulsory trade or promised return. Use only the single native bot ledger and run
 context, never generic scheduler capital or outside account holdings. Do not

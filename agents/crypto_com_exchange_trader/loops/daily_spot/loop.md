@@ -2,8 +2,8 @@
 name: Daily Spot
 description: Sequential market analysis, bounded-intent risk review and fresh preview before a native Exchange order
 default_config:
-  frequency_sec: 900
-  tick_timeout_sec: 180
+  frequency_sec: 300
+  tick_timeout_sec: 600
   execution_mode: loop
   total_amount_quote: 30
   restart_on_boot: true
@@ -71,9 +71,27 @@ default_trading_context: Crypto.com Exchange only; read capital from the native 
    and outcome or no-trade reason. Notify failures, stale/invalid approvals,
    stop thresholds, missing funds and account restrictions, not every empty tick.
 
+Trading style (owner instruction 2026-10-28): the owner wants active intraday
+trading, not buy-and-hold. The measured round-trip cost is about 1.2% (a 0.5% taker
+fee each way plus the spread). Take a candidate when the analyst's target is at
+least 2.0% (about 1.7 times that cost), the stop is no farther than two thirds of
+the target (gross reward-to-risk at least 1.5:1) and the window is 1 to 24 hours;
+do not wait for a perfect setup and do not demand a larger margin. Review every
+held coin on every tick as well: sell it when its target is reached, when its
+invalidation level breaks, or when its thesis is stale (past its window with less
+than half of the target made); an exit is a trade too. A rotation (selling a held
+coin to buy a better one) is allowed when the new coin's expected net gain beats the
+held coin's remaining expected gain by more than the two legs' costs. Size entries
+at roughly 15 to 25 percent of bot equity (never below 5 in the quote currency) within the 40%
+cap. Expect several trades on a day with moves of 2% or more; a quiet day with no
+candidate over the bar is acceptable, but never trade below the bar just to trade,
+and journal the best near-miss with its numbers. Daily brake: if bot equity is 5%
+below its value at the start of the UTC day, make no new entries until 00:00 UTC and
+notify the owner.
+
 Authoring or discovering this playbook starts nothing and changes no financial
 activation. Only an explicit owner start uses the existing Condor engine at
-15-minute intervals; restart_on_boot preserves its existing resume behavior.
+5-minute intervals; restart_on_boot preserves its existing resume behavior.
 Generic scheduler defaults never reset or replace the native ledger/run context.
 Bounded-intent approval is an advisory agent protocol, not server authorization;
 existing native guards remain authoritative.

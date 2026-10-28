@@ -65,8 +65,8 @@ def test_only_coordinator_owns_a_loop_and_existing_scheduler_defaults_survive(re
     loop = loops.get(COORDINATOR, "daily_spot")
     assert loop is not None
     assert loop.default_config == {
-        "frequency_sec": 900,
-        "tick_timeout_sec": 180,
+        "frequency_sec": 300,
+        "tick_timeout_sec": 600,
         "execution_mode": "loop",
         "total_amount_quote": 30,
         "restart_on_boot": True,
