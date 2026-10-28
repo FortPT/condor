@@ -84,11 +84,11 @@ class XStocksPaper:
     def __init__(self):
         self._pairs = (0.0, {})
 
-    async def _get(self, path: str, params: dict):
+    async def _get(self, path: str, params: dict, *, asset_class: bool = True):
         import aiohttp
 
         query = dict(params)
-        if path != "AssetPairs":  # that endpoint names it aclass_base
+        if asset_class and path != "AssetPairs":  # that endpoint names it aclass_base
             query["asset_class"] = ASSET_CLASS
         try:
             async with aiohttp.ClientSession(

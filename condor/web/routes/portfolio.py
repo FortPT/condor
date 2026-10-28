@@ -151,7 +151,11 @@ async def get_portfolio(
             notes.append(
                 "Crypto.com App could not be valued. Its holdings are excluded from this total; check the Crypto.com page and retry."
             )
-    if kraken_service.status(user.id)["connected"]:
+    if any(c.connector == "kraken" for c in connectors):
+        # Hummingbot's kraken connector already values this account; adding the
+        # Kraken xStocks view as well would count the same balances twice.
+        pass
+    elif kraken_service.status(user.id)["connected"]:
         try:
             # Kraken credentials belong to the user too, never the shared cache.
             connectors.append(

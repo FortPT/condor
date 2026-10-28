@@ -70,10 +70,16 @@ class FakePaper(xs.XStocksPaper):
             "TSLAxUSD": ticker("401.44", "401.46", "401.45", "1480"),
             "SPYxUSD": ticker("771.14", "771.15", "771.15", "163"),
         }
+        self.eurusd_down = False
 
-    async def _get(self, path, params):
+    async def _get(self, path, params, *, asset_class=True):
         if path == "AssetPairs":
             return ASSET_PAIRS
+        if path == "Ticker" and params["pair"] == "EURUSD":
+            assert not asset_class, "EURUSD is a plain pair"
+            if self.eurusd_down:
+                raise ValueError("Kraken public data unavailable")
+            return {"ZEURZUSD": ticker("1.1140", "1.1141", "1.1141", "1000")}
         if path == "Ticker":
             # Kraken may key a ticker by the ws name; both spellings must work.
             return {
@@ -852,8 +858,25 @@ class KrakenTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(by["AAPLx"]["usd_value"], 0.1 * 345.41, places=4)
         self.assertEqual(by["XXBT"]["usd_value"], 0)
         self.assertIn("XXBT", data["note"])
+        self.assertNotIn("ZEUR", data["note"])
         self.assertEqual(data["connector"], "Kraken xStocks")
         self.assertAlmostEqual(data["total_usd"], 40 + 0.1 * 345.41, places=4)
+
+    async def test_portfolio_values_euro_cash_through_the_eurusd_rate(self):
+        self.svc.balances["ZEUR"] = {"balance": "9.37", "hold_trade": "0"}
+        data = await self.svc.portfolio(1)
+        by = {b["token"]: b for b in data["balances"]}
+        self.assertAlmostEqual(by["EUR"]["usd_value"], 9.37 * 1.1141, places=4)
+        self.assertNotIn("EUR", data["note"])
+        self.assertNotIn("ZEUR", data["note"])
+
+    async def test_portfolio_names_euro_cash_it_could_not_price(self):
+        self.svc.balances["ZEUR"] = {"balance": "9.37", "hold_trade": "0"}
+        self.svc.paper.eurusd_down = True
+        data = await self.svc.portfolio(1)
+        by = {b["token"]: b for b in data["balances"]}
+        self.assertEqual(by["EUR"]["usd_value"], 0)
+        self.assertIn("EUR", data["note"])
 
     async def test_history_lists_closed_orders_newest_first(self):
         self.svc.closed = {
