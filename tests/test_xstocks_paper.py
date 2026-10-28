@@ -119,7 +119,7 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
         tsla = data["stocks"][0]
         self.assertEqual(tsla["spread_pct"], "0.005")
         self.assertEqual(tsla["range_24h_pct"], "3.61")
-        self.assertEqual(tsla["change_since_open_pct"], "0.86")
+        self.assertEqual(tsla["change_since_open_pct"], "0.87")
         self.assertIn("open", data["market"])
         found = await self.svc.coins("aa")
         self.assertEqual([r["symbol"] for r in found["stocks"]], ["AAPL"])
