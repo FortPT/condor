@@ -13,6 +13,7 @@ from condor.fetchers.portfolio import (
     balance_value,
     dedupe_unified_accounts,
 )
+from condor.kraken_xstocks import service as kraken_service
 from condor.server_data_service import ServerDataType, get_server_data_service
 from condor.web.auth import require_server_access
 from condor.web.models import (
@@ -149,6 +150,17 @@ async def get_portfolio(
             )
             notes.append(
                 "Crypto.com App could not be valued. Its holdings are excluded from this total; check the Crypto.com page and retry."
+            )
+    if kraken_service.status(user.id)["connected"]:
+        try:
+            # Kraken credentials belong to the user too, never the shared cache.
+            connectors.append(
+                ConnectorBalance(**await kraken_service.portfolio(user.id))
+            )
+        except Exception as error:
+            logger.warning("Kraken portfolio unavailable (%s)", type(error).__name__)
+            notes.append(
+                "Kraken xStocks could not be valued. Its holdings are excluded from this total; check the Kraken xStocks settings and retry."
             )
     total_usd = sum(c.total_usd for c in connectors)
     return PortfolioResponse(

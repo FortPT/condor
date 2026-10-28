@@ -63,6 +63,9 @@ RESTRICTED_CREW = {
     "crypto_com_market_analyst",
     "crypto_com_risk_reviewer",
     "xstocks_paper_trader",
+    "kraken_xstocks_trader",
+    "kraken_xstocks_analyst",
+    "kraken_xstocks_risk_reviewer",
 }
 
 
