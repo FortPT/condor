@@ -991,7 +991,7 @@ export function Portfolio() {
       />
 
       {data?.notes?.map((note) => <p key={note} role="alert" className="text-sm text-[var(--color-red)]">{note}</p>)}
-      {hasExchange && <p className="text-sm text-[var(--color-text-muted)]">Crypto.com Exchange is included in the current total and assets below. The historical chart covers Hummingbot accounts only; Exchange performance is not yet recorded. <a className="underline" href="/trade?workspace=crypto-exchange">Open Crypto.com trading</a></p>}
+      {hasExchange && <p className="text-sm text-[var(--color-text-muted)]">Crypto.com Exchange is included in the current total and assets below. The chart adds its value from when Condor started recording it (every 5 minutes); earlier history is not available. <a className="underline" href="/trade?workspace=crypto-exchange">Open Crypto.com trading</a></p>}
 
       {/* Portfolio Evolution + Top Holdings side by side */}
       <div className="flex flex-col lg:flex-row gap-4">

@@ -759,6 +759,10 @@ async def startup(application: Application) -> None:
     sds_register()
     sds = get_server_data_service()
     sds.start()
+    # Value history for the accounts Condor reads itself (Exchange, Kraken).
+    from condor import portfolio_history
+
+    portfolio_history.start()
     # Warm the cache in the background, never on the critical path: every
     # subscription's initial fetch opens a client, and client creation is
     # serialized per server (ConfigManager._client_locks), so one unreachable
@@ -859,10 +863,12 @@ async def teardown(application: Application) -> None:
     same reason: ``Application.shutdown()`` does not call that hook either.
     Called explicitly from :func:`_run_dual`.
     """
+    from condor import portfolio_history
     from condor.runtime import client as runtime
     from condor.runtime import sessions as runtime_sessions
     from condor.runtime.confirmations import get_registry
 
+    await portfolio_history.stop()
     await runtime_sessions.stop_health_monitor()
     await get_registry().stop()
     await runtime.destroy_all()

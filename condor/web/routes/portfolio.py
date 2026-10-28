@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from condor import portfolio_history
 from condor.crypto_com_exchange import service as exchange_service
 from condor.fetchers.portfolio import (
     PORTFOLIO_HISTORY_RANGES,
@@ -141,9 +143,11 @@ async def get_portfolio(
     if exchange_service.status(user.id)["connected"]:
         try:
             # App credentials belong to the user, never the shared server cache.
-            connectors.append(
-                ConnectorBalance(**await exchange_service.portfolio(user.id))
+            exchange_view = await exchange_service.portfolio(user.id)
+            portfolio_history.record(
+                user.id, portfolio_history.EXCHANGE, exchange_view["total_usd"]
             )
+            connectors.append(ConnectorBalance(**exchange_view))
         except Exception as error:
             logger.warning(
                 "Crypto.com portfolio unavailable (%s)", type(error).__name__
@@ -158,9 +162,11 @@ async def get_portfolio(
     elif kraken_service.status(user.id)["connected"]:
         try:
             # Kraken credentials belong to the user too, never the shared cache.
-            connectors.append(
-                ConnectorBalance(**await kraken_service.portfolio(user.id))
+            kraken_view = await kraken_service.portfolio(user.id)
+            portfolio_history.record(
+                user.id, portfolio_history.KRAKEN, kraken_view["total_usd"]
             )
+            connectors.append(ConnectorBalance(**kraken_view))
         except Exception as error:
             logger.warning("Kraken portfolio unavailable (%s)", type(error).__name__)
             notes.append(
@@ -231,6 +237,29 @@ async def get_portfolio_history(
     top_tokens: list[str] = []
     if breakdown and points:
         top_tokens = _build_token_breakdown(entries, keyed, points)
+
+    # Add the accounts Condor reads itself (history starts when recording began).
+    # Kraken xStocks is skipped when Hummingbot's own kraken connector already
+    # counts that account.
+    hummingbot_counts_kraken = bool(
+        entries
+        and any(
+            key.rsplit(":", 1)[-1] == "kraken"
+            for key in _extract_connector_totals(_snapshot_state(entries[-1][1], keyed))
+        )
+    )
+    try:
+        native = portfolio_history.series(
+            user.id, since=time.time() - PORTFOLIO_HISTORY_RANGES[range][0]
+        )
+        points = portfolio_history.merge(
+            points,
+            native,
+            portfolio_history.INTERVAL_SECONDS.get(interval, 3600),
+            skip=(portfolio_history.KRAKEN,) if hummingbot_counts_kraken else (),
+        )
+    except Exception as error:  # noqa: BLE001 - never lose the Hummingbot chart
+        logger.warning("Native portfolio history skipped (%s)", type(error).__name__)
 
     return PortfolioHistoryResponse(
         server=name, points=points, interval=interval, top_tokens=top_tokens
