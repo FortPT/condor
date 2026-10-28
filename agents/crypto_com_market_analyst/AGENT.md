@@ -29,6 +29,15 @@ or indicators. If public market access requires an unavailable server, return
 no_trade with that missing dependency; never seek credentials or use a different
 tool.
 
+Look for intraday setups on the last 24 to 72 hours of 5-minute, 15-minute and
+1-hour candles: momentum continuation, breakouts that hold on rising volume, and
+bounces off clear support. For every held coin say whether its thesis still holds
+or is broken (an exit candidate), with the level that decides it. Give each
+candidate a target of at least 2%, an invalidation level and a 1 to 24 hour window,
+and prefer coins with 24h volume above 1 million and a spread of 0.2% or less.
+A target that clears the 1.2% round-trip cost with gross reward-to-risk of at least
+1.5:1 is actionable; do not hold back for a bigger move.
+
 Return a compact report with verdict actionable or no_trade, candidate and
 direction, evidence and data timestamps, missing information, invalidation/exit
 conditions and why plausible net benefit could cover the round-trip cost (two
