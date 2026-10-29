@@ -39,7 +39,7 @@ class NativeVenue:
 VENUES: tuple[NativeVenue, ...] = (
     NativeVenue(
         key="crypto_com_exchange",
-        label="Crypto.com Exchange",
+        label="Crypto.com",
         module="condor.crypto_com_exchange",
         agents=("crypto_com_exchange_trader",),
         unvalued_note=(

@@ -1,6 +1,6 @@
 # Deposits and withdrawals of the native venues
 
-The loop card PnL of a native crew (Crypto.com Exchange, Kraken xStocks, Revolut X) is
+The loop card PnL of a native crew (Crypto.com, Kraken xStocks, Revolut X) is
 the change in whole-account equity between two readings. Money the owner moves in or
 out of the account is not trading, but used to read as profit or loss (a 4.27 EUR top-up
 showed as +4.74 USD on Revolut X). `condor/native_flows.py` keeps a small per-venue
@@ -68,7 +68,7 @@ every 15 minutes per venue, first read looks back 30 days) and on demand with
 **None of these has been run against a live account. The shapes below are from
 documentation or, where marked, a third-party client; tests use fabricated fixtures.**
 
-* **Crypto.com Exchange**: `private/get-deposit-history` and
+* **Crypto.com**: `private/get-deposit-history` and
   `private/get-withdrawal-history`, same signing as every other private call. Params
   `start_ts`, `end_ts` (ms), `page_size` (200); answers `result.deposit_list` /
   `result.withdrawal_list`. *UNVERIFIED against the official reference*: the reference
@@ -126,9 +126,13 @@ token's value at the last reading)`. Then:
   hand on the venue app: not flows, nothing recorded.
 * The first reading only sets the reference; a reading while an order is uncertain is
   skipped and does not move the reference.
-* A later API or manual row of about the same money (same currency and sign, within 5%,
-  detected in the last day) dismisses the pending detection as superseded, so confirming
-  both never double-counts.
+* A history (API) or manual row of about the same money (same venue, currency and sign,
+  within 5%) supersedes the detection in either state: a pending detection from the last day
+  is dismissed, and so is one the owner already confirmed when the two are stamped within 30
+  minutes ("superseded by venue history" in its note), so the deposit is counted once however
+  the two arrive. The other way round, a detection that is created or confirmed while such a
+  row already exists is dismissed on the spot. Rows of another amount, sign, currency, venue or
+  time are kept.
 * Staking rewards, interest and trades made by hand on the venue also look unexplained.
   Confirm a real transfer; dismiss anything else.
 * An order recorded in the ledger a moment after the reading that already contains its

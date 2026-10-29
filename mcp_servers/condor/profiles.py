@@ -42,10 +42,10 @@ def canonical_tool_name(name: str) -> str:
 #: the docstring: the panel has one line of room and the docstring's first line
 #: is written for the model.
 TOOL_DESCRIPTIONS: dict[str, str] = {
-    "crypto_com_exchange": "Trade the Crypto.com Exchange within the owner's bot allocation",
+    "crypto_com_exchange": "Trade Crypto.com within the owner's bot allocation",
     "kraken_xstocks": "Trade Kraken xStocks (tokenized US stocks) within the owner's bot allocation",
     "revolut_x": "Trade crypto on Revolut X (EUR pairs) within the owner's bot allocation",
-    "native_portfolio": "Read the Crypto.com Exchange, Kraken xStocks and Revolut X balances (Hummingbot cannot see them)",
+    "native_portfolio": "Read the Crypto.com, Kraken xStocks and Revolut X balances (Hummingbot cannot see them)",
     "delegate": "Hand a long task to a background agent instance",
     "send_notification": "Send the user a Telegram message",
     "manage_routines": "List, run, schedule and edit routines",

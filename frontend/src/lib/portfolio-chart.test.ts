@@ -36,7 +36,7 @@ const history = (over: Partial<PortfolioHistoryResponse> = {}): PortfolioHistory
   series_start_reason: "all_accounts_recording_from",
   sources: [
     { source: "Hummingbot", first_ts: 1, status: "recording" },
-    { source: "Crypto.com Exchange", first_ts: 5, status: "recording" },
+    { source: "Crypto.com", first_ts: 5, status: "recording" },
     { source: "Revolut X", first_ts: 10, status: "recording" },
     { source: "Kraken xStocks", first_ts: null, status: "pending" },
   ],

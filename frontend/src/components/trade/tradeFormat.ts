@@ -29,5 +29,9 @@ export const price = (value?: string | null) => {
   const parsed = num(value);
   return parsed === null ? "—" : parsed.toLocaleString(undefined, { maximumFractionDigits: digitsFor(parsed) });
 };
+/** A percentage with at most two decimals and no trailing zeros, so a float sum such as
+ *  0.1 + 0.11 reads 0.21 and never 0.21000000000000002. */
+export const pct = (value: number | null | undefined) =>
+  value === null || value === undefined || !Number.isFinite(value) ? "—" : String(Number(value.toFixed(2)));
 export const signed = (value: number | null | undefined) =>
   value === null || value === undefined ? "—" : `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;

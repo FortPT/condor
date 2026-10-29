@@ -1,7 +1,9 @@
 """Kraken xStocks public data: US session clock and public-data parsing. No network, no money."""
 
+import json
 import os
 import tempfile
+import time
 import unittest
 from datetime import datetime, timezone
 from unittest.mock import patch
@@ -137,6 +139,109 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError):
                 xs.symbol_of(bad)
         self.assertEqual(xs.symbol_of("nvda"), "NVDA")
+
+
+class _FakeContent:
+    """Like aiohttp's stream: ``read(n)`` hands back what has arrived, not the body."""
+
+    def __init__(self, chunks):
+        self._chunks = chunks
+
+    async def read(self, n=-1):
+        return self._chunks[0]
+
+    async def iter_chunked(self, size):
+        for chunk in self._chunks:
+            yield chunk
+
+
+class _FakeResponse:
+    def __init__(self, chunks, status=200):
+        self.content = _FakeContent(chunks)
+        self.status = status
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _FakeSession:
+    def __init__(self, chunks, status=200):
+        self.chunks, self.status, self.requests = chunks, status, []
+
+    def __call__(self, *args, **kwargs):
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def get(self, url, params=None):
+        self.requests.append((url, dict(params or {})))
+        return _FakeResponse(self.chunks, self.status)
+
+
+class PublicReadTests(unittest.IsolatedAsyncioTestCase):
+    """The chart under the Kraken Trade tab read a big OHLC answer cut short."""
+
+    def _patched(self, session):
+        return patch("aiohttp.ClientSession", session)
+
+    async def test_a_large_candle_answer_arriving_in_several_chunks_is_read_whole(self):
+        rows = [
+            [1793200000 + i * 3600, "1", "2", "0.5", "1.5", "1.2", "10", 3]
+            for i in range(720)
+        ]
+        body = json.dumps(
+            {"error": [], "result": {"MSTRxUSD": rows, "last": 1793200000}}
+        ).encode()
+        cut = [body[:10000], body[10000:25000], body[25000:]]
+        session = _FakeSession(cut)
+        with self._patched(session):
+            result = await xs.XStocksMarket()._get(
+                "OHLC", {"pair": "MSTRxUSD", "interval": 60}
+            )
+        self.assertEqual(len(result["MSTRxUSD"]), 720)
+        self.assertEqual(session.requests[0][1]["asset_class"], xs.ASSET_CLASS)
+        self.assertEqual(session.requests[0][1]["interval"], 60)
+
+    async def test_the_selected_stock_candles_load_through_the_real_reader(self):
+        market = xs.XStocksMarket()
+        market._pairs = (time.monotonic(), {"MSTRxUSD": {"wsname": "MSTRx/USD"}})
+        rows = [
+            [1793200000 + i * 3600, "1", "2", "0.5", "1.5", "1.2", "10", 3]
+            for i in range(720)
+        ]
+        body = json.dumps(
+            {"error": [], "result": {"MSTRxUSD": rows, "last": 1}}
+        ).encode()
+        session = _FakeSession([body[:30000], body[30000:]])
+        with self._patched(session):
+            data = await market.candles("MSTR", "1h", 300)
+        self.assertEqual(data["pair"], "MSTRxUSD")
+        self.assertEqual(len(data["candles"]), 300)
+
+    async def test_an_empty_series_is_an_empty_list_not_a_failure(self):
+        market = xs.XStocksMarket()
+        market._pairs = (time.monotonic(), {"MSTRxUSD": {"wsname": "MSTRx/USD"}})
+        body = json.dumps({"error": [], "result": {"MSTRxUSD": [], "last": 0}}).encode()
+        with self._patched(_FakeSession([body])):
+            data = await market.candles("MSTR", "1h", 96)
+        self.assertEqual(data["candles"], [])
+
+    async def test_a_rate_limited_answer_says_so_instead_of_data_unavailable(self):
+        with self._patched(_FakeSession([b'{"error":[],"result":{}}'], status=429)):
+            with self.assertRaisesRegex(ValueError, "rate limiting"):
+                await xs.XStocksMarket()._get("Ticker", {"pair": "AAPLxUSD"})
+
+    async def test_a_body_that_is_not_json_is_still_reported_as_unavailable(self):
+        with self._patched(_FakeSession([b"<html>"])):
+            with self.assertRaisesRegex(ValueError, "public data unavailable"):
+                await xs.XStocksMarket()._get("Ticker", {"pair": "AAPLxUSD"})
 
 
 class SessionClockRouteTests(unittest.IsolatedAsyncioTestCase):

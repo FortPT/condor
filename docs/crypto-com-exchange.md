@@ -1,16 +1,16 @@
-# Crypto.com Exchange and Claude
+# Crypto.com and Claude
 
 The container includes pinned Claude Code 2.1.311 and claude-agent-acp 0.97.0.
 `HOME=/var/lib/condor` is the existing persistent, private state volume. Authenticate
 as container UID 10001 with `claude auth login`; no API key or copied account token
 is needed. Do not embed credentials in Compose, an image or Git.
 
-Settings → Crypto.com Exchange accepts an Exchange API key and secret, created under
-User Center → API on the Crypto.com Exchange site. Create the key with trading
+Settings → Crypto.com accepts a Crypto.com API key and secret, created under
+User Center → API on the Crypto.com site. Create the key with trading
 permission only (no withdrawal) and restrict it to this server's IP address. Keys are
 stored in a per-user 0600 file under `CONDOR_DATA_DIR/crypto_com_exchange`, never sent
 back to the UI or the model. Saving or replacing them pauses trading. The environment
-can be `production` (`api.crypto.com`) or `uat` (the Exchange sandbox, with its own
+can be `production` (`api.crypto.com`) or `uat` (the Crypto.com sandbox, with its own
 keys), so the whole path can be tried without real money.
 
 This is the Exchange, not the Crypto.com App. Orders go to the public order book, so a
@@ -214,9 +214,11 @@ spread and lot size (held coins are always included); `candles` returns OHLCV
 These are public endpoints. Only 7 pairs are quoted in EUR (ADA, BTC, DOGE, ETH, PAXG,
 SOL, XRP); most are USD or USDT.
 
-## Trader scorecard (paper test)
+## Call scorecard
 
-Before trusting the trader with money, its calls are scored against real prices.
+Before trusting the trader with money, its calls are scored against real prices. The
+scorecard scores the calls the trader logs, not the trades that were actually placed: a
+call can be scored as hitting its target even though the order was refused or never sent.
 Two things are stored in `scorecard.db` beside the ledger:
 
 * **Prices**: the listed price of every coin the coin list returns, at most once per
@@ -238,7 +240,8 @@ returned. About 30 resolved calls are needed before the numbers mean anything.
 The shared `crypto_com_exchange` MCP tool is mounted through existing tool profiles.
 `order` is classified as dangerous/mutating, so attended confirmations and dry-run
 rejection still work. Credentials, sync and enable/disable are not MCP actions. The
-shipped Crypto.com Exchange Trader / Daily Spot loop evaluates every 15 minutes, can
+shipped Crypto.com Trader / Daily Spot loop evaluates every 2 minutes
+(`frequency_sec: 120` in its `loop.md`, see "Loop cadence" in `native-crypto-crew.md`), can
 choose any listed pair, and uses the same enforced order path. It starts only by an
 explicit operator action, then may resume after a restart.
 
@@ -277,7 +280,7 @@ untouched):
   bids, compares them with the invalidation levels, targets and the 5% daily brake, and
   writes one journal line. No analyst, reviewer, previews or scorecard calls. Any failed
   check turns it into a full tick from step 1. At least once an hour the tick is a full one
-  (analyst, scorecard call, rotation proposal), so the paper scorecard keeps running; with
+  (analyst, scorecard call, rotation proposal), so the call scorecard keeps running; with
   120 s ticks that is about 1 full tick in 30.
 
 Nothing here has been run against a live account; the prompts are a contract the model

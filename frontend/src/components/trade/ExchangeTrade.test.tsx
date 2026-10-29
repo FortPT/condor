@@ -179,7 +179,7 @@ it("describes the limits the server reports", () => {
   expect(host.textContent).not.toContain("up to three positions and one sixth");
 });
 
-it("charts the selected coin from the Exchange candles, oldest first without duplicates", async () => {
+it("charts the selected coin from the Crypto.com candles, oldest first without duplicates", async () => {
   await pickCoin("SOL");
   const [path] = callsTo("/candles").at(-1)!;
   expect(path).toBe("/api/v1/crypto-exchange/candles?symbol=SOL&timeframe=1h&count=200");
@@ -311,19 +311,21 @@ it("an order of unknown outcome refreshes the status and offers reconcile, tradi
   expect(host.textContent).toContain("Order outcome needs reconciliation");
   expect(host.textContent).toContain("An order needs reconciliation");
   expect(button("Enable trading within allocation").disabled).toBe(true);
-  await click("Reconcile from Exchange order history");
+  await click("Reconcile from Crypto.com order history");
   expect(callsTo("/reconcile")).toHaveLength(1);
   expect(callsTo("/reconcile")[0][1].method).toBe("POST");
 });
 
-it("shows the paper scorecard: calls, outcomes after costs, baseline and which cost multiple worked", () => {
+it("shows the call scorecard: calls, outcomes after costs, baseline and which cost multiple worked", () => {
   const panel = host.querySelector('section[aria-label="Scorecard"]')!.textContent!;
   expect(panel).toContain("1% round-trip cost");
-  expect(panel).toContain("real Exchange prices");
+  expect(panel).toContain("real Crypto.com prices");
   expect(panel).toContain("Tracking 17 coins · 120 price snapshots over 2.5 days");
   expect(panel).toContain("6 of 30 resolved calls needed");
-  expect(panel).toContain("Trade calls");
-  expect(panel).toMatch(/Pass calls/);
+  expect(panel).toContain("Calls to trade");
+  expect(panel).toContain("It scores the calls, not the trades that were actually placed; no money moves.");
+  expect(panel).not.toMatch(/(^|[^a-z])(paper|test)([^a-z]|$)/i);
+  expect(panel).toMatch(/Calls to pass/);
   expect(panel).toContain("+1.50%");
   expect(panel).toContain("-2.00%");
   expect(panel).toContain("Baseline (average of all listed coins over the same windows): -0.40%");

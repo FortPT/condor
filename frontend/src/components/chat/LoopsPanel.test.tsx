@@ -223,14 +223,14 @@ describe("LoopsPanel", () => {
     expect(cards()[0].textContent).not.toContain("$0.00");
   });
 
-  // A native crew (Crypto.com Exchange, Kraken xStocks) trades outside
+  // A native crew (Crypto.com, Kraken xStocks) trades outside
   // Hummingbot: its figure is the account's equity change, computed from the
   // venue's own history, so the card must print it like any other PnL.
   describe("a native crew", () => {
     function nativeAgent(over: Record<string, unknown>) {
       const base = agentSummary({
         slug: "crypto_com_exchange_trader",
-        name: "Crypto.com Exchange Trader",
+        name: "Crypto.com Trader",
       });
       return {
         ...base,
@@ -247,7 +247,7 @@ describe("LoopsPanel", () => {
     const nativeLoop = () =>
       owner({
         agentSlug: "crypto_com_exchange_trader",
-        agentName: "Crypto.com Exchange Trader",
+        agentName: "Crypto.com Trader",
         strategySlug: "daily_spot",
         strategyName: "Daily spot",
       });

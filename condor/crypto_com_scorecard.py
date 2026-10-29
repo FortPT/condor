@@ -1,9 +1,9 @@
-"""Paper scorecard for the Crypto.com Exchange trader.
+"""Call scorecard for the Crypto.com trader.
 
 It answers one question before real money rides on it: do the trader's calls
 beat the cost of trading? Two things are stored, and nothing else:
 
-* price snapshots of Exchange coins (taken whenever the coin list is read), and
+* price snapshots of Crypto.com coins (taken whenever the coin list is read), and
 * predictions the trader logs (coin, target %, stop %, time window).
 
 Outcomes are never stored. They are recomputed from the snapshots on every
@@ -21,7 +21,7 @@ from pathlib import Path
 
 from condor.paths import data_dir
 
-# Exchange estimate at fee tier 1: a 0.5% taker fee each way (orders are immediate,
+# Crypto.com estimate at fee tier 1: a 0.5% taker fee each way (orders are immediate,
 # so they are taker orders) plus about 0.2% of spread on liquid coins. The real fee comes back on each order and the
 # multiples below re-score the history at 1.5x, 2x and 3x this cost.
 ROUND_TRIP_COST_PCT = 1.2
@@ -308,7 +308,7 @@ def report(
         buckets.append(
             {
                 "multiple": multiple,
-                "min_target_pct": multiple * cost_pct,
+                "min_target_pct": round(multiple * cost_pct, 4),
                 "resolved": len(sel),
                 "avg_net_pct": _mean(nets),
                 "win_rate": (sum(n > 0 for n in nets) / len(nets)) if nets else None,
@@ -322,8 +322,14 @@ def report(
     days = (stats[2] - stats[1]) / 86400 if stats[1] is not None else 0
     return {
         "assumptions": {
-            "round_trip_cost_pct": cost_pct,
-            "basis": "Exchange estimate: taker fee up to 0.5% a side plus half a spread each way",
+            # Shown to the owner: two decimals at most, so a sum like 0.1 + 0.11
+            # never reaches the screen as 0.21000000000000002.
+            "round_trip_cost_pct": round(cost_pct, 2),
+            "basis": (
+                "Crypto.com estimate: taker fee up to 0.5% a side plus half a spread each way"
+                if venue == DEFAULT_VENUE
+                else "Estimate: the taker fee each way plus the spread"
+            ),
             "outcome_rule": "target or stop, whichever the price reaches first; otherwise the last price in the window",
         },
         "prices": {"snapshots": stats[0], "coins": stats[3], "days": round(days, 2)},

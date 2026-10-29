@@ -178,9 +178,7 @@ recent activity when Condor applies its report-retention limit.
 
 For cross-filtering, charts and target components must reference the same named
 dataset. Keep embedded datasets below roughly 10,000 rows for responsive reports.
-See `routines/report_component_gallery.py` for a deterministic Hummingbot trading
-reference covering every component family and semantic API variant. See
-`continuous.md` for the `LiveReport` lifecycle and automatic-refresh pattern.
+See `continuous.md` for the `LiveReport` lifecycle and automatic-refresh pattern.
 
 ### Update existing report (e.g. in continuous routines)
 ```python

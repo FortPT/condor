@@ -1456,7 +1456,7 @@ def register_tools(
 CRYPTO_COM_ORDER_TIMEOUT = 90.0
 
 
-@handle_errors("Crypto.com Exchange")
+@handle_errors("Crypto.com")
 async def crypto_com_exchange(
     action: Literal[
         "status",
@@ -1489,10 +1489,10 @@ async def crypto_com_exchange(
     purpose: Literal["", "entry", "target_exit", "stop_exit"] = "",
     maker_wait_sec: str = "",
 ) -> dict:
-    """Trade spot on the user's Crypto.com EXCHANGE within the bot's allocation.
+    """Trade spot on the user's Crypto.com account within the bot's allocation.
 
     status: bot allocation, enable state, positions and enforced limits. valuation:
-    equity at the live best bid (pauses at the equity floor). accounts: Exchange
+    equity at the live best bid (pauses at the equity floor). accounts: Crypto.com
     balances. history: recent orders. coins: top pairs by 24h volume in the quote
     currency with bid, ask, spread and lot size; a keyword filters by symbol.
     candles: OHLCV for `symbol` (timeframe 1m, 5m, 15m, 30m, 1h, 2h, 4h, 12h, 1D, 7D,
@@ -1502,9 +1502,9 @@ async def crypto_com_exchange(
     immediate-or-cancel limit order priced `max_slippage_pct` (default 0.3, max 2)
     through the touch, sized down to the pair's lot size. Never retry an order after
     an uncertain outcome; use reconcile. predict: log one scorecard call for `symbol`
-    (verdict trade|pass, target_pct, stop_pct, horizon_hours, short note); paper
-    only, it never trades. scorecard: how the logged calls scored against real prices
-    after costs.
+    (verdict trade|pass, target_pct, stop_pct, horizon_hours, short note); it
+    only logs a call and never trades. scorecard: how the logged calls scored against
+    real prices after costs (it scores the calls, not the trades actually placed).
 
     Optional maker mode (preview and order): `mode="maker"` places a POST-ONLY limit
     order at the best bid (buy) or best ask (sell), never through the touch, waits up
@@ -1642,9 +1642,9 @@ async def kraken_xstocks(
     immediate-or-cancel limit order priced `max_slippage_pct` (default 0.3, max 2)
     through the touch, sized down to the pair's lot size. Never retry an order after an
     uncertain outcome; use reconcile. predict: log one scorecard call for `symbol`
-    (verdict trade|pass, target_pct, stop_pct, horizon_hours, short note); paper only,
-    it never trades. scorecard: how the logged calls scored against real prices after
-    costs.
+    (verdict trade|pass, target_pct, stop_pct, horizon_hours, short note); it only
+    logs a call and never trades. scorecard: how the logged calls scored against real
+    prices after costs (it scores the calls, not the trades actually placed).
 
     The owner connects the API key, syncs the allocation and enables trading in
     Settings. These tools cannot change credentials, sync or enable trading. Orders
@@ -1767,9 +1767,9 @@ async def revolut_x(
     immediate-or-cancel limit order priced `max_slippage_pct` (default 0.3, max 2)
     through the touch, sized down to the pair's lot and price steps. Never retry an order
     after an uncertain outcome; use reconcile. predict: log one scorecard call for
-    `symbol` (verdict trade|pass, target_pct, stop_pct, horizon_hours, short note); paper
-    only, it never trades. scorecard: how the logged calls scored against real prices
-    after costs.
+    `symbol` (verdict trade|pass, target_pct, stop_pct, horizon_hours, short note); it
+    only logs a call and never trades. scorecard: how the logged calls scored against
+    real prices after costs (it scores the calls, not the trades actually placed).
 
     The owner generates the signing key, saves the API key, syncs the allocation and
     enables trading in Settings. These tools cannot change credentials, keys, sync or
@@ -1844,7 +1844,7 @@ async def revolut_x(
 
 @handle_errors("native portfolio")
 async def native_portfolio() -> dict:
-    """Read the owner's Crypto.com Exchange, Kraken xStocks and Revolut X accounts (USD, read-only).
+    """Read the owner's Crypto.com, Kraken xStocks and Revolut X accounts (USD, read-only).
 
     Hummingbot's `get_portfolio_overview` cannot see these accounts, which
     Condor trades itself, so on its own it reads as an empty portfolio for them.

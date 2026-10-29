@@ -57,7 +57,7 @@ async function choose(label: string) {
   const button = Array.from(host.querySelectorAll("button")).find((b) => b.textContent === label)!;
   await act(async () => button.click());
 }
-it("opens the connected Crypto.com Exchange without Hummingbot keys and only reads", async () => {
+it("opens the connected Crypto.com without Hummingbot keys and only reads", async () => {
   await render();
   expect(host.textContent).toContain("Preview order");
   expect(host.textContent).toMatch(/Cash 26[.,]00 USD/);
@@ -84,16 +84,16 @@ it.each(["?type=grid", "?type=order", "?workspace=hummingbot", "?connector=crypt
   expect(host.querySelector("[data-workspace]")?.textContent).toContain(search);
   expect(host.querySelector("[data-gate]")).not.toBeNull();
 });
-it("keeps Hummingbot gating when switching and allows returning to the Crypto.com Exchange", async () => {
+it("keeps Hummingbot gating when switching and allows returning to the Crypto.com", async () => {
   await render();
   await choose("Hummingbot");
   expect(host.querySelector("[data-gate]")).not.toBeNull();
-  await choose("Crypto.com Exchange");
+  await choose("Crypto.com");
   expect(host.querySelector("[data-gate]")).toBeNull();
   expect(host.textContent).toContain("Preview order");
   expect(onlyReads(request.fetch.mock.calls)).toBe(true);
 });
-it("offers the explicit Crypto.com Exchange even with Hummingbot keys, without enabling it", async () => {
+it("offers the explicit Crypto.com even with Hummingbot keys, without enabling it", async () => {
   request.credentials.mockResolvedValue({ credentials: [{ connector: "binance" }] });
   await render("/trade?workspace=crypto-exchange");
   expect(host.textContent).toContain("Preview order");
@@ -114,7 +114,7 @@ it.each([["revolut-x", "Revolut X"], ["kraken-xstocks", "Kraken xStocks"]])("ope
   const pressed = Array.from(host.querySelectorAll("button[aria-pressed='true']")).map((b) => b.textContent);
   expect(pressed).toContain(title);
   expect(pressed).not.toContain("Hummingbot");
-  expect(pressed).not.toContain("Crypto.com Exchange");
+  expect(pressed).not.toContain("Crypto.com");
   // the native panel only reads its own routes (and the Crypto.com status the page itself polls)
   expect(request.fetch.mock.calls.every(([path, init]) => !init && (String(path).startsWith(`/api/v1/${key}/`) || String(path).startsWith("/api/v1/crypto-exchange/") || flowsRead(path)))).toBe(true);
 });
@@ -131,7 +131,7 @@ it("shows no deposits panel on the Hummingbot tab", async () => {
   await render("/trade?workspace=hummingbot");
   expect(host.querySelector("[data-native-flows]")).toBeNull();
 });
-it("switches between the Crypto.com Exchange, Kraken xStocks, Revolut X and Hummingbot tabs", async () => {
+it("switches between the Crypto.com, Kraken xStocks, Revolut X and Hummingbot tabs", async () => {
   await render();
   expect(host.textContent).toContain("Preview order");
   await choose("Revolut X");
@@ -142,7 +142,7 @@ it("switches between the Crypto.com Exchange, Kraken xStocks, Revolut X and Humm
   await choose("Hummingbot");
   expect(host.querySelector("[data-gate]")).not.toBeNull();
   expect(host.querySelector("h1")).toBeNull();
-  await choose("Crypto.com Exchange");
+  await choose("Crypto.com");
   expect(host.textContent).toContain("Preview order");
   expect(host.querySelector("[data-venue]")).toBeNull();
 });

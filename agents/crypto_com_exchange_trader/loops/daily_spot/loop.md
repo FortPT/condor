@@ -1,14 +1,14 @@
 ---
 name: Daily Spot
-description: Sequential market analysis, bounded-intent risk review and fresh preview before a native Exchange order
+description: Sequential market analysis, bounded-intent risk review and fresh preview before a native Crypto.com order
 default_config:
-  frequency_sec: 300
+  frequency_sec: 120
   tick_timeout_sec: 600
   execution_mode: loop
   total_amount_quote: 30
   restart_on_boot: true
   max_ticks: 0
-default_trading_context: Crypto.com Exchange only; read capital from the native ledger and run context, never scheduler budget; stop new exposure at 2 total bot equity. Analyst then bounded-intent review, then a fresh preview, then one order.
+default_trading_context: Crypto.com only; read capital from the native ledger and run context, never scheduler budget; stop new exposure at 2 total bot equity. Analyst then bounded-intent review, then a fresh preview, then one order.
 ---
 
 # Daily Spot
@@ -36,7 +36,7 @@ tick it describes and stop; otherwise run steps 1 to 8.
    Selling a held coin to fund a better one is allowed when the new expected gain
    beats the held coin's own outlook plus both legs' costs; the cost per leg is the
    measured spread plus the fee, a fraction of a percent, so small moves can pay.
-3. Scorecard (a paper test): after the analyst's report each full tick, log ONE call for
+3. Call scorecard (it scores the calls, not the trades placed): after the analyst's report each full tick, log ONE call for
    the best candidate with no open call using `crypto_com_exchange(action="predict", symbol="<COIN>", verdict="trade"|"pass", target_pct="...", stop_pct="...", horizon_hours="...", note="...")`.
    Use the analyst's target, invalidation and window. Read `action="scorecard"`
    first and never log numbers you do not expect. Logging places no order.
@@ -167,7 +167,7 @@ In a cheap idle tick do exactly this and stop:
   a full tick from the first step so any exit goes through the normal path. Notify as
   usual; a cheap tick itself stays quiet.
 The scorecard's one log per tick is waived for cheap idle ticks only; the full tick of
-each hour still logs at least one call, so the paper test continues. Do not change the
+each hour still logs at least one call, so the call scorecard continues. Do not change the
 loop's frequency: it is configured outside this prompt.
 
 Authoring or discovering this playbook starts nothing and changes no financial

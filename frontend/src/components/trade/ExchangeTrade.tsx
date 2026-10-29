@@ -186,7 +186,7 @@ export function ExchangeTrade() {
 
   return <div className="space-y-4">
     <div className="flex flex-wrap items-center gap-3">
-      <h1 className="text-xl font-semibold">Crypto.com Exchange</h1>
+      <h1 className="text-xl font-semibold">Crypto.com</h1>
       <span className="text-sm">{data?.connected ? `API key saved (${data.environment})` : "not connected"} · Trading: {data?.enabled ? "enabled" : "paused"}</span>
       {ledger && <span className="text-sm">Cash {money(cash, quote)} · {held.length} holdings</span>}
       <div className="ml-auto flex flex-wrap gap-2">
@@ -197,11 +197,11 @@ export function ExchangeTrade() {
       </div>
     </div>
     {error && <p role="alert" className="text-sm text-[var(--color-red)]">{error.message}</p>}
-    {data && !data.connected && <p className="text-sm">Connect an Exchange API key in <a className="underline" href="/settings?tab=crypto-exchange">Settings</a> to trade.</p>}
-    {data?.connected && !synced && <p className="text-sm">The bot allocation has not been synced from the Exchange account. Use “Sync allocation from Exchange account” in <a className="underline" href="/settings?tab=crypto-exchange">Settings</a> before trading.</p>}
+    {data && !data.connected && <p className="text-sm">Connect a Crypto.com API key in <a className="underline" href="/settings?tab=crypto-exchange">Settings</a> to trade.</p>}
+    {data?.connected && !synced && <p className="text-sm">The bot allocation has not been synced from the Crypto.com account. Use “Sync allocation from Crypto.com account” in <a className="underline" href="/settings?tab=crypto-exchange">Settings</a> before trading.</p>}
     {uncertain && <div className={card}>
-      <p role="alert" className="text-sm text-[var(--color-red)]">An order needs reconciliation. Trading stays paused. Check the Exchange order history before any new submission.</p>
-      <button className={`${button} mt-2`} disabled={reconcile.isPending} onClick={() => reconcile.mutate()}>Reconcile from Exchange order history</button>
+      <p role="alert" className="text-sm text-[var(--color-red)]">An order needs reconciliation. Trading stays paused. Check the Crypto.com order history before any new submission.</p>
+      <button className={`${button} mt-2`} disabled={reconcile.isPending} onClick={() => reconcile.mutate()}>Reconcile from Crypto.com order history</button>
     </div>}
 
     <div className="grid gap-4 lg:grid-cols-[17rem_minmax(0,1fr)_20rem]">
@@ -219,7 +219,7 @@ export function ExchangeTrade() {
             </span>
             <span className="text-right"><span className="block">{price(row.price)}</span><span className="block text-xs"><Change value={row.change_24h_pct} /></span></span>
           </button>)}
-          {term && !found.isLoading && !listed.length && <p className="p-2 text-sm">No Exchange coin matches “{term}” in {quote}.</p>}
+          {term && !found.isLoading && !listed.length && <p className="p-2 text-sm">No Crypto.com coin matches “{term}” in {quote}.</p>}
         </div>
       </section>
 
@@ -239,7 +239,7 @@ export function ExchangeTrade() {
           {candles.data && <CandleChart rows={candles.data.rows} />}
         </div>
         <p className="mt-2 text-xs text-[var(--color-text-muted)]">
-          Chart: {candles.data ? `Exchange ${candles.data.pair}` : "Exchange candles"} ({interval}). Orders go to the public order book, so the preview shows the spread and price impact before you place anything.
+          Chart: {candles.data ? `Crypto.com ${candles.data.pair}` : "Crypto.com candles"} ({interval}). Orders go to the public order book, so the preview shows the spread and price impact before you place anything.
         </p>
       </section>
 
@@ -277,7 +277,7 @@ export function ExchangeTrade() {
       <div className="w-full max-w-md space-y-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-5 text-sm">
         <h2 className="text-base font-semibold">Confirm order</h2>
         <PreviewDetails preview={preview.data} quote={quote} symbol={preview.body.symbol} amount={preview.body.amount} />
-        <p className="text-xs text-[var(--color-text-muted)]">The numbers above are an estimate from the live order book; the Exchange fills the order at the time it is placed.</p>
+        <p className="text-xs text-[var(--color-text-muted)]">The numbers above are an estimate from the live order book; Crypto.com fills the order at the time it is placed.</p>
         <div className="flex gap-2">
           <button className={`${button} flex-1`} disabled={place.isPending} onClick={() => setConfirming(false)}>Cancel</button>
           <button className={`${button} flex-1`} disabled={!data?.enabled || place.isPending} onClick={() => place.mutate(preview.body)}>Confirm and place order</button>
@@ -318,7 +318,7 @@ export function ExchangeTrade() {
       <p className="mt-2 text-xs text-[var(--color-text-muted)]">Enabling execution does not start a loop or place an order.</p>
     </section>
     <MakerStatsPanel base={base} quote={quote} />
-    <ScorecardPanel base={base} queryKey="crypto-exchange-scorecard" venue="Exchange" />
+    <ScorecardPanel base={base} queryKey="crypto-exchange-scorecard" venue="Crypto.com" />
     {result !== null && <ExchangeResult value={result} />}
   </div>;
 }

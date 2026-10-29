@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react";
 
 import { apiFetch, type CandleData } from "@/lib/api";
 import { getThemeColors } from "@/lib/theme-colors";
-import { num, signed, type Scorecard, type Summary } from "./tradeFormat";
+import { num, pct, signed, type Scorecard, type Summary } from "./tradeFormat";
 
 const card = "rounded-lg border border-[var(--color-border)] p-4";
 
@@ -52,8 +52,8 @@ export function CandleChart({ rows }: { rows: CandleData[] }) {
   return <div ref={ref} data-testid="exchange-chart" className="h-full w-full" />;
 }
 
-/** Paper test of the trader's logged calls, scored against real prices after costs. */
-export function ScorecardPanel({ base, queryKey, venue = "Exchange", noun = "coins" }: {
+/** The trader's logged calls, scored against real prices after costs (calls, not placed orders). */
+export function ScorecardPanel({ base, queryKey, venue = "Crypto.com", noun = "coins" }: {
   /** The venue's API prefix, for example `/api/v1/crypto-exchange`. */
   base: string;
   queryKey: string;
@@ -69,16 +69,16 @@ export function ScorecardPanel({ base, queryKey, venue = "Exchange", noun = "coi
   const data = score.data;
   if (!data?.trade_calls) {
     return <section className={card} aria-label="Scorecard">
-      <h2 className="mb-1 font-semibold">Trader scorecard</h2>
+      <h2 className="mb-1 font-semibold">Call scorecard</h2>
       <p className="text-sm text-[var(--color-text-muted)]">{score.isError ? "Scorecard unavailable." : "Loading scorecard…"}</p>
     </section>;
   }
   const resolved = data.trade_calls.resolved + data.pass_calls.resolved;
-  const rows: [string, Summary][] = [["Trade calls", data.trade_calls], ["Pass calls (what it skipped)", data.pass_calls]];
+  const rows: [string, Summary][] = [["Calls to trade", data.trade_calls], ["Calls to pass (what it skipped)", data.pass_calls]];
   return <section className={card} aria-label="Scorecard">
-    <h2 className="mb-1 font-semibold">Trader scorecard</h2>
+    <h2 className="mb-1 font-semibold">Call scorecard</h2>
     <p className="text-sm">
-      Paper test: each call the trader logs ({noun === "coins" ? "coin" : "stock"}, target, stop, time window) is scored later against real {venue} prices after a {data.assumptions.round_trip_cost_pct}% round-trip cost. No money moves.
+      Each call the trader logs ({noun === "coins" ? "coin" : "stock"}, target, stop, time window) is scored later against real {venue} prices after a {pct(data.assumptions.round_trip_cost_pct)}% round-trip cost. It scores the calls, not the trades that were actually placed; no money moves.
     </p>
     <p className="mt-1 text-xs text-[var(--color-text-muted)]">
       Tracking {data.prices.coins} {noun} · {data.prices.snapshots} price snapshots over {data.prices.days} days · {resolved} of 30 resolved calls needed before trusting the result{data.enough_data ? " (reached)" : ""}.

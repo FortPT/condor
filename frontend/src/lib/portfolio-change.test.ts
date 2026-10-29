@@ -30,7 +30,7 @@ describe("the change beside a portfolio total", () => {
   it("is unknown when sources start at different times, whatever the points say", () => {
     const out = historyChange({
       ...base,
-      change: { available: false, reason: "different_start", note: "History starts at different times: Crypto.com Exchange has no value at the start." },
+      change: { available: false, reason: "different_start", note: "History starts at different times: Crypto.com has no value at the start." },
     });
     expect(out.known).toBe(false);
     if (!out.known) {

@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 
 import { ExchangeResult } from "@/components/settings/CryptoComExchange";
 import { apiFetch, type CandleData } from "@/lib/api";
+import { withRealFigures } from "./nativeHistory";
 import { CandleChart, Change, ScorecardPanel } from "./TradeParts";
 import {
   accountValue, accountsOf, equityOf, historyOf, holdingsOf, rowsOf, useNativeStatus,
@@ -26,7 +27,7 @@ const volume = (value: string | number | null) => {
 /**
  * A read-only look at a native venue (Kraken xStocks, Revolut X): the bot allocation and
  * what it holds, the whole account's balances, the most traded markets, a chart, recent
- * orders and the paper scorecard. There is no order ticket: the agent loop trades, and
+ * orders and the call scorecard. There is no order ticket: the agent loop trades, and
  * connecting, syncing and enabling live in Settings.
  *
  * The cadence is the Crypto.com panel's: status every 10 s and the top markets every
@@ -84,7 +85,8 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
       const rows: CandleData[] = res.candles
         .map((row) => ({ timestamp: Math.floor(Number(row.t) / 1000), open: Number(row.o), high: Number(row.h), low: Number(row.l), close: Number(row.c), volume: Number(row.v) }))
         .filter((row) => [row.timestamp, row.open, row.high, row.low, row.close].every(Number.isFinite));
-      if (!rows.length) throw new Error(`No chart data for ${symbol}`);
+      // An empty answer is a state, not a failure (nothing traded in the window), so it is
+      // shown as such rather than as an error.
       return { pair: res.pair, rows };
     },
   });
@@ -113,7 +115,7 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
   const cash = num(ledger?.cash);
   const equity = equityOf(ledger, holdings);
   const accountRows = accountsOf(accounts.data);
-  const historyRows = historyOf(venue, history.data);
+  const historyRows = withRealFigures(venue, historyOf(venue, history.data), ledger?.orders);
   const botOrders = [...(ledger?.orders ?? [])].reverse().slice(0, 5);
   const error = status.error || top.error || found.error || accounts.error || history.error || valuation.error;
 
@@ -172,7 +174,8 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
           {!symbol && <p className="p-4 text-sm text-[var(--color-text-muted)]">Pick a {venue.noun === "coins" ? "coin" : "stock"} to see its chart.</p>}
           {symbol && candles.isLoading && <p role="status" className="p-4 text-sm">Loading chart…</p>}
           {candles.isError && <p className="p-4 text-sm text-[var(--color-text-muted)]">{candles.error.message}.</p>}
-          {candles.data && <CandleChart rows={candles.data.rows} />}
+          {candles.data && candles.data.rows.length > 0 && <CandleChart rows={candles.data.rows} />}
+          {candles.data && candles.data.rows.length === 0 && <p role="status" className="p-4 text-sm text-[var(--color-text-muted)]">{data?.market && !data.market.open ? "No recent candles: the US market is closed." : `No recent candles for ${symbol}.`}</p>}
         </div>
         <p className="mt-2 text-xs text-[var(--color-text-muted)]">Chart: {candles.data ? `${title} ${candles.data.pair}` : `${title} candles`} ({interval}).</p>
       </section>
@@ -219,7 +222,9 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
         <thead><tr><th>Time</th><th>Pair</th><th>Side</th><th>Status</th><th>Filled</th><th>Avg price</th><th>Value</th><th>Fee</th></tr></thead>
         <tbody>{historyRows.map((row) => <tr key={row.id}>
           <td>{row.time === null ? "—" : new Date(row.time).toLocaleString()}</td><td>{row.pair}</td><td>{row.side}</td><td>{row.status}</td>
-          <td>{row.quantity}</td><td>{row.average_price}</td><td>{row.value}</td><td>{row.fee}</td>
+          <td>{row.quantity}</td>
+          <td>{row.average_price}{row.rounded && <span className="ml-1 text-xs text-[var(--color-text-muted)]" title="Revolut X reports this price rounded to the cent; no fills were stored for this older order.">rounded</span>}</td>
+          <td>{row.value}</td><td>{row.fee}</td>
         </tr>)}</tbody>
       </table> : <p className="text-sm">No final orders in the history window.</p>)}
       {botOrders.length > 0 && <>

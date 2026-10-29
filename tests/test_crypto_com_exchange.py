@@ -105,7 +105,7 @@ class FakeService(ex.ExchangeService):
             if self.reject_create:
                 raise ex.ExchangeError(*self.reject_create)
             if self.fail_create:
-                raise ValueError("Crypto.com Exchange unavailable")
+                raise ValueError("Crypto.com unavailable")
             return {"order_id": "o1", "client_oid": params["client_oid"]}
         if method == "get-order-detail":
             if self.detail_missing:

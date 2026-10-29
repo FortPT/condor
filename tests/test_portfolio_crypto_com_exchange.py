@@ -21,7 +21,7 @@ async def test_exchange_balances_are_user_scoped_and_never_written_to_shared_cac
     monkeypatch.setattr(exchange_service, "status", lambda uid: {"connected": uid == 1})
     app = AsyncMock(
         return_value={
-            "connector": "Crypto.com Exchange",
+            "connector": "Crypto.com",
             "total_usd": 22,
             "balances": [
                 {"token": "CRO", "total": 200, "available": 190, "usd_value": 22}

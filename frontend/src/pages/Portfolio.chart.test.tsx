@@ -87,7 +87,7 @@ const BASE: PortfolioHistoryResponse = {
   series_start_reason: "all_accounts_recording_from",
   sources: [
     { source: "Hummingbot", first_ts: T0, status: "recording" },
-    { source: "Crypto.com Exchange", first_ts: T0 + H, status: "recording" },
+    { source: "Crypto.com", first_ts: T0 + H, status: "recording" },
     { source: "Revolut X", first_ts: T0 + 2 * H, status: "recording" },
   ],
   gaps: [],

@@ -204,7 +204,7 @@ class RunningInstance(BaseModel):
 #: session that traded nothing. The reason is all a refused caller gets: never
 #: the creator, never a figure.
 #:
-#: A native crew (Crypto.com Exchange, Kraken xStocks) has no Hummingbot server;
+#: A native crew (Crypto.com, Kraken xStocks) has no Hummingbot server;
 #: its money is the venue's account equity. ``no_history`` — no equity has been
 #: recorded for that venue yet, so a change cannot be stated.
 Unavailable = Literal["", "no_server", "no_access", "unreachable", "no_history"]
@@ -4418,15 +4418,17 @@ async def set_restart_on_boot(
     beside every other run field ``load_full_config`` overlays, which is what
     ``_restart`` re-reads when the boot pass fires.
     """
-    from condor.agents.config import load_full_config, save_full_config
+    from condor.agents.config import save_config_values
     from condor.runtime.loops import get_supervisor
 
     strategy = _get_strategy(slug, sslug)
     _require_no_foreign_live_run(slug, sslug, user)
 
-    config = load_full_config(strategy.home, strategy.default_config)
-    config["restart_on_boot"] = req.enabled
-    save_full_config(strategy.home, config)
+    # Only the flag is written. Saving the merged defaults beside it froze the
+    # loop's cadence at whatever its ``default_config`` said that day, so a
+    # restart came back on a stale ``frequency_sec`` (the repo default is the
+    # authority; ``load_full_config`` overlays what was explicitly saved).
+    save_config_values(strategy.home, {"restart_on_boot": req.enabled})
 
     # The engines the caller may act on — someone else's loop is simply not in
     # the set, the same rule stop/pause/resume follow (SEC-251).

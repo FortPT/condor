@@ -31,6 +31,7 @@ import {
 } from "@/lib/api";
 import { formatCurrency, formatCurrencyPnl, formatCurrencyVolume, isExecutorActive } from "@/lib/formatters";
 import { historyChange } from "@/lib/portfolio-change";
+import { topHoldings } from "@/lib/portfolio-holdings";
 import {
   anomalyLabel,
   baselineNote,
@@ -222,8 +223,8 @@ function DashboardStrip({
           pnlTitle={
             agents.some((a) => a.pnl_basis === ACCOUNT_EQUITY)
               ? agents.some((a) => a.pnl_basis === ACCOUNT_EQUITY && !a.pnl_flows_tracked)
-                ? "Includes the change in account equity of native crews (Crypto.com Exchange, Kraken xStocks, Revolut X); deposits and withdrawals are only subtracted where they are recorded"
-                : "Includes the trading result of native crews (Crypto.com Exchange, Kraken xStocks, Revolut X): the change in account equity net of recorded deposits and withdrawals"
+                ? "Includes the change in account equity of native crews (Crypto.com, Kraken xStocks, Revolut X); deposits and withdrawals are only subtracted where they are recorded"
+                : "Includes the trading result of native crews (Crypto.com, Kraken xStocks, Revolut X): the change in account equity net of recorded deposits and withdrawals"
               : undefined
           }
           details={`${agents.length} total · ${agentSessions} session${agentSessions !== 1 ? "s" : ""}`}
@@ -400,7 +401,7 @@ function ConnectorRow({
                 title={connector.note}
                 className="rounded bg-[var(--color-surface-hover)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]"
               >
-                {connector.connector === "Crypto.com Exchange" ? "Exchange account" : "unified"}
+                {connector.connector === "Crypto.com" ? "Crypto.com account" : "unified"}
               </span>
             )}
           </div>
@@ -1169,7 +1170,7 @@ export function Portfolio() {
 
   const totalUsd = data?.total_usd ?? 0;
   const connectors = data?.connectors ?? [];
-  const hasExchange = connectors.some((connector) => connector.connector === "Crypto.com Exchange");
+  const hasExchange = connectors.some((connector) => connector.connector === "Crypto.com");
 
   // The portfolio's change over the period (follows the period selector), as the
   // server works it out: net of recorded deposits and withdrawals and only from sources
@@ -1194,12 +1195,8 @@ export function Portfolio() {
     botVolume += convert(ctrl.volume_traded, quote).value;
   }
 
-  // Flatten all tokens for top holdings
-  const allTokens = connectors.flatMap((c) =>
-    c.balances.map((b) => ({ token: b.token, usd_value: b.usd_value, connector: c.connector })),
-  );
-  allTokens.sort((a, b) => b.usd_value - a.usd_value);
-  const topTokens = allTokens.slice(0, 8);
+  // Top holdings by token, summed across connectors (the Assets table keeps one row per connector)
+  const topTokens = topHoldings(connectors);
 
   return (
     <div className={`space-y-6 transition-opacity duration-300 ${isPlaceholderData ? "opacity-60" : "opacity-100"}`}>
@@ -1240,7 +1237,7 @@ export function Portfolio() {
       />
 
       {data?.notes?.map((note) => <p key={note} role="alert" className="text-sm text-[var(--color-red)]">{note}</p>)}
-      {hasExchange && <p className="text-sm text-[var(--color-text-muted)]">Crypto.com Exchange is included in the current total and assets below. The chart adds its value from when Condor started recording it (every 5 minutes); earlier history is not available. <a className="underline" href="/trade?workspace=crypto-exchange">Open Crypto.com trading</a></p>}
+      {hasExchange && <p className="text-sm text-[var(--color-text-muted)]">Crypto.com is included in the current total and assets below. The chart adds its value from when Condor started recording it (every 5 minutes); earlier history is not available. <a className="underline" href="/trade?workspace=crypto-exchange">Open Crypto.com trading</a></p>}
 
       {/* Portfolio Evolution + Top Holdings side by side */}
       <div className="flex flex-col lg:flex-row gap-4">

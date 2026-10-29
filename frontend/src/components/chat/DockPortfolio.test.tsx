@@ -54,7 +54,7 @@ const PORTFOLIO: PortfolioResponse = {
     { connector: "solana-mainnet-beta", total_usd: 0, balances: [] },
     { connector: "kraken", total_usd: 10.19, balances: [bal("EUR", 10.19)] },
     {
-      connector: "Crypto.com Exchange",
+      connector: "Crypto.com",
       total_usd: 46.93,
       balances: [bal("USD", 30), bal("HYPE", 9.4), bal("SOL", 7.53)],
     },
@@ -124,6 +124,27 @@ describe("DockPortfolio breakdown", () => {
     expect(container.textContent).toContain("$61.87");
     expect(sum(shares())).toBeGreaterThanOrEqual(99);
     expect(sum(shares())).toBeLessThanOrEqual(101);
+  });
+});
+
+describe("DockPortfolio by asset", () => {
+  it("lists a token held on two connectors once, summed", async () => {
+    getPortfolio.mockResolvedValue({
+      server: "FortPT VM-08",
+      total_usd: 152,
+      connectors: [
+        { connector: "Kraken xStocks", total_usd: 90, balances: [bal("USD", 40), bal("TSLA", 50)] },
+        { connector: "Crypto.com", total_usd: 62, balances: [bal("USD", 26), bal("HYPE", 36)] },
+      ],
+    });
+    await render();
+    const rows = [...container.querySelectorAll('[data-testid="portfolio-breakdown"] li')].map(
+      (li) => li.textContent ?? "",
+    );
+    expect(rows.filter((row) => row.startsWith("USD"))).toHaveLength(1);
+    expect(rows).toHaveLength(3);
+    // 66 of 152 is 43%, the sum, not 26% or 17%.
+    expect(rows.find((row) => row.startsWith("USD"))).toContain("43%");
   });
 });
 

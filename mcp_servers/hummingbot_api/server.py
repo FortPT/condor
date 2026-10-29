@@ -213,7 +213,7 @@ async def get_portfolio_overview(
     in parallel. By default, it returns all four types of data, but you can filter to only include
     specific sections.
 
-    SCOPE: this covers only Hummingbot-connected accounts. It does NOT see the Crypto.com Exchange or
+    SCOPE: this covers only Hummingbot-connected accounts. It does NOT see the Crypto.com or
     Kraken xStocks accounts that Condor trades itself; an empty result here does not mean those are empty.
     Use the condor `native_portfolio` tool for them.
 

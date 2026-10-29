@@ -1,4 +1,4 @@
-"""The chat agent's way to see the Crypto.com Exchange and Kraken xStocks money.
+"""The chat agent's way to see the Crypto.com and Kraken xStocks money.
 
 Hummingbot's ``get_portfolio_overview`` cannot see these accounts, so the Condor
 chat answered "your portfolio is empty ($0.00)". ``native_portfolio`` is a
@@ -69,4 +69,4 @@ def test_the_condor_chat_agent_is_told_about_both_tools():
     prompt = (ROOT / "agents" / "condor" / "AGENT.md").read_text()
     assert "`native_portfolio`" in prompt
     assert "Hummingbot-connected accounts only" in prompt
-    assert "Crypto.com Exchange" in prompt and "Kraken xStocks" in prompt
+    assert "Crypto.com" in prompt and "Kraken xStocks" in prompt
