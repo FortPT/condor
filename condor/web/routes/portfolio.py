@@ -184,6 +184,7 @@ async def get_portfolio_history(
         history = None
 
     _, interval = PORTFOLIO_HISTORY_RANGES[range]
+    live_keys = await _live_connector_keys(name)
 
     logger.debug("Portfolio history response shape: %s", type(history))
     if isinstance(history, dict):
@@ -203,6 +204,12 @@ async def get_portfolio_history(
             # Sum token values from nested structure
             # API returns {timestamp, state: {account: {connector: [balances]}}}
             cur_totals = _extract_connector_totals(_snapshot_state(snapshot, keyed))
+            if live_keys is not None:
+                # A connector the server no longer has (its key was removed) must
+                # not keep adding its last recorded balance to every later point.
+                cur_totals = {k: v for k, v in cur_totals.items() if k in live_keys}
+                if not cur_totals:
+                    continue
             if cur_totals and prev_connector_totals:
                 # Forward-fill: for connectors seen before but missing now, use previous value
                 for key, prev_val in prev_connector_totals.items():
@@ -211,8 +218,6 @@ async def get_portfolio_history(
             if cur_totals:
                 prev_connector_totals = cur_totals
             total = sum(cur_totals.values())
-        else:
-            cur_totals = _extract_connector_totals(_snapshot_state(snapshot, keyed))
         if keyed and total <= 0:
             # Dict-keyed payloads historically drop zero-total points
             continue
@@ -430,6 +435,24 @@ def _extract_token_values(data: object) -> dict[str, float]:
                             if token and usd > 0:
                                 tokens[token] = tokens.get(token, 0) + usd
     return tokens
+
+
+async def _live_connector_keys(name: str) -> set[str] | None:
+    """The ``account:connector`` keys the server holds now, or ``None`` when unknown.
+
+    ``None`` (the live portfolio could not be read) means the history is used as
+    recorded; an empty set means the server has no connectors at all.
+    """
+    try:
+        state = await get_server_data_service().get_or_fetch(
+            name, ServerDataType.PORTFOLIO
+        )
+    except Exception as error:  # noqa: BLE001 - the chart must never fail on this
+        logger.warning("Live connectors unavailable for history (%s)", error)
+        return None
+    if not isinstance(state, dict):
+        return None
+    return set(_extract_connector_totals(state))
 
 
 def _extract_connector_totals(data: object) -> dict[str, float]:
