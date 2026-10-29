@@ -421,12 +421,68 @@ export interface PortfolioHistoryChange {
   flows_not_netted?: string[];
 }
 
+/** A chart point: `total_usd` is `null` where an account had no reading (a break, never a fill). */
+export interface PortfolioChartPoint {
+  timestamp: number;
+  total_usd: number | null;
+  tokens?: Record<string, number>;
+}
+
+export interface PortfolioResultPoint {
+  timestamp: number;
+  /** Cumulative trading result since the chart start, USD, net of confirmed flows. */
+  result_usd: number | null;
+}
+
+export interface PortfolioHistorySource {
+  source: string;
+  first_ts: number | null;
+  /** `recording`, `pending` (connected, no reading yet) or `disconnected`. */
+  status: string;
+}
+
+export interface PortfolioHistoryGap {
+  source: string;
+  from_ts: number;
+  to_ts: number;
+}
+
+/** A confirmed deposit or withdrawal: `amount` is signed (deposits positive), in `currency`. */
+export interface PortfolioFlowMarker {
+  ts: number;
+  venue: string;
+  currency: string;
+  amount: string;
+  usd_value_at_time?: number | null;
+  source: string;
+  status: string;
+}
+
 export interface PortfolioHistoryResponse {
   server: string;
   points: PortfolioHistoryPoint[];
   interval: string;
   top_tokens?: string[];
   change?: PortfolioHistoryChange | null;
+  /**
+   * Additive (`condor/portfolio_chart.py`). The series the chart draws: it starts when
+   * every included account is recording and has `null` totals at gaps. Absent on an older
+   * server (draw `points`).
+   */
+  chart_points?: PortfolioChartPoint[] | null;
+  baseline_ts?: number | null;
+  series_start_ts?: number | null;
+  series_start_reason?: string | null;
+  sources?: PortfolioHistorySource[];
+  gaps?: PortfolioHistoryGap[];
+  flows?: PortfolioFlowMarker[];
+  pending_flows?: number;
+  flows_note?: string | null;
+  /** Net-of-flows trading result; `null` with `result_reason`/`result_note` when it cannot be told honestly. */
+  result_points?: PortfolioResultPoint[] | null;
+  result_reason?: string | null;
+  result_note?: string | null;
+  result_not_netted?: string[];
 }
 
 export interface BotInfo {

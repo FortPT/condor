@@ -26,11 +26,24 @@ import {
   type BalanceItem,
   type ConnectorBalance,
   type ExecutorPeriodSummary,
-  type PortfolioHistoryPoint,
+  type PortfolioFlowMarker,
   type PortfolioHistoryResponse,
 } from "@/lib/api";
 import { formatCurrency, formatCurrencyPnl, formatCurrencyVolume, isExecutorActive } from "@/lib/formatters";
 import { historyChange } from "@/lib/portfolio-change";
+import {
+  baselineNote,
+  chartState,
+  emptyMessage,
+  flowLabel,
+  gapLabel,
+  markerAnchor,
+  pendingNote,
+  resultToggle,
+  segments,
+  seriesFor,
+  type ChartMode,
+} from "@/lib/portfolio-chart";
 import { agentsQuery, EXECUTORS_REFETCH_MS, executorsQuery } from "@/lib/queryClient";
 import { ACCOUNT_EQUITY } from "@/lib/strategy-unavailable";
 import { getThemeColors } from "@/lib/theme-colors";
@@ -433,9 +446,23 @@ function formatTooltipDate(ts: number, range: string) {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+function formatNoteTime(ts: number) {
+  return new Date(ts * 1000).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+type DrawnPoint = { timestamp: number; value: number; tokens: Record<string, number> | undefined };
+
 function PortfolioEvolution({ server, range, convertFromUsd, currencySymbol }: { server: string; range: string; convertFromUsd: (val: number) => number; currencySymbol: string }) {
   const [stacked, setStacked] = useState(false);
-  const [hover, setHover] = useState<{ x: number; point: PortfolioHistoryPoint } | null>(null);
+  const [mode, setMode] = useState<ChartMode>("value");
+  const [hover, setHover] = useState<{ x: number; point: DrawnPoint } | null>(null);
+  const [hoverFlow, setHoverFlow] = useState<{ x: number; y: number; label: string } | null>(null);
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -464,20 +491,30 @@ function PortfolioEvolution({ server, range, convertFromUsd, currencySymbol }: {
   });
 
   const activeData: PortfolioHistoryResponse | undefined = stacked && breakdownData ? breakdownData : data;
-  const rawPoints = activeData?.points ?? [];
   const topTokens = activeData?.top_tokens ?? [];
 
-  // Convert all values from USDT to display currency
-  const points = useMemo(() =>
-    rawPoints.map(p => ({
-      ...p,
-      total_usd: convertFromUsd(p.total_usd),
-      tokens: p.tokens ? Object.fromEntries(
-        Object.entries(p.tokens).map(([k, v]) => [k, convertFromUsd(v)])
-      ) : undefined,
-    })),
-    [rawPoints, convertFromUsd]
-  );
+  // The chart draws the server's series from the point every account was recording; the
+  // Result view is the same readings net of confirmed deposits and withdrawals, and is
+  // only offered when those can be taken out honestly.
+  const toggle = resultToggle(activeData, stacked);
+  const effectiveMode: ChartMode = toggle.enabled && mode === "result" ? "result" : "value";
+  const state = chartState(activeData);
+  const baselineText = baselineNote(activeData, formatNoteTime);
+  const pendingText = pendingNote(activeData);
+  const flows = !stacked ? (activeData?.flows ?? []) : [];
+  const gaps = activeData?.gaps ?? [];
+
+  // Convert all values from USDT to display currency (a null stays a break)
+  const points = useMemo(() => {
+    const raw = seriesFor(activeData, effectiveMode);
+    return raw.map((p) => ({
+      timestamp: p.timestamp,
+      value: p.value == null ? null : convertFromUsd(p.value),
+      tokens: p.tokens
+        ? Object.fromEntries(Object.entries(p.tokens).map(([k, v]) => [k, convertFromUsd(v)]))
+        : undefined,
+    }));
+  }, [activeData, effectiveMode, convertFromUsd]);
 
   const W = 800;
   const H = 250;
@@ -487,65 +524,88 @@ function PortfolioEvolution({ server, range, convertFromUsd, currencySymbol }: {
 
   // Memoize chart geometry so hover re-renders only rebuild the crosshair/tooltip,
   // not the scales and SVG path strings (theme-dependent colors stay outside).
-  const { minTs, tsRange, toX, toY, stackedAreaPaths, linePath, areaPath, yTicks, xTicks } = useMemo(() => {
+  const { minTs, tsRange, toX, toY, stackedAreaPaths, linePath, areaPath, dots, yTicks, xTicks, drawn } = useMemo(() => {
+    const drawn: DrawnPoint[] = points.filter((p): p is DrawnPoint => p.value != null);
+    const runs = segments(points);
+
     // Compute scales
     const minTs = points.length > 0 ? points[0].timestamp : 0;
     const maxTs = points.length > 0 ? points[points.length - 1].timestamp : 1;
-    const values = points.map((p) => p.total_usd);
-    const minVal = stacked ? 0 : (values.length > 0 ? Math.min(...values) * 0.98 : 0);
-    const maxVal = values.length > 0 ? Math.max(...values) * 1.02 : 1;
+    const values = drawn.map((p) => p.value);
+    let minVal: number;
+    let maxVal: number;
+    if (effectiveMode === "result") {
+      // A result starts at 0 and may go below it: keep the zero line in view.
+      const lo = Math.min(0, ...values);
+      const hi = Math.max(0, ...values);
+      const pad = (hi - lo) * 0.1 || 1;
+      minVal = lo - pad;
+      maxVal = hi + pad;
+    } else {
+      minVal = stacked ? 0 : (values.length > 0 ? Math.min(...values) * 0.98 : 0);
+      maxVal = values.length > 0 ? Math.max(...values) * 1.02 : 1;
+    }
     const valRange = maxVal - minVal || 1;
     const tsRange = maxTs - minTs || 1;
 
     const toX = (ts: number) => PAD.left + ((ts - minTs) / tsRange) * plotW;
     const toY = (val: number) => PAD.top + plotH - ((val - minVal) / valRange) * plotH;
 
-    // Build stacked area paths
+    // Build stacked area paths (one sub-path per unbroken run, so a gap stays a gap)
     const stackedAreaPaths: { token: string; path: string }[] = [];
-    if (stacked && topTokens.length > 0 && points.length > 1) {
-      // For each point, compute cumulative bounds per token
+    if (stacked && topTokens.length > 0) {
       const tokenOrder = topTokens;
       for (let ti = 0; ti < tokenOrder.length; ti++) {
         const token = tokenOrder[ti];
+        const parts: string[] = [];
+        for (const run of runs) {
+          if (run.length < 2) continue;
+          // Upper line (cumulative up to and including this token)
+          const upperPoints = run.map((p) => {
+            let cumUpper = 0;
+            for (let j = 0; j <= ti; j++) {
+              cumUpper += p.tokens?.[tokenOrder[j]] ?? 0;
+            }
+            return { x: toX(p.timestamp).toFixed(2), y: toY(cumUpper).toFixed(2) };
+          });
 
-        // Upper line (cumulative up to and including this token)
-        const upperPoints = points.map((p) => {
-          let cumUpper = 0;
-          for (let j = 0; j <= ti; j++) {
-            cumUpper += p.tokens?.[tokenOrder[j]] ?? 0;
-          }
-          return { x: toX(p.timestamp).toFixed(2), y: toY(cumUpper).toFixed(2) };
-        });
+          // Lower line (cumulative up to but NOT including this token)
+          const lowerPoints = run.map((p) => {
+            let cumLower = 0;
+            for (let j = 0; j < ti; j++) {
+              cumLower += p.tokens?.[tokenOrder[j]] ?? 0;
+            }
+            return { x: toX(p.timestamp).toFixed(2), y: toY(cumLower).toFixed(2) };
+          });
 
-        // Lower line (cumulative up to but NOT including this token)
-        const lowerPoints = points.map((p) => {
-          let cumLower = 0;
-          for (let j = 0; j < ti; j++) {
-            cumLower += p.tokens?.[tokenOrder[j]] ?? 0;
-          }
-          return { x: toX(p.timestamp).toFixed(2), y: toY(cumLower).toFixed(2) };
-        });
-
-        const upperPath = upperPoints.map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x} ${pt.y}`).join(" ");
-        const lowerPath = [...lowerPoints].reverse().map((pt, i) => `${i === 0 ? "L" : "L"} ${pt.x} ${pt.y}`).join(" ");
-        const areaPath = `${upperPath} ${lowerPath} Z`;
-
-        stackedAreaPaths.push({ token, path: areaPath });
+          const upperPath = upperPoints.map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x} ${pt.y}`).join(" ");
+          const lowerPath = [...lowerPoints].reverse().map((pt) => `L ${pt.x} ${pt.y}`).join(" ");
+          parts.push(`${upperPath} ${lowerPath} Z`);
+        }
+        stackedAreaPaths.push({ token, path: parts.join(" ") });
       }
     }
 
-    // Build line path (normal mode)
-    const linePath =
-      !stacked && points.length > 1
-        ? points.map((p, i) => `${i === 0 ? "M" : "L"} ${toX(p.timestamp).toFixed(2)} ${toY(p.total_usd).toFixed(2)}`).join(" ")
-        : "";
+    // Build line path (normal mode): one sub-path per unbroken run
+    const runPath = (run: DrawnPoint[]) =>
+      run.map((p, i) => `${i === 0 ? "M" : "L"} ${toX(p.timestamp).toFixed(2)} ${toY(p.value).toFixed(2)}`).join(" ");
+    const lines = runs.filter((run) => run.length > 1);
+    const linePath = !stacked ? lines.map(runPath).join(" ") : "";
 
     const areaPath =
-      !stacked && points.length > 1
-        ? linePath +
-          ` L ${toX(points[points.length - 1].timestamp).toFixed(2)} ${(PAD.top + plotH).toFixed(2)}` +
-          ` L ${toX(points[0].timestamp).toFixed(2)} ${(PAD.top + plotH).toFixed(2)} Z`
+      !stacked && effectiveMode === "value"
+        ? lines
+            .map(
+              (run) =>
+                runPath(run) +
+                ` L ${toX(run[run.length - 1].timestamp).toFixed(2)} ${(PAD.top + plotH).toFixed(2)}` +
+                ` L ${toX(run[0].timestamp).toFixed(2)} ${(PAD.top + plotH).toFixed(2)} Z`,
+            )
+            .join(" ")
         : "";
+
+    // A reading with a gap on both sides has no line to belong to: draw it as a dot.
+    const dots = !stacked ? runs.filter((run) => run.length === 1).map((run) => run[0]) : [];
 
     // Y-axis gridlines (5 lines)
     const yTicks = Array.from({ length: 5 }, (_, i) => minVal + (valRange * i) / 4);
@@ -553,24 +613,32 @@ function PortfolioEvolution({ server, range, convertFromUsd, currencySymbol }: {
     // X-axis labels (5 labels)
     const xTicks = Array.from({ length: 5 }, (_, i) => minTs + (tsRange * i) / 4);
 
-    return { minTs, tsRange, toX, toY, stackedAreaPaths, linePath, areaPath, yTicks, xTicks };
+    return { minTs, tsRange, toX, toY, stackedAreaPaths, linePath, areaPath, dots, yTicks, xTicks, drawn };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [points, stacked, topTokens]);
+  }, [points, stacked, topTokens, effectiveMode]);
 
   const chartColors = getChartColors();
   const stackedAreas = stackedAreaPaths.map((area, ti) => ({ ...area, color: chartColors[ti % chartColors.length] }));
+  const formatValue = (val: number) =>
+    effectiveMode === "result" ? formatCurrencyPnl(val, currencySymbol) : formatCurrency(val, currencySymbol);
+
+  // Deposit/withdrawal markers sit on the line where the flow happened; one inside a gap
+  // (no value to sit on) is left off rather than placed on a guess.
+  const markers = flows
+    .map((flow) => ({ flow, anchor: markerAnchor(points, flow.ts) }))
+    .filter((m): m is { flow: PortfolioFlowMarker; anchor: { ts: number; value: number } } => m.anchor !== null);
 
   // Handle mouse move
   const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    if (points.length === 0) return;
+    if (drawn.length === 0) return;
     const svg = e.currentTarget;
     const rect = svg.getBoundingClientRect();
     const mouseX = ((e.clientX - rect.left) / rect.width) * W;
     const ts = minTs + ((mouseX - PAD.left) / plotW) * tsRange;
 
-    let closest = points[0];
-    let closestDist = Math.abs(points[0].timestamp - ts);
-    for (const p of points) {
+    let closest = drawn[0];
+    let closestDist = Math.abs(drawn[0].timestamp - ts);
+    for (const p of drawn) {
       const dist = Math.abs(p.timestamp - ts);
       if (dist < closestDist) {
         closest = p;
@@ -588,35 +656,76 @@ function PortfolioEvolution({ server, range, convertFromUsd, currencySymbol }: {
   const tooltipH = stacked && hoverTokenEntries.length > 0 ? 28 + hoverTokenEntries.length * 16 : 40;
   const tooltipW = stacked && hoverTokenEntries.length > 0 ? 150 : 108;
 
+  const modeButton = (id: ChartMode, label: string, enabled: boolean, hint: string) => (
+    <button
+      type="button"
+      data-testid={`chart-mode-${id}`}
+      aria-pressed={effectiveMode === id}
+      disabled={!enabled}
+      title={hint}
+      onClick={() => setMode(id)}
+      className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
+        effectiveMode === id
+          ? "bg-[var(--color-accent)] text-white"
+          : enabled
+            ? "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+            : "text-[var(--color-text-muted)] opacity-50 cursor-not-allowed"
+      }`}
+    >
+      {label}
+    </button>
+  );
+
+  const pendingFlows = activeData?.pending_flows ?? 0;
+
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 h-full">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-3 gap-2">
         <h3 className="text-sm font-medium text-[var(--color-text-muted)]">Portfolio Evolution</h3>
-        <div className="flex gap-0.5 rounded border border-[var(--color-border)] p-0.5">
-          <button
-            onClick={() => setStacked(false)}
-            className={`p-1 rounded transition-colors ${!stacked ? "bg-[var(--color-accent)] text-white" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
-            title="Line chart"
-          >
-            <BarChart3 className="h-3.5 w-3.5" />
-          </button>
-          <button
-            onClick={() => setStacked(true)}
-            className={`p-1 rounded transition-colors ${stacked ? "bg-[var(--color-accent)] text-white" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
-            title="Stacked area chart"
-          >
-            <Layers className="h-3.5 w-3.5" />
-          </button>
+        <div className="flex items-center gap-2">
+          <div className="flex gap-0.5 rounded border border-[var(--color-border)] p-0.5" role="group" aria-label="Chart shows">
+            {modeButton("value", "Value", true, "The portfolio's value, including deposits and withdrawals.")}
+            {modeButton("result", "Trading result", toggle.enabled, toggle.hint)}
+          </div>
+          <div className="flex gap-0.5 rounded border border-[var(--color-border)] p-0.5">
+            <button
+              onClick={() => setStacked(false)}
+              className={`p-1 rounded transition-colors ${!stacked ? "bg-[var(--color-accent)] text-white" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
+              title="Line chart"
+            >
+              <BarChart3 className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={() => setStacked(true)}
+              className={`p-1 rounded transition-colors ${stacked ? "bg-[var(--color-accent)] text-white" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
+              title="Stacked area chart"
+            >
+              <Layers className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
       </div>
+
+      {baselineText && state !== "none" && (
+        <p className="mb-2 text-xs text-[var(--color-text-muted)]" data-testid="chart-baseline-note">
+          {baselineText}
+        </p>
+      )}
 
       {isLoading ? (
         <div className="flex items-center justify-center h-[250px] text-[var(--color-text-muted)] text-sm">
           Loading...
         </div>
-      ) : points.length === 0 ? (
+      ) : state === "none" ? (
         <div className="flex items-center justify-center h-[250px] text-[var(--color-text-muted)] text-sm">
           No history data available
+        </div>
+      ) : state === "empty" ? (
+        <div
+          className="flex items-center justify-center h-[250px] px-6 text-center text-[var(--color-text-muted)] text-sm"
+          data-testid="chart-empty"
+        >
+          {emptyMessage(activeData)}
         </div>
       ) : (
         <>
@@ -653,10 +762,23 @@ function PortfolioEvolution({ server, range, convertFromUsd, currencySymbol }: {
                   fill="var(--color-text-muted)"
                   fontSize="10"
                 >
-                  {formatCurrency(val, currencySymbol)}
+                  {formatValue(val)}
                 </text>
               </g>
             ))}
+
+            {/* The result starts at zero: that line is the reference */}
+            {effectiveMode === "result" && (
+              <line
+                x1={PAD.left}
+                x2={W - PAD.right}
+                y1={toY(0)}
+                y2={toY(0)}
+                stroke="var(--color-text-muted)"
+                strokeWidth="1"
+                data-testid="chart-zero-line"
+              />
+            )}
 
             {/* X labels */}
             {xTicks.map((ts, i) => (
@@ -672,6 +794,27 @@ function PortfolioEvolution({ server, range, convertFromUsd, currencySymbol }: {
               </text>
             ))}
 
+            {/* Stretches where an account had no reading: the line is cut, not filled */}
+            {gaps.map((gap, i) => {
+              const from = Math.max(gap.from_ts, minTs);
+              const to = Math.min(gap.to_ts, minTs + tsRange);
+              if (to <= from) return null;
+              return (
+                <rect
+                  key={`gap-${i}`}
+                  data-testid="chart-gap"
+                  x={toX(from)}
+                  y={PAD.top}
+                  width={Math.max(toX(to) - toX(from), 1)}
+                  height={plotH}
+                  fill="var(--color-text-muted)"
+                  opacity="0.1"
+                >
+                  <title>{gapLabel(gap, formatNoteTime)}</title>
+                </rect>
+              );
+            })}
+
             {stacked ? (
               <>
                 {/* Stacked area fills (render bottom-to-top, so reverse for correct layering) */}
@@ -682,9 +825,12 @@ function PortfolioEvolution({ server, range, convertFromUsd, currencySymbol }: {
             ) : (
               <>
                 {/* Area fill */}
-                <path d={areaPath} fill="url(#areaGrad)" />
+                {areaPath && <path d={areaPath} fill="url(#areaGrad)" />}
                 {/* Line */}
-                <path d={linePath} fill="none" stroke="var(--color-accent)" strokeWidth="2" />
+                <path d={linePath} fill="none" stroke="var(--color-accent)" strokeWidth="2" data-testid="chart-line" />
+                {dots.map((p) => (
+                  <circle key={p.timestamp} cx={toX(p.timestamp)} cy={toY(p.value)} r="2.5" fill="var(--color-accent)" />
+                ))}
               </>
             )}
 
@@ -703,7 +849,7 @@ function PortfolioEvolution({ server, range, convertFromUsd, currencySymbol }: {
                 {!stacked && (
                   <circle
                     cx={hover.x}
-                    cy={toY(hover.point.total_usd)}
+                    cy={toY(hover.point.value)}
                     r="4"
                     fill="var(--color-accent)"
                     stroke="var(--color-surface)"
@@ -738,7 +884,7 @@ function PortfolioEvolution({ server, range, convertFromUsd, currencySymbol }: {
                     </>
                   ) : (
                     <text x="8" y="32" fill="var(--color-text)" fontSize="12" fontWeight="bold">
-                      {formatCurrency(hover.point.total_usd, currencySymbol)}
+                      {formatValue(hover.point.value)}
                     </text>
                   )}
                 </g>
@@ -753,6 +899,38 @@ function PortfolioEvolution({ server, range, convertFromUsd, currencySymbol }: {
               height={plotH}
               fill="transparent"
             />
+
+            {/* Deposit / withdrawal markers (above the overlay so they can be hovered) */}
+            {markers.map(({ flow, anchor }, i) => {
+              const x = toX(anchor.ts);
+              const y = toY(anchor.value);
+              const deposit = !String(flow.amount).trim().startsWith("-");
+              const colour = deposit ? "var(--color-green)" : "var(--color-red)";
+              const label = flowLabel(flow);
+              const shape = deposit
+                ? `${x},${y - 6} ${x - 4.5},${y + 3} ${x + 4.5},${y + 3}`
+                : `${x},${y + 6} ${x - 4.5},${y - 3} ${x + 4.5},${y - 3}`;
+              return (
+                <g
+                  key={`flow-${i}`}
+                  data-testid="chart-flow-marker"
+                  data-label={label}
+                  onMouseEnter={() => setHoverFlow({ x, y, label })}
+                  onMouseLeave={() => setHoverFlow(null)}
+                >
+                  <title>{label}</title>
+                  <polygon points={shape} fill={colour} stroke="var(--color-surface)" strokeWidth="1" />
+                </g>
+              );
+            })}
+            {hoverFlow && (
+              <g transform={`translate(${Math.min(Math.max(hoverFlow.x - 90, PAD.left), W - PAD.right - 180)}, ${Math.max(hoverFlow.y - 34, 2)})`} pointerEvents="none">
+                <rect width="180" height="22" rx="4" fill="var(--color-surface)" stroke="var(--color-border)" />
+                <text x="6" y="15" fill="var(--color-text)" fontSize="10">
+                  {hoverFlow.label}
+                </text>
+              </g>
+            )}
           </svg>
 
           {/* Legend for stacked mode */}
@@ -769,6 +947,23 @@ function PortfolioEvolution({ server, range, convertFromUsd, currencySymbol }: {
               ))}
             </div>
           )}
+
+          {/* What the chart leaves out, and why */}
+          <ul className="mt-2 space-y-0.5 text-[11px] text-[var(--color-text-muted)]" data-testid="chart-footnotes">
+            {gaps.map((gap, i) => (
+              <li key={`gap-${i}`}>{gapLabel(gap, formatNoteTime)} (the line is cut, nothing is filled in).</li>
+            ))}
+            {pendingFlows > 0 && (
+              <li>
+                {pendingFlows === 1
+                  ? "1 unconfirmed deposit or withdrawal in this window is not marked until confirmed."
+                  : `${pendingFlows} unconfirmed deposits or withdrawals in this window are not marked until confirmed.`}
+              </li>
+            )}
+            {activeData?.flows_note && <li>{activeData.flows_note}</li>}
+            {effectiveMode === "result" && activeData?.result_note && <li>{activeData.result_note}</li>}
+            {pendingText && <li>{pendingText}</li>}
+          </ul>
         </>
       )}
     </div>

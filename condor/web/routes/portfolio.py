@@ -7,7 +7,12 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from condor import native_accounts, portfolio_change, portfolio_history
+from condor import (
+    native_accounts,
+    portfolio_change,
+    portfolio_chart,
+    portfolio_history,
+)
 from condor.fetchers.portfolio import (
     PORTFOLIO_HISTORY_RANGES,
     UNIFIED_ACCOUNT_NOTE,
@@ -263,12 +268,33 @@ async def get_portfolio_history(
         logger.warning("Portfolio change skipped (%s)", type(error).__name__)
         change = PortfolioHistoryChange(**portfolio_change.unavailable("error"))
 
+    # The series the chart draws: one baseline where every account is recording, gaps
+    # left as breaks, deposit markers and the net-of-flows result. Additive: a failure
+    # leaves ``chart_points`` empty and the page falls back to ``points``.
+    chart: dict[str, Any] = {}
+    try:
+        chart = portfolio_chart.build(
+            user.id,
+            hummingbot_points,
+            portfolio_history.series(
+                user.id, since=since - portfolio_chart.EDGE_MARGIN_SEC
+            ),
+            since,
+            now,
+            interval_seconds,
+            skip=skip,
+            connected=portfolio_chart.connected_sources(user.id),
+        )
+    except Exception as error:  # noqa: BLE001 - never lose the chart over its notes
+        logger.warning("Portfolio chart series skipped (%s)", type(error).__name__)
+
     return PortfolioHistoryResponse(
         server=name,
         points=points,
         interval=interval,
         top_tokens=top_tokens,
         change=change,
+        **chart,
     )
 
 

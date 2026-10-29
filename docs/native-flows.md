@@ -175,6 +175,46 @@ flows inside the window between the two equity readings, so an old flow is harml
   figure stays honest: equity fell by the cost, and the cost is recorded as not
   trading.
 
+## The Portfolio Evolution chart
+
+`GET /servers/{name}/portfolio/history` keeps `points`, `interval`, `top_tokens` and
+`change` as they were (`points` is still the merged series that steps up when an account
+starts being recorded or money is deposited). It adds the fields the chart draws
+(`condor/portfolio_chart.py`), so the line no longer reads those steps as performance.
+
+* **Baseline.** `baseline_ts` is the first moment every included source has a recorded
+  reading: the first-ever reading of each native account, and the first Hummingbot point
+  (a Hummingbot history that only trails the window start by its cache age counts as
+  there from the start). `chart_points` start at `max(window start, baseline_ts)`. When
+  the window begins before the baseline the response carries `series_start_reason:
+  "all_accounts_recording_from"`, and `sources` lists every account with its
+  `first_ts` and a `status`: `recording`, `pending` (connected, no reading yet: reported,
+  never waited for) or `disconnected` (left out). Kraken xStocks is left out when
+  Hummingbot's own `kraken` connector is present, the same rule as the portfolio total, so
+  the same account is never added twice.
+* **Gaps.** A source with no reading within two sampling intervals of a point (10 minutes
+  for Condor's 5-minute recorder, two intervals of the range for Hummingbot, at least 15
+  minutes; a Hummingbot reading of 0 counts as no reading) makes that point's total
+  `null`. The page cuts the line there. Nothing is carried forward. `gaps` lists each
+  stretch as `{source, from_ts, to_ts}`, including a source that has stopped recording.
+* **Markers.** `flows` are the confirmed flows of the included native venues inside the
+  returned window (`ts`, `venue`, `currency`, signed `amount`, `usd_value_at_time`,
+  `source`), drawn as triangles on the line. `pending_flows` counts the unconfirmed ones,
+  which are not drawn. Hummingbot-connected accounts have no flow data, so `flows_note`
+  says a deposit there is not marked.
+* **Trading result.** `result_points` (same timestamps as `chart_points`) is the value
+  minus the value at the chart start minus the net confirmed flows since then, each
+  account netted over the span between its own readings. `null` buckets stay `null`. It is
+  `null` as a whole, with `result_reason` and `result_note`, when a native venue's flows
+  are untracked, unreadable or unpriced, or an unconfirmed flow sits in the window (the
+  rules of the `change` figure). Hummingbot-connected accounts are included without
+  netting and `result_not_netted` names them; a deposit there reads as result.
+
+The page offers *Value | Trading result* (default Value; Result is disabled with the
+reason when `result_points` is `null`), a note "Showing from ..., when all N accounts were
+recording", and an empty state instead of a line for a single point or when no common
+reading exists yet.
+
 ## Not done / limits
 
 * No venue endpoint was exercised live; see the verification notes above.
