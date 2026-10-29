@@ -130,6 +130,15 @@ class PortfolioHistoryGap(BaseModel):
     to_ts: float
 
 
+class PortfolioAnomaly(BaseModel):
+    """A Hummingbot reading left out of the chart as an outlier (never smoothed)."""
+
+    source: str
+    ts: float
+    value: float
+    neighbour_value: float
+
+
 class PortfolioFlowMarker(BaseModel):
     ts: float
     venue: str
@@ -159,6 +168,7 @@ class PortfolioHistoryResponse(BaseModel):
     series_start_reason: str | None = None
     sources: list[PortfolioHistorySource] = []
     gaps: list[PortfolioHistoryGap] = []
+    anomalies: list[PortfolioAnomaly] = []
     flows: list[PortfolioFlowMarker] = []
     pending_flows: int = 0
     flows_note: str | None = None

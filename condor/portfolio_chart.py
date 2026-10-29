@@ -25,6 +25,7 @@ or filled, and nothing touches an exchange.
 from __future__ import annotations
 
 import bisect
+import copy
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Sequence
@@ -42,6 +43,13 @@ MIN_CADENCE_SEC = portfolio_history.SAMPLE_EVERY_SEC
 #: How far before the window the native readings are fetched, so a point at the
 #: window start can see the reading just before it.
 EDGE_MARGIN_SEC = TOLERANCE_INTERVALS * portfolio_history.SAMPLE_EVERY_SEC
+
+#: A single Hummingbot reading that differs from both neighbours by more than
+#: ``max(OUTLIER_REL * neighbour, OUTLIER_MIN_USD)`` while the neighbours agree with each
+#: other within ``AGREE_REL`` is a bad row, not a move: it is left out and reported.
+OUTLIER_REL = 0.10
+OUTLIER_MIN_USD = 2.0
+AGREE_REL = 0.02
 
 START_REASON = "all_accounts_recording_from"
 FLOW_LIMIT = 2000
@@ -103,6 +111,82 @@ def _cadence(interval_seconds: int) -> float:
     return float(max(int(interval_seconds), MIN_CADENCE_SEC))
 
 
+def native_kraken_preferred(
+    native: Mapping[str, Sequence[tuple[float, float]]],
+    now: float,
+    connected: set[str] | None = None,
+) -> bool:
+    """Whether the native Kraken xStocks readings stand in for Hummingbot's ``kraken``.
+
+    Both describe the same account. Condor's own recorder has a reading every five
+    minutes, while Hummingbot's history for it has had real gaps and a bad row, so the
+    native source is preferred whenever it has readings (and is still being recorded).
+    """
+    rows = native.get(portfolio_history.KRAKEN) or ()
+    if not rows:
+        return False
+    if connected is None or portfolio_history.KRAKEN in connected:
+        return True
+    return (
+        now - float(rows[-1][0])
+        <= TOLERANCE_INTERVALS * portfolio_history.SAMPLE_EVERY_SEC
+    )
+
+
+def without_part(
+    points: Sequence[Any], parts: Mapping[float, float], from_ts: float = 0.0
+) -> list[Any]:
+    """Copies of Hummingbot ``points`` with one connector's value taken out of the total.
+
+    ``parts`` maps a point's timestamp to that connector's USD value in it. Only points
+    at or after ``from_ts`` are changed. Nothing is estimated: the total is the sum of
+    the other connectors as Hummingbot reported them.
+    """
+    out = []
+    for p in points:
+        part = parts.get(float(p.timestamp), 0.0)
+        if part and float(p.timestamp) >= from_ts:
+            p = copy.copy(p)
+            p.total_usd = max(float(p.total_usd) - part, 0.0)
+        out.append(p)
+    return out
+
+
+def exclude_outliers(
+    rows: Sequence[tuple[float, float]], tolerance: float
+) -> tuple[list[tuple[float, float]], list[dict[str, Any]]]:
+    """Drop single rows that jump away from both neighbours and straight back.
+
+    A row is dropped when it differs from the row before *and* the row after by more
+    than ``max(10%, 2 USD)`` while those two agree within 2%: a real move does not
+    undo itself in one reading, and a deposit leaves the neighbours disagreeing. Each
+    drop is returned as an anomaly (never smoothed away silently, never replaced by an
+    interpolated value). Neighbours more than ``tolerance`` away are not neighbours.
+    """
+    kept: list[tuple[float, float]] = []
+    anomalies: list[dict[str, Any]] = []
+    for i, (ts, value) in enumerate(rows):
+        if 0 < i < len(rows) - 1:
+            (p_ts, prev), (n_ts, nxt) = rows[i - 1], rows[i + 1]
+            near = ts - p_ts <= tolerance and n_ts - ts <= tolerance
+            jumps = abs(value - prev) > max(
+                OUTLIER_REL * prev, OUTLIER_MIN_USD
+            ) and abs(value - nxt) > max(OUTLIER_REL * nxt, OUTLIER_MIN_USD)
+            agree = abs(prev - nxt) <= AGREE_REL * max(prev, nxt)
+            if near and jumps and agree:
+                anomalies.append(
+                    {
+                        "source": HUMMINGBOT,
+                        "ts": ts,
+                        "value": value,
+                        "neighbour_value": (prev + nxt) / 2,
+                    }
+                )
+                continue
+        kept.append((ts, value))
+    return kept, anomalies
+
+
 def _sources(
     user_id: int,
     hummingbot_points: Sequence[Any],
@@ -112,25 +196,28 @@ def _sources(
     interval_seconds: int,
     skip: Iterable[str],
     connected: set[str] | None,
-) -> tuple[list[_Source], list[dict[str, Any]], dict[str, float]]:
-    """The sources in the series, the full source report and each one's baseline time."""
+) -> tuple[list[_Source], list[dict[str, Any]], dict[str, float], list[dict[str, Any]]]:
+    """The sources in the series, the source report, each one's baseline time and the
+    Hummingbot readings left out as outliers."""
     excluded = set(skip)
     labels = {v.label: v for v in native_venues.account_venues()}
     native_tolerance = TOLERANCE_INTERVALS * float(portfolio_history.SAMPLE_EVERY_SEC)
     included: list[_Source] = []
     report: list[dict[str, Any]] = []
     effective_first: dict[str, float] = {}
+    anomalies: list[dict[str, Any]] = []
 
     hb_rows = sorted(
         (float(p.timestamp), float(p.total_usd))
         for p in hummingbot_points
         if float(p.total_usd) > 0  # a reading of nothing is no reading
     )
+    hb_tol = max(
+        TOLERANCE_INTERVALS * _cadence(interval_seconds),
+        float(portfolio_change.MIN_START_TOLERANCE_SEC),
+    )
+    hb_rows, anomalies = exclude_outliers(hb_rows, hb_tol)
     if hb_rows:
-        hb_tol = max(
-            TOLERANCE_INTERVALS * _cadence(interval_seconds),
-            float(portfolio_change.MIN_START_TOLERANCE_SEC),
-        )
         hb = _Source(HUMMINGBOT, None, hb_rows, hb_rows[0][0], "recording", hb_tol)
         included.append(hb)
         report.append(
@@ -170,7 +257,7 @@ def _sources(
         included.append(src)
         report.append({"source": name, "first_ts": first_ts, "status": "recording"})
         effective_first[name] = first_ts
-    return included, report, effective_first
+    return included, report, effective_first, anomalies
 
 
 def _gaps(sources: Sequence[_Source], start: float, now: float) -> list[dict[str, Any]]:
@@ -257,7 +344,7 @@ def build(
     ``skip`` names sources Hummingbot already counts (Kraken is never counted twice);
     ``connected`` is :func:`connected_sources`, or ``None`` to treat all as connected.
     """
-    sources, report, effective_first = _sources(
+    sources, report, effective_first, anomalies = _sources(
         user_id,
         hummingbot_points,
         native,
@@ -274,6 +361,7 @@ def build(
         "series_start_reason": None,
         "sources": report,
         "gaps": [],
+        "anomalies": [],
         "flows": [],
         "pending_flows": 0,
         "flows_note": None,
@@ -293,7 +381,13 @@ def build(
         out["series_start_reason"] = START_REASON
 
     gaps = _gaps(sources, start, now)
-    stamps = _stamps(sources, start, interval_seconds, gaps, now)
+    # Readings left out as outliers stay in the series as breaks: the line is cut at
+    # them and they are reported, never smoothed over or replaced by a made-up value.
+    bad = [a for a in anomalies if a["ts"] >= start]
+    forced_null = {a["ts"] for a in bad}
+    stamps = sorted(
+        {*_stamps(sources, start, interval_seconds, gaps, now), *forced_null}
+    )
 
     hb = next((s for s in sources if s.key is None), None)
     hb_tokens = {float(p.timestamp): dict(p.tokens or {}) for p in hummingbot_points}
@@ -301,7 +395,7 @@ def build(
     readings: list[dict[str, tuple[float, float]] | None] = []
     for ts in stamps:
         got = {s.name: s.reading(ts) for s in sources}
-        if any(r is None for r in got.values()):
+        if ts in forced_null or any(r is None for r in got.values()):
             points.append({"timestamp": ts, "total_usd": None, "tokens": {}})
             readings.append(None)
             continue
@@ -327,6 +421,7 @@ def build(
     points, readings = points[lo:hi], readings[lo:hi]
     out["chart_points"] = points
     out["gaps"] = gaps
+    out["anomalies"] = bad
 
     if not points:
         out["result_reason"] = "no_history"

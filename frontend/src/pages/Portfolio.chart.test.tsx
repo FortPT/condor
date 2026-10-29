@@ -222,6 +222,33 @@ describe("Portfolio Evolution chart", () => {
     expect(q("chart-footnotes")!.textContent).toContain("nothing is filled in");
   });
 
+  it("reports a reading left out as an outlier and cuts the line there", async () => {
+    getPortfolioHistory.mockResolvedValue({
+      ...BASE,
+      chart_points: [
+        { timestamp: T0 + 2 * H, total_usd: 55 },
+        { timestamp: T0 + 3 * H, total_usd: 55 },
+        { timestamp: T0 + 3.5 * H, total_usd: null },
+        { timestamp: T0 + 4 * H, total_usd: 55 },
+        { timestamp: T0 + 5 * H, total_usd: 55 },
+      ],
+      anomalies: [{ source: "Hummingbot", ts: T0 + 3.5 * H, value: 72.19, neighbour_value: 55 }],
+      flows: [],
+    });
+    await render();
+    expect(qa("chart-anomaly")).toHaveLength(1);
+    expect(qa("chart-anomaly")[0].textContent).toContain("one reading ($72.19)");
+    expect(q("chart-line")!.getAttribute("d")!.match(/M /g)).toHaveLength(2);
+  });
+
+  it("shows no gap band or gap footnote when nothing is missing", async () => {
+    getPortfolioHistory.mockResolvedValue({ ...BASE, gaps: [], anomalies: [] });
+    await render();
+    expect(qa("chart-gap")).toHaveLength(0);
+    expect(qa("chart-anomaly")).toHaveLength(0);
+    expect(q("chart-footnotes")!.textContent).not.toContain("no readings");
+  });
+
   it("shows an empty state instead of a line for a single point", async () => {
     getPortfolioHistory.mockResolvedValue({
       ...BASE,

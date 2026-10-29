@@ -32,6 +32,7 @@ import {
 import { formatCurrency, formatCurrencyPnl, formatCurrencyVolume, isExecutorActive } from "@/lib/formatters";
 import { historyChange } from "@/lib/portfolio-change";
 import {
+  anomalyLabel,
   baselineNote,
   chartState,
   emptyMessage,
@@ -503,6 +504,7 @@ function PortfolioEvolution({ server, range, convertFromUsd, currencySymbol }: {
   const pendingText = pendingNote(activeData);
   const flows = !stacked ? (activeData?.flows ?? []) : [];
   const gaps = activeData?.gaps ?? [];
+  const anomalies = activeData?.anomalies ?? [];
 
   // Convert all values from USDT to display currency (a null stays a break)
   const points = useMemo(() => {
@@ -952,6 +954,11 @@ function PortfolioEvolution({ server, range, convertFromUsd, currencySymbol }: {
           <ul className="mt-2 space-y-0.5 text-[11px] text-[var(--color-text-muted)]" data-testid="chart-footnotes">
             {gaps.map((gap, i) => (
               <li key={`gap-${i}`}>{gapLabel(gap, formatNoteTime)} (the line is cut, nothing is filled in).</li>
+            ))}
+            {anomalies.map((a, i) => (
+              <li key={`anomaly-${i}`} data-testid="chart-anomaly">
+                {anomalyLabel(a, formatNoteTime, (usd) => formatCurrency(convertFromUsd(usd), currencySymbol))}
+              </li>
             ))}
             {pendingFlows > 0 && (
               <li>
