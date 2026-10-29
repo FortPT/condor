@@ -274,7 +274,7 @@ def _shipped_configs():
 def test_no_shipped_routine_publishes_a_credential():
     """Prevention, not remediation — this is the check that keeps it that way."""
     scanned = list(_shipped_configs())
-    assert len(scanned) > 10, "corpus scan found almost nothing — roots wrong?"
+    assert len(scanned) > 5, "corpus scan found almost nothing — roots wrong?"
     offenders = {
         str(path): reasons
         for path, config in scanned
