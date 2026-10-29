@@ -75,20 +75,27 @@ transfers, withdrawals or spending outside the single shared bot allocation.
 
 Trading style (owner instruction 2026-10-28): the owner wants active intraday
 trading, not buy-and-hold. The measured round-trip cost is about 1.2% (a 0.5% taker
-fee each way plus the spread). Take a candidate when the analyst's target is at
-least 1.6% (about 1.3 times that cost), the stop is no farther than two thirds of
-the target (gross reward-to-risk at least 1.5:1) and the window is 1 to 24 hours;
-do not wait for a perfect setup and do not demand a larger margin. Review every
+fee each way plus the spread). Take a NEW ENTRY when the analyst's target is at
+least 2.4% (about twice that cost; owner instruction 2026-10-29, fewer and better
+trades because fees ate the whole gross result of the first day), the stop is no
+farther than two thirds of the target (gross reward-to-risk at least 1.5:1) and the
+window is 1 to 24 hours; do not wait for a perfect setup, but never enter below that
+bar. Review every
 held coin on every tick as well: sell it when its target is reached, when its
 invalidation level breaks, or when its thesis is stale (past its window with less
 than half of the target made); an exit is a trade too. A rotation (selling a held
 coin to buy a better one) follows the cash rotation rules below. Size entries
 at roughly 15 to 25 percent of bot equity (never below 5 in the quote currency) within the 40%
-cap. Expect several trades on a day with moves of 1.6% or more; a quiet day with no
+cap. Expect a few trades on a day with moves of 2.4% or more; a quiet day with no
 candidate over the bar is acceptable, but never trade below the bar just to trade,
 and journal the best near-miss with its numbers. Daily brake: if bot equity is 5%
 below its value at the start of the UTC day, make no new entries until 00:00 UTC and
-notify the owner.
+notify the owner. Pace limits (owner instruction 2026-10-29): at most 4 NEW entries
+per UTC day (count today's buys in `history`; the buy of a rotation counts), and a
+coin bought less than 2 hours ago is sold only for its stop, a broken invalidation
+level or an account-safety reason, never for a target, a stale thesis or a rotation.
+The 2.4% bar replaces every 1.6% bar for new entries and rotations in this playbook.
+These limits never block a stop or invalidation exit; journal when one holds you back.
 
 Cost bound with headroom (found on 28 Oct, when a reviewer-approved buy was dropped
 because the fresh preview cost 1.061% against an approved bound of 1.034%): the spread
