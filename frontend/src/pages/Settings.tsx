@@ -30,6 +30,7 @@ import { RevolutX } from "@/components/settings/RevolutX";
 import { ServersSettings } from "@/components/settings/ServersSettings";
 import { SharingSettings } from "@/components/settings/SharingSettings";
 import { TelemetrySettings } from "@/components/settings/TelemetrySettings";
+import { Trading212 } from "@/components/settings/Trading212";
 import { UpdatesSettings } from "@/components/settings/UpdatesSettings";
 import { VoiceSettings } from "@/components/settings/VoiceSettings";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
@@ -40,6 +41,7 @@ type TabKey =
   | "crypto-exchange"
   | "kraken-xstocks"
   | "revolut-x"
+  | "trading212"
   | "agents"
   | "api"
   | "gateway"
@@ -93,6 +95,7 @@ function buildGroups(server: string | null, isAdmin: boolean): TabGroup[] {
         { key: "crypto-exchange", label: "Crypto.com Exchange", icon: KeyRound },
         { key: "kraken-xstocks", label: "Kraken xStocks", icon: TrendingUp },
         { key: "revolut-x", label: "Revolut X", icon: Bitcoin },
+        { key: "trading212", label: "Trading 212", icon: TrendingUp },
         { key: "notifications", label: "Notifications", icon: Bell },
         { key: "privacy", label: "Privacy", icon: Shield },
       ],
@@ -217,6 +220,7 @@ export function Settings() {
           {tab === "crypto-exchange" && <CryptoComExchange settings />}
           {tab === "kraken-xstocks" && <KrakenXStocks />}
           {tab === "revolut-x" && <RevolutX />}
+          {tab === "trading212" && <Trading212 />}
           {tab === "agents" && <AgentsSettings />}
           {tab === "api" && <ApiServerSettings />}
           {tab === "gateway" && <GatewaySettings />}

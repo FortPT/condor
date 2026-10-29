@@ -15,6 +15,12 @@ None of these shapes has been exercised against a live account yet:
   fetched as text. The status code meanings are the ones ccxt maps.
 * Kraken ``/0/private/Ledgers`` with ``type=deposit`` / ``type=withdrawal``: the
   endpoint is long established; the key needs only ``Data - Query ledger entries``.
+* Trading 212 ``GET /api/v0/equity/history/transactions``: the page lists the item
+  fields (``type`` DEPOSIT / WITHDRAW / FEE / TRANSFER / interest, ``amount``,
+  ``currency``, ``dateTime``, ``reference``) and cursor pagination (``nextPagePath``),
+  but not the SIGN of a withdrawal's amount, nor whether a card deposit's fee is a
+  separate row; both are handled defensively (the sign follows the type). Needs the
+  ``history:transactions`` scope; a 403 degrades to "unavailable".
 * Revolut X ``GET /1.0/transactions``: listed in the OpenAPI spec with types
   ``receive`` / ``send``, but the spec does not say whether a fiat top-up from the
   owner's Revolut account appears there. The ``revolut`` and ``external_bank_account``
@@ -26,6 +32,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -306,10 +313,88 @@ async def fetch_revolut(service, user_id: int, since: float, now: float) -> Fetc
     return out
 
 
+# ── Trading 212 ──
+
+
+def _iso_to_s(value) -> float | None:
+    """Epoch seconds of an ISO 8601 timestamp (``Z`` or an offset), or None."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        moment = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.timestamp()
+
+
+def parse_trading212_transactions(data: Any) -> list[RawFlow]:
+    """``DEPOSIT`` and ``WITHDRAW`` rows; fees, interest and transfers are not external flows.
+
+    The sign comes from the type, whatever sign the amount carries.
+    """
+    rows = data.get("items") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        raise FetchUnavailable("unexpected response (no items list)")
+    found = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        kind = row.get("type")
+        amount = _decimal(row.get("amount"))
+        currency = str(row.get("currency") or "").upper()
+        ts = _iso_to_s(row.get("dateTime"))
+        ident = row.get("reference")
+        if (
+            kind not in ("DEPOSIT", "WITHDRAW")
+            or not amount
+            or not currency
+            or ts is None
+            or not ident
+        ):
+            continue
+        found.append(
+            RawFlow(
+                external_id=f"transaction:{ident}",
+                ts=ts,
+                currency=currency,
+                amount=abs(amount) if kind == "DEPOSIT" else -abs(amount),
+                status="confirmed",
+                note=f"Trading 212 {kind.lower()}",
+            )
+        )
+    return found
+
+
+async def fetch_trading212(service, user_id: int, since: float, now: float) -> Fetched:
+    out = Fetched([], [])
+    try:
+        start = datetime.fromtimestamp(since, timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        path, query = "/equity/history/transactions", {"limit": 50, "time": start}
+        for _ in range(MAX_PAGES):
+            data = await service.private(user_id, "GET", path, query)
+            out.flows += parse_trading212_transactions(data)
+            more = data.get("nextPagePath") if isinstance(data, dict) else None
+            if not more or not data.get("items"):
+                break
+            if not str(more).startswith("/api/v0/equity/history/transactions"):
+                raise FetchUnavailable("unexpected next page path")
+            path, query = more, None
+        else:
+            out.problems.append("transactions: more pages than were read")
+    except Exception as error:  # noqa: BLE001
+        out.problems.append(f"transactions: {reason_of(error)}")
+    return out
+
+
 FETCHERS = {
     "crypto_com_exchange": fetch_crypto_com,
     "kraken_xstocks": fetch_kraken,
     "revolut_x": fetch_revolut,
+    "trading212": fetch_trading212,
 }
 
 

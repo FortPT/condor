@@ -46,7 +46,12 @@ LEVERAGE_TOOL = "set_account_position_mode_and_leverage"
 #: The native live-order tools. Only ``order`` moves money (the rest read, or log a
 #: scorecard call); a configured loop may place it without a prompt, an attended
 #: session confirms it.
-LIVE_ORDER_TOOLS = {"crypto_com_exchange", "kraken_xstocks", "revolut_x"}
+LIVE_ORDER_TOOLS = {
+    "crypto_com_exchange",
+    "kraken_xstocks",
+    "revolut_x",
+    "trading212",
+}
 
 # Tools that require user confirmation before execution
 DANGEROUS_TOOLS = {
@@ -600,6 +605,7 @@ def is_mutating_tool_call(tool_call: dict[str, Any]) -> bool:
                 "accounts",
                 "history",
                 "coins",
+                "stocks",
                 "candles",
                 "book",
                 "preview",

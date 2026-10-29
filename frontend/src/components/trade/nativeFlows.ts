@@ -42,7 +42,7 @@ export type SyncResponse = {
 export const FLOWS_URL = "/api/v1/native-flows";
 export const flowsQueryKey = (venue: string) => ["native-flows", venue] as const;
 
-/** The server's venue key for a Trade-page venue key (`revolut-x` -> `revolut_x`). */
+/** The server's venue key for a Trade-page venue key (`revolut-x` -> `revolut_x`; `trading212` stays as it is). */
 export const flowVenueKey = (tradeKey: string) => tradeKey.replace(/-/g, "_");
 
 export type FlowKind = "deposit" | "withdrawal";

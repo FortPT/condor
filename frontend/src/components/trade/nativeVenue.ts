@@ -1,11 +1,11 @@
-/** Configuration and pure helpers for the read-only Kraken xStocks and Revolut X Trade panels. */
+/** Configuration and pure helpers for the read-only Kraken xStocks, Revolut X and Trading 212 Trade panels. */
 import { useQuery } from "@tanstack/react-query";
 
 import type { ExchangeLedger } from "@/hooks/useCredentials";
 import { apiFetch } from "@/lib/api";
 import { num } from "./tradeFormat";
 
-export type NativeVenueKey = "kraken-xstocks" | "revolut-x";
+export type NativeVenueKey = "kraken-xstocks" | "revolut-x" | "trading212";
 
 export type NativeVenue = {
   key: NativeVenueKey;
@@ -23,7 +23,21 @@ export type NativeVenue = {
   changeLabel: string;
   volumeKey: string;
   volumeLabel: string;
+  /** The route under `base` that lists the markets (`/coins` or `/stocks`). */
+  marketsPath: "coins" | "stocks";
+  /** The currency the market rows are priced in; it differs from `quote` when they are only a reference. */
+  priceQuote: string;
+  /** Set when the market rows are a REFERENCE feed, not the venue's own quotes: who supplies them. */
+  referenceLabel?: string;
+  /** Which field names the venue's `/history` rows use. */
+  historyShape: "revolut" | "kraken";
+  /** The ledger is valued by the venue's own `/valuation`, read on load, not from the market rows. */
+  autoValuation: boolean;
 };
+
+/** Said above the markets table of a venue whose rows are not its own quotes. */
+export const REFERENCE_NOTE =
+  "Reference prices in USD from Kraken xStocks public data (a tokenized copy of the stock), not Trading 212 quotes; Trading 212 has no quote endpoint. Orders fill at Trading 212's own price.";
 
 export const NATIVE_VENUES: Record<NativeVenueKey, NativeVenue> = {
   "kraken-xstocks": {
@@ -37,6 +51,10 @@ export const NATIVE_VENUES: Record<NativeVenueKey, NativeVenue> = {
     changeLabel: "Since open",
     volumeKey: "volume_24h_usd",
     volumeLabel: "24h volume",
+    marketsPath: "coins",
+    priceQuote: "USD",
+    historyShape: "kraken",
+    autoValuation: false,
   },
   "revolut-x": {
     key: "revolut-x",
@@ -49,11 +67,32 @@ export const NATIVE_VENUES: Record<NativeVenueKey, NativeVenue> = {
     changeLabel: "24h",
     volumeKey: "volume_24h_eur",
     volumeLabel: "24h volume",
+    marketsPath: "coins",
+    priceQuote: "EUR",
+    historyShape: "revolut",
+    autoValuation: false,
+  },
+  trading212: {
+    key: "trading212",
+    title: "Trading 212",
+    base: "/api/v1/trading212",
+    quote: "EUR",
+    noun: "stocks",
+    listKey: "stocks",
+    changeKey: "change_since_open_pct",
+    changeLabel: "Since open",
+    volumeKey: "volume_24h_usd",
+    volumeLabel: "24h volume",
+    marketsPath: "stocks",
+    priceQuote: "USD",
+    referenceLabel: "Kraken xStocks reference",
+    historyShape: "revolut",
+    autoValuation: true,
   },
 };
 
 export const isNativeVenueKey = (value: string | null): value is NativeVenueKey =>
-  value === "kraken-xstocks" || value === "revolut-x";
+  value === "kraken-xstocks" || value === "revolut-x" || value === "trading212";
 
 /** What both native services answer on `/status` (a subset of their own status types). */
 export type NativeStatus = {
@@ -122,11 +161,11 @@ export type HistoryRow = {
   fee: string;
 };
 
-/** The final orders of `/history`, in one shape (Revolut X and Kraken name their fields differently). */
+/** The final orders of `/history`, in one shape (Revolut X and Kraken name their fields differently; Trading 212 follows Revolut X). */
 export function historyOf(venue: NativeVenue, payload: unknown): HistoryRow[] {
   if (!Array.isArray(payload)) return [];
   return payload.filter(isRecord).map((row, index) => {
-    const revolut = venue.key === "revolut-x";
+    const revolut = venue.historyShape === "revolut";
     const when = num(text(revolut ? row.updated : row.closetm));
     const fee = text(row.total_fee ?? row.fee);
     const feeCurrency = text(row.fee_currency);
@@ -144,14 +183,14 @@ export function historyOf(venue: NativeVenue, payload: unknown): HistoryRow[] {
   }).sort((a, b) => (b.time ?? 0) - (a.time ?? 0)).slice(0, 10);
 }
 
-export type AccountRow = { currency: string; balance: string; available: string };
+export type AccountRow = { currency: string; balance: string; available: string; value_eur?: string };
 
 export function accountsOf(payload: unknown): AccountRow[] {
   const list = isRecord(payload) ? payload.accounts : undefined;
   if (!Array.isArray(list)) return [];
   return list.filter(isRecord).flatMap((row) => {
     const currency = text(row.currency);
-    return currency ? [{ currency, balance: text(row.balance) ?? "0", available: text(row.available) ?? "0" }] : [];
+    return currency ? [{ currency, balance: text(row.balance) ?? "0", available: text(row.available) ?? "0", value_eur: text(row.value_eur) }] : [];
   });
 }
 
@@ -173,6 +212,13 @@ export function accountValue(venue: NativeVenue, currency: string, balance: stri
   return bid === null ? null : amount * bid;
 }
 
+/** The value of an account row: the venue's own EUR value when it gives one, else the bid-based value. */
+export function accountRowValue(venue: NativeVenue, row: AccountRow, known: Map<string, VenueRow>) {
+  if (!venue.autoValuation) return accountValue(venue, row.currency, row.balance, known);
+  // The reference rows are USD: a balance is valued only from the venue's own EUR figure.
+  return isQuoteCurrency(venue, row.currency) ? num(row.balance) : num(row.value_eur);
+}
+
 export type HoldingRow = { symbol: string; units: string; cost: number | null; value: number | null; pnl: number | null };
 
 /** The bot's positions valued at the best bid, as the Crypto.com panel does. */
@@ -191,4 +237,29 @@ export function equityOf(ledger: ExchangeLedger | undefined, rows: HoldingRow[])
   const cash = num(ledger?.cash);
   if (cash === null || rows.some((row) => row.value === null)) return null;
   return rows.reduce((sum, row) => sum + (row.value ?? 0), cash);
+}
+
+/** What `/valuation` answers for a venue that values its own ledger (positions at its own EUR prices). */
+export type ValuationPayload = {
+  equity?: string | number | null;
+  positions?: { symbol?: string; units?: string; cost_eur?: string | number | null; value_eur?: string | number | null }[];
+};
+
+/** The bot's positions at the venue's own prices; a held stock the valuation did not price shows no value. */
+export function holdingsFromValuation(ledger: ExchangeLedger | undefined, payload: unknown): HoldingRow[] {
+  const priced = new Map<string, Record<string, unknown>>();
+  const list = isRecord(payload) ? payload.positions : undefined;
+  if (Array.isArray(list)) for (const item of list) if (isRecord(item) && typeof item.symbol === "string") priced.set(item.symbol, item);
+  return Object.entries(ledger?.positions ?? {}).map(([symbol, position]) => {
+    const row = priced.get(symbol);
+    const value = num(text(row?.value_eur));
+    const cost = num(text(row?.cost_eur)) ?? num(position.cost);
+    return { symbol, units: position.units, cost, value, pnl: value !== null && cost ? (value / cost - 1) * 100 : null };
+  });
+}
+
+/** The valuation's own equity, or cash plus the priced holdings, or null when a holding has no price. */
+export function equityFromValuation(ledger: ExchangeLedger | undefined, payload: unknown, rows: HoldingRow[]): number | null {
+  const given = isRecord(payload) ? num(text(payload.equity)) : null;
+  return given !== null ? given : equityOf(ledger, rows);
 }

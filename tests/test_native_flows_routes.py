@@ -231,6 +231,7 @@ def test_sync_without_a_body_covers_every_account_venue(client, monkeypatch):
         "crypto_com_exchange",
         "kraken_xstocks",
         "revolut_x",
+        "trading212",
     }
 
 

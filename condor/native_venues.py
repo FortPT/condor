@@ -67,6 +67,16 @@ VENUES: tuple[NativeVenue, ...] = (
             "total; check the Revolut X settings and retry."
         ),
     ),
+    NativeVenue(
+        key="trading212",
+        label="Trading 212",
+        module="condor.trading212",
+        agents=("trading212_trader",),
+        unvalued_note=(
+            "Trading 212 could not be valued. Its holdings are excluded from this "
+            "total; check the Trading 212 settings and retry."
+        ),
+    ),
 )
 
 
