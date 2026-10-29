@@ -71,7 +71,7 @@ unavailable market data results in no trade.
 
 The cadence a native loop runs on is the `default_config` in its `loop.md`, and the
 repository is authoritative for it: `crypto_com_exchange_trader` / `daily_spot` and
-`revolut_x_trader` / `intraday` run every 120 s, `kraken_xstocks_trader` / `intraday` every
+`revolut_x_trader` / `intraday` run every 120 s, `trading212_trader` / `intraday` every
 300 s (all with `tick_timeout_sec: 600`). A restart on boot rebuilds the loop's config from
 those defaults overlaid with the keys someone saved in the strategy's `config.yml`; a Start
 dialog override lives only in that run's session. Turning on restart-on-boot writes just the

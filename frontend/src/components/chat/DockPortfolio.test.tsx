@@ -133,7 +133,7 @@ describe("DockPortfolio by asset", () => {
       server: "FortPT VM-08",
       total_usd: 152,
       connectors: [
-        { connector: "Kraken xStocks", total_usd: 90, balances: [bal("USD", 40), bal("TSLA", 50)] },
+        { connector: "Trading 212", total_usd: 90, balances: [bal("USD", 40), bal("TSLA", 50)] },
         { connector: "Crypto.com", total_usd: 62, balances: [bal("USD", 26), bal("HYPE", 36)] },
       ],
     });

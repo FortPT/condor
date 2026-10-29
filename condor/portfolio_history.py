@@ -1,7 +1,7 @@
 """Value history for the accounts Condor reads itself.
 
-Hummingbot records its own portfolio history, but Crypto.com, the Kraken
-xStocks account and Revolut X are read by Condor's native modules, so the dashboard's
+Hummingbot records its own portfolio history, but Crypto.com, Revolut X
+and Trading 212 are read by Condor's native modules, so the dashboard's
 Portfolio Evolution chart used to leave them out. This keeps one small value
 sample per account every few minutes (USD, whole account at the last traded
 price) so the chart route can add them. Nothing here touches money.
@@ -26,7 +26,6 @@ from condor.paths import data_dir
 log = logging.getLogger(__name__)
 
 EXCHANGE = native_venues.get("crypto_com_exchange").label
-KRAKEN = native_venues.get("kraken_xstocks").label
 REVOLUT = native_venues.get("revolut_x").label
 SOURCES = tuple(v.label for v in native_venues.account_venues())
 # What is stored in the ``source`` column when it differs from the name shown to the
@@ -268,13 +267,13 @@ def merge(points, native, interval_seconds: int, skip=(), point_type=None):
     return merged
 
 
-async def sample_user(user_id: int, exchange=None, kraken=None, **services) -> None:
+async def sample_user(user_id: int, exchange=None, **services) -> None:
     """Take one sample of each connected native account for the user.
 
-    ``exchange``/``kraken`` (and any other venue key) override that venue's
+    ``exchange`` (and any other venue key) override that venue's
     service, which tests use to run without credentials.
     """
-    overrides = {"crypto_com_exchange": exchange, "kraken_xstocks": kraken, **services}
+    overrides = {"crypto_com_exchange": exchange, **services}
     for venue in native_venues.account_venues():
         try:
             service = overrides.get(venue.key) or venue.service

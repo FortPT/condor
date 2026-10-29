@@ -48,7 +48,6 @@ LEVERAGE_TOOL = "set_account_position_mode_and_leverage"
 #: session confirms it.
 LIVE_ORDER_TOOLS = {
     "crypto_com_exchange",
-    "kraken_xstocks",
     "revolut_x",
     "trading212",
 }

@@ -21,7 +21,6 @@ from condor import portfolio_history as ph
 
 T0 = 1_790_000_000
 EXCHANGE = native_venues.get("crypto_com_exchange")
-KRAKEN = native_venues.get("kraken_xstocks")
 REVOLUT = native_venues.get("revolut_x")
 USER = 1
 
@@ -62,7 +61,7 @@ def test_an_api_row_is_idempotent_by_venue_and_external_id():
     assert again["id"] == first["id"] and again["amount"] == "5"
     assert len(nf.list_flows(USER, "crypto_com_exchange")) == 1
     # The same id on another venue is another flow.
-    _, other = add("kraken_xstocks", source="api", external_id="deposit:1")
+    _, other = add("revolut_x", source="api", external_id="deposit:1")
     assert other
 
 
@@ -312,123 +311,6 @@ def test_crypto_com_one_failing_part_never_hides_the_other():
     method, params = service.calls[0]
     assert method == "get-deposit-history"
     assert params["start_ts"] == T0 * 1000 and params["page_size"] == 200
-
-
-KRAKEN_PAGE_1 = {
-    "ledger": {
-        "L1": {
-            "refid": "R1",
-            "time": 1_790_000_100.5,
-            "type": "deposit",
-            "subtype": "",
-            "aclass": "currency",
-            "asset": "ZEUR",
-            "amount": "100.0000",
-            "fee": "0.0000",
-            "balance": "100.0000",
-        },
-        "L2": {
-            "refid": "R2",
-            "time": 1_790_000_200.0,
-            "type": "trade",
-            "subtype": "",
-            "aclass": "currency",
-            "asset": "ZEUR",
-            "amount": "-50.0000",
-            "fee": "0.2",
-            "balance": "50.0000",
-        },
-    },
-    "count": 3,
-}
-KRAKEN_PAGE_2 = {
-    "ledger": {
-        "L3": {
-            "refid": "R3",
-            "time": 1_790_000_300.0,
-            "type": "deposit",
-            "subtype": "",
-            "aclass": "currency",
-            "asset": "XXBT",
-            "amount": "0.001",
-            "fee": "0.00001",
-            "balance": "0.001",
-        },
-    },
-    "count": 3,
-}
-KRAKEN_WITHDRAWAL = {
-    "ledger": {
-        "L9": {
-            "refid": "R9",
-            "time": 1_790_000_900.0,
-            "type": "withdrawal",
-            "subtype": "",
-            "aclass": "currency",
-            "asset": "ZUSD",
-            "amount": "-20.0000",
-            "fee": "1.0000",
-            "balance": "5.0000",
-        },
-    },
-    "count": 1,
-}
-
-
-def test_kraken_ledger_keeps_deposits_and_withdrawals_net_of_fee():
-    flows = fetchers.parse_kraken_ledger(KRAKEN_PAGE_1)
-    assert [(f.external_id, f.currency, f.amount) for f in flows] == [
-        ("ledger:L1", "EUR", Decimal("100.0000"))
-    ]
-    withdrawal = fetchers.parse_kraken_ledger(KRAKEN_WITHDRAWAL)[0]
-    assert (withdrawal.currency, withdrawal.amount) == ("USD", Decimal("-21.0000"))
-    btc = fetchers.parse_kraken_ledger(KRAKEN_PAGE_2)[0]
-    assert (btc.currency, btc.amount) == ("BTC", Decimal("0.00099"))
-    assert all(f.status == "confirmed" for f in flows)
-    with pytest.raises(fetchers.FetchUnavailable):
-        fetchers.parse_kraken_ledger({"result": {}})
-
-
-class FakeKraken:
-    def __init__(self, pages, error=None):
-        self.pages = pages  # {"deposit": [page, ...], "withdrawal": [page, ...]}
-        self.error = error
-        self.calls = []
-
-    async def private(self, user_id, method, params=None):
-        self.calls.append((method, dict(params)))
-        if self.error:
-            raise self.error
-        pages = self.pages[params["type"]]
-        return pages[min(params["ofs"] // 2, len(pages) - 1)]
-
-    async def eur_usd(self):
-        return Decimal("1.1")
-
-
-def test_kraken_pages_through_the_ledger_and_asks_only_for_ledger_entries():
-    service = FakeKraken(
-        {"deposit": [KRAKEN_PAGE_1, KRAKEN_PAGE_2], "withdrawal": [KRAKEN_WITHDRAWAL]}
-    )
-    got = run(fetchers.fetch("kraken_xstocks", service, USER, T0, T0 + 1000))
-    assert got.problems == []
-    assert sorted(f.external_id for f in got.flows) == [
-        "ledger:L1",
-        "ledger:L3",
-        "ledger:L9",
-    ]
-    assert {method for method, _ in service.calls} == {"Ledgers"}
-    assert [p["ofs"] for m, p in service.calls if p["type"] == "deposit"] == [0, 2]
-
-
-def test_kraken_failure_is_reported_per_part():
-    service = FakeKraken({}, error=ValueError("EAPI:Invalid key"))
-    got = run(fetchers.fetch("kraken_xstocks", service, USER, T0, T0 + 1000))
-    assert got.flows == []
-    assert got.problems == [
-        "deposits: EAPI:Invalid key",
-        "withdrawals: EAPI:Invalid key",
-    ]
 
 
 REVOLUT_TRANSACTIONS = {
@@ -699,23 +581,6 @@ def test_a_fee_taken_in_the_units_is_part_of_what_the_order_explains():
     assert detect(after, ledger_of([order]), now=T0 + 300) == []
 
 
-def test_kraken_xstock_tokens_match_their_symbol_and_a_base_fee_is_in_usd():
-    detect(view_of(USD=(100, 100), AAPLx=(0, 0)), now=T0, venue="kraken_xstocks")
-    order = {
-        "time": T0 + 100,
-        "side": "buy",
-        "symbol": "AAPL",
-        "status": "closed",
-        "quantity": "0.2",
-        "value": "50",
-        "fee": "0.2",
-        "fee_currency": "AAPLx",
-    }
-    # Fee 0.2 USD at 250 USD/share = 0.0008 shares taken from the units.
-    after = view_of(USD=(50, 50), AAPLx=(0.1992, 49.8))
-    assert detect(after, ledger_of([order]), now=T0 + 300, venue="kraken_xstocks") == []
-
-
 def test_noise_below_the_floor_and_the_percentage_is_ignored():
     detect(view_of(USD=(20, 20), BTC=(0.01, 1000)), now=T0)
     # 0.4 USD of cash is under the 0.5 USD floor; 15 USD is 1.5% of the 1000 USD
@@ -730,11 +595,11 @@ def test_noise_below_the_floor_and_the_percentage_is_ignored():
 
 
 def test_a_conversion_between_the_accounts_own_currencies_is_not_a_flow():
-    detect(view_of(EUR=(100, 110), USD=(5, 5)), now=T0, venue="kraken_xstocks")
+    detect(view_of(EUR=(100, 110), USD=(5, 5)), now=T0, venue="revolut_x")
     # 100 EUR sold for 109.8 USD (a 0.2 USD cost): two moves that offset.
     converted = view_of(EUR=(0, 0), USD=(114.8, 114.8))
-    assert detect(converted, now=T0 + 300, venue="kraken_xstocks") == []
-    assert nf.pending(USER, "kraken_xstocks") == []
+    assert detect(converted, now=T0 + 300, venue="revolut_x") == []
+    assert nf.pending(USER, "revolut_x") == []
 
 
 def test_a_recorded_flow_explains_the_move_and_a_late_one_supersedes_the_detection():
@@ -991,7 +856,6 @@ def test_the_overview_reports_recorded_flows_pending_ones_and_a_net_change():
             USER,
             services={
                 "crypto_com_exchange": service,
-                "kraken_xstocks": FakeVenue(0.0),
                 "revolut_x": FakeVenue(0.0),
             },
             now=T0 + 3600,
@@ -1009,7 +873,7 @@ def test_the_overview_reports_recorded_flows_pending_ones_and_a_net_change():
     assert flows["pending_count"] == 1 and flows["tracked"] is True
     assert "Unconfirmed cash movement" in flows["note"]
     # A venue with nothing recorded keeps the old wording and an empty flows block.
-    other = next(v for v in out["venues"] if v["venue"] == "kraken_xstocks")
+    other = next(v for v in out["venues"] if v["venue"] == "revolut_x")
     assert other["flows"]["pending_count"] == 0 and other["flows"]["tracked"] is False
     assert any("flows block" in n for n in out["notes"])
 
@@ -1059,7 +923,7 @@ def test_the_recorder_reads_history_and_detects_without_ever_failing():
 # ── a detected deposit and the venue's own history row are one deposit ──
 
 
-def _detected_deposit(venue="kraken_xstocks", amount=50, at=T0 + 300, confirm=True):
+def _detected_deposit(venue="revolut_x", amount=50, at=T0 + 300, confirm=True):
     """The recorder sees +amount USD with no order; the owner may confirm it."""
     detect(view_of(USD=(20, 20)), now=T0, venue=venue)
     (row,) = detect(view_of(USD=(20 + amount, 20 + amount)), now=at, venue=venue)
@@ -1070,9 +934,7 @@ def _detected_deposit(venue="kraken_xstocks", amount=50, at=T0 + 300, confirm=Tr
     return row
 
 
-def _history_row(
-    venue="kraken_xstocks", amount="50", ts=T0 + 200, ident="dep:1", **over
-):
+def _history_row(venue="revolut_x", amount="50", ts=T0 + 200, ident="dep:1", **over):
     args = dict(
         amount=amount,
         currency="USD",
@@ -1096,20 +958,19 @@ def _states(venue):
 
 def test_a_confirmed_detection_is_superseded_when_the_history_row_arrives_later():
     detected = _detected_deposit()
-    assert nf.summary(USER, "kraken_xstocks")["recorded_net_flows_usd"] == 50.0
+    assert nf.summary(USER, "revolut_x")["recorded_net_flows_usd"] == 50.0
 
     _history_row()
 
     rows = {
-        f["id"]: f
-        for f in nf.list_flows(USER, "kraken_xstocks", include_dismissed=True)
+        f["id"]: f for f in nf.list_flows(USER, "revolut_x", include_dismissed=True)
     }
     assert rows[detected["id"]]["status"] == "dismissed"
     assert "superseded by venue history" in rows[detected["id"]]["note"]
-    summary = nf.summary(USER, "kraken_xstocks")
+    summary = nf.summary(USER, "revolut_x")
     # One deposit, counted once: the history row only.
     assert (summary["confirmed_count"], summary["recorded_net_flows_usd"]) == (1, 50.0)
-    assert nf.window_net(USER, "kraken_xstocks", T0, T0 + 5000).net_usd == 50.0
+    assert nf.window_net(USER, "revolut_x", T0, T0 + 5000).net_usd == 50.0
 
 
 def test_the_same_holds_for_revolut_x_and_for_a_manual_entry():
@@ -1142,24 +1003,24 @@ def test_confirming_a_detection_the_history_already_records_dismisses_it():
     # The history row names the same deposit but arrives after the pending rule's day
     # window, so the pending detection is still on screen when the owner confirms it.
     _history_row(ts=T0 + 400, now=T0 + 300 + 2 * 86400)
-    assert [f["id"] for f in nf.pending(USER, "kraken_xstocks")] == [detected["id"]]
+    assert [f["id"] for f in nf.pending(USER, "revolut_x")] == [detected["id"]]
     confirmed = nf.set_status(USER, detected["id"], "confirmed", now=T0 + 3 * 86400)
     assert confirmed["status"] == "dismissed"
     assert "superseded by venue history" in confirmed["note"]
-    assert nf.window_net(USER, "kraken_xstocks", T0 - 10, T0 + 5000).net_usd == 50.0
+    assert nf.window_net(USER, "revolut_x", T0 - 10, T0 + 5000).net_usd == 50.0
 
 
 def test_a_detection_is_dismissed_on_creation_when_a_matching_history_row_exists():
-    detect(view_of(USD=(20, 20)), now=T0, venue="kraken_xstocks")
+    detect(view_of(USD=(20, 20)), now=T0, venue="revolut_x")
     # Recorded before the reference reading (created and stamped earlier), so it does
     # not "explain" the move, but it names the same money.
     _history_row(ts=T0 + 100, now=T0 - 50)
-    created = detect(view_of(USD=(70, 70)), now=T0 + 300, venue="kraken_xstocks")
+    created = detect(view_of(USD=(70, 70)), now=T0 + 300, venue="revolut_x")
     assert created == []
-    assert nf.pending(USER, "kraken_xstocks") == []
+    assert nf.pending(USER, "revolut_x") == []
     (twin,) = [
         f
-        for f in nf.list_flows(USER, "kraken_xstocks", include_dismissed=True)
+        for f in nf.list_flows(USER, "revolut_x", include_dismissed=True)
         if f["source"] == "detected"
     ]
     assert twin["status"] == "dismissed" and "venue history" in twin["note"]
@@ -1174,16 +1035,15 @@ def test_a_detection_stamped_apart_or_of_another_amount_is_kept():
     # A withdrawal of the same size is another movement.
     _history_row(amount="-50", ts=T0 + 310, ident="out")
     # Another venue is another account.
-    _history_row("revolut_x", "50", ts=T0 + 310, ident="elsewhere")
+    _history_row("trading212", "50", ts=T0 + 310, ident="elsewhere")
     # Another currency is another balance.
     _history_row(currency="EUR", ts=T0 + 310, ident="eur")
     kept = {
-        f["id"]: f
-        for f in nf.list_flows(USER, "kraken_xstocks", include_dismissed=True)
+        f["id"]: f for f in nf.list_flows(USER, "revolut_x", include_dismissed=True)
     }
     assert kept[detected["id"]]["status"] == "confirmed"
-    window = nf.window_net(USER, "kraken_xstocks", T0, T0 + 9000)
-    # The detection plus the four kraken rows that are not the same money.
+    window = nf.window_net(USER, "revolut_x", T0, T0 + 9000)
+    # The detection plus the four other rows that are not the same money.
     assert (window.count, window.net_usd) == (5, 160.0)
 
 
@@ -1191,18 +1051,18 @@ def test_superseding_is_idempotent():
     detected = _detected_deposit()
     _history_row()
     _history_row()  # the same transfer read again
-    twin = nf.list_flows(USER, "kraken_xstocks", include_dismissed=True)
+    twin = nf.list_flows(USER, "revolut_x", include_dismissed=True)
     note = next(f for f in twin if f["id"] == detected["id"])["note"]
     assert note.count("superseded") == 1
     # Dismissing, confirming or re-reading it changes nothing further.
     nf.set_status(USER, detected["id"], "dismissed")
     again = next(
         f
-        for f in nf.list_flows(USER, "kraken_xstocks", include_dismissed=True)
+        for f in nf.list_flows(USER, "revolut_x", include_dismissed=True)
         if f["id"] == detected["id"]
     )
     assert again["note"] == note and again["status"] == "dismissed"
-    assert nf.summary(USER, "kraken_xstocks")["confirmed_count"] == 1
+    assert nf.summary(USER, "revolut_x")["confirmed_count"] == 1
 
 
 # ── detection: trades against the venue's own cash, excluded holdings, the ledger ──
@@ -1266,7 +1126,7 @@ def test_the_exclusion_list_only_covers_what_it_names():
     [
         # A stock bought by hand with the venue's own cash.
         (
-            "kraken_xstocks",
+            "revolut_x",
             view_of(USD=(100, 100), AAPLx=(0, 0)),
             view_of(USD=(90, 90), AAPLx=(0.04, 10.05)),
         ),
@@ -1294,12 +1154,12 @@ def test_a_deposit_beside_a_trade_is_not_swallowed_by_it():
     detect(
         view_of(USD=(100, 100), AAPLx=(0, 0), EUR=(0, 0)),
         now=T0,
-        venue="kraken_xstocks",
+        venue="revolut_x",
     )
     created = detect(
         view_of(USD=(89.8, 89.8), AAPLx=(0.04, 10.0), EUR=(50, 55)),
         now=T0 + 300,
-        venue="kraken_xstocks",
+        venue="revolut_x",
     )
     # The buy (-10.2 against +10.0) is one conversion; the 50 EUR is a deposit.
     assert [(r["currency"], r["amount"]) for r in created] == [("EUR", "50")]
@@ -1340,9 +1200,9 @@ def test_a_one_sided_cash_change_is_still_detected_not_paired_with_nothing():
 
 
 def test_two_moves_of_very_different_value_are_not_one_conversion():
-    detect(view_of(USD=(100, 100), AAPLx=(0, 0)), now=T0, venue="kraken_xstocks")
+    detect(view_of(USD=(100, 100), AAPLx=(0, 0)), now=T0, venue="revolut_x")
     created = detect(
-        view_of(USD=(70, 70), AAPLx=(0.04, 10.0)), now=T0 + 300, venue="kraken_xstocks"
+        view_of(USD=(70, 70), AAPLx=(0.04, 10.0)), now=T0 + 300, venue="revolut_x"
     )
     assert sorted(r["currency"] for r in created) == ["AAPLX", "USD"]
 
@@ -1492,8 +1352,8 @@ def test_a_venue_without_an_exclusion_list_is_unchanged():
     ph.record(USER, EXCHANGE.label, 100.0, now=T0, excluded_usd=0.0)
     assert perf([span()], 110.0, T0 + 3600).sessions[0].pnl == pytest.approx(10.0)
     # An older sample with nothing stored behaves the same.
-    ph.record(USER, KRAKEN.label, 100.0, now=T0)
-    assert perf([span()], 110.0, T0 + 3600, venue=KRAKEN).sessions[
+    ph.record(USER, REVOLUT.label, 100.0, now=T0)
+    assert perf([span()], 110.0, T0 + 3600, venue=REVOLUT).sessions[
         0
     ].pnl == pytest.approx(10.0)
 
@@ -1507,7 +1367,6 @@ def test_the_overview_reports_the_excluded_value_and_takes_it_out_of_the_change(
             USER,
             services={
                 "crypto_com_exchange": FakeVenue(0.0),
-                "kraken_xstocks": FakeVenue(0.0),
                 "revolut_x": FakeVenue(0.0),
                 "trading212": service,
             },

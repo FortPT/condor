@@ -6,13 +6,12 @@ import {
 } from "./nativeVenue";
 
 const revolut = NATIVE_VENUES["revolut-x"];
-const kraken = NATIVE_VENUES["kraken-xstocks"];
 const t212 = NATIVE_VENUES.trading212;
 const row = (symbol: string, bid: string): VenueRow => ({ symbol, bid, change_pct: null, volume: null });
 
 describe("native venue helpers", () => {
   it("recognises only the native workspaces", () => {
-    expect(["revolut-x", "kraken-xstocks", "trading212"].every(isNativeVenueKey)).toBe(true);
+    expect(["revolut-x", "trading212"].every(isNativeVenueKey)).toBe(true);
     expect(["crypto-exchange", "hummingbot", "", null].some(isNativeVenueKey)).toBe(false);
   });
 
@@ -21,23 +20,21 @@ describe("native venue helpers", () => {
       { symbol: "BTC", price: "1", bid: "0.9", ask: "1.1", spread_pct: "0.2", change_24h_pct: "1.5", volume_24h_eur: "100" },
       { symbol: 5 }, "junk", null,
     ] })).toEqual([{ symbol: "BTC", price: "1", bid: "0.9", ask: "1.1", spread_pct: "0.2", change_pct: "1.5", volume: "100" }]);
-    expect(rowsOf(kraken, { stocks: [{ symbol: "AAPL", bid: "2", change_since_open_pct: "0.5", volume_24h_usd: 12 }] })[0])
+    expect(rowsOf(t212, { stocks: [{ symbol: "AAPL", bid: "2", change_since_open_pct: "0.5", volume_24h_usd: 12 }] })[0])
       .toMatchObject({ symbol: "AAPL", change_pct: "0.5", volume: 12 });
-    expect(rowsOf(kraken, { coins: [{ symbol: "AAPL" }] })).toEqual([]);
+    expect(rowsOf(t212, { coins: [{ symbol: "AAPL" }] })).toEqual([]);
     expect(rowsOf(revolut, null)).toEqual([]);
   });
 
-  it("normalises history from both venues, newest first, with the time in milliseconds", () => {
-    const rows = historyOf(revolut, [
+  it("normalises history, newest first, with the time in milliseconds", () => {
+    const rows = historyOf([
       { order_id: "a", pair: "BTC-EUR", side: "buy", status: "filled", filled_quantity: "1", average_fill_price: "10", filled_amount: "10", total_fee: "0.01", fee_currency: "EUR", updated: 1000 },
       { order_id: "b", pair: "ETH-EUR", side: "sell", status: "filled", updated: 2000 },
     ]);
     expect(rows.map((r) => r.id)).toEqual(["b", "a"]);
     expect(rows[1]).toMatchObject({ time: 1000, quantity: "1", average_price: "10", value: "10", fee: "0.01 EUR" });
     expect(rows[0].fee).toBe("—");
-    expect(historyOf(kraken, [{ order_id: "k", pair: "AAPLxUSD", side: "buy", status: "closed", vol_exec: "2", avg_price: "5", cost: "10", fee: "0.04", closetm: "1793219991.5" }])[0])
-      .toMatchObject({ time: 1_793_219_991_500, quantity: "2", average_price: "5", value: "10", fee: "0.04" });
-    expect(historyOf(revolut, { not: "a list" })).toEqual([]);
+    expect(historyOf({ not: "a list" })).toEqual([]);
   });
 
   it("keeps account rows and values them at the bid, treating the quote currency as itself", () => {
@@ -47,8 +44,7 @@ describe("native venue helpers", () => {
     expect(accountValue(revolut, "EUR", "40", known)).toBe(40);
     expect(accountValue(revolut, "SUI", "5", known)).toBe(15);
     expect(accountValue(revolut, "XYZ", "5", known)).toBeNull();
-    expect(accountValue(kraken, "ZUSD", "40", known)).toBe(40);
-    expect(accountValue(kraken, "AAPLx", "2", known)).toBe(540);
+    expect(accountValue(revolut, "eur", "40", known)).toBe(40);
     expect(accountValue(revolut, "SUI", "n/a", known)).toBeNull();
   });
 
@@ -69,7 +65,7 @@ describe("native venue helpers", () => {
     expect(t212.referenceLabel).toContain("Kraken xStocks");
     expect(rowsOf(t212, { stocks: [{ symbol: "AAPL", bid: "2", change_since_open_pct: "0.5", volume_24h_usd: 12 }] })[0])
       .toMatchObject({ symbol: "AAPL", change_pct: "0.5", volume: 12 });
-    expect(historyOf(t212, [{ order_id: "t", pair: "AAPL_US_EQ", side: "buy", status: "FILLED", filled_quantity: "0.05", average_fill_price: "270", filled_amount: "11.6", total_fee: "0.02", fee_currency: "EUR", updated: 5000 }])[0])
+    expect(historyOf([{ order_id: "t", pair: "AAPL_US_EQ", side: "buy", status: "FILLED", filled_quantity: "0.05", average_fill_price: "270", filled_amount: "11.6", total_fee: "0.02", fee_currency: "EUR", updated: 5000 }])[0])
       .toMatchObject({ time: 5000, pair: "AAPL_US_EQ", quantity: "0.05", average_price: "270", value: "11.6", fee: "0.02 EUR" });
   });
 
@@ -78,7 +74,7 @@ describe("native venue helpers", () => {
     const known = new Map([["AAPL", row("AAPL", "270")]]);
     expect(rows[1].value_eur).toBe("11.6");
     expect(rows.map((r) => accountRowValue(t212, r, known))).toEqual([40, 11.6, null]);
-    expect(accountRowValue(kraken, { currency: "AAPLx", balance: "2", available: "2" }, known)).toBe(540);
+    expect(accountRowValue(revolut, { currency: "AAPL", balance: "2", available: "2" }, known)).toBe(540);
     const ledger = { quote: "EUR", cash: "30", positions: { AAPL: { units: "0.05", cost: "10" }, TSLA: { units: "1", cost: "5" } }, uncertain_order: null, synced: true };
     const payload = { equity: "41.6", positions: [{ symbol: "AAPL", units: "0.05", cost_eur: "10", price_eur: "232", value_eur: "11.6", price_usd: "270" }] };
     const holdings = holdingsFromValuation(ledger, payload);

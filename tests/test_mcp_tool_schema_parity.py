@@ -31,7 +31,6 @@ FIELDS = ("name", "description", "inputSchema", "outputSchema")
 POST_V1_TOOLS = {
     "condor": {
         "crypto_com_exchange",
-        "kraken_xstocks",
         "revolut_x",
         "trading212",
         "native_portfolio",
@@ -138,28 +137,6 @@ def test_crypto_com_exchange_schema_exposes_no_credential_or_enable_arguments():
     assert not {"maker_enabled", "maker_fee_overrides"} & properties.keys()
 
 
-def test_kraken_xstocks_schema_exposes_no_credential_or_enable_arguments():
-    tool = live_surface(condor_server)["kraken_xstocks"]
-    properties = tool["inputSchema"]["properties"]
-    assert set(properties["action"]["enum"]) == {
-        "status",
-        "valuation",
-        "accounts",
-        "history",
-        "coins",
-        "candles",
-        "book",
-        "preview",
-        "order",
-        "reconcile",
-        "predict",
-        "scorecard",
-    }
-    assert (
-        not {"api_key", "api_secret", "enabled", "user_id", "pair"} & properties.keys()
-    )
-
-
 def test_revolut_x_schema_exposes_no_credential_key_or_enable_arguments():
     tool = live_surface(condor_server)["revolut_x"]
     properties = tool["inputSchema"]["properties"]
@@ -236,7 +213,7 @@ def test_the_hummingbot_portfolio_tool_says_it_cannot_see_the_native_accounts():
     description = live_surface(hb_server)["get_portfolio_overview"]["description"]
     assert "only Hummingbot-connected accounts" in description
     assert "native_portfolio" in description
-    assert "Crypto.com" in description and "Kraken xStocks" in description
+    assert "Crypto.com" in description and "Trading 212" in description
 
 
 def test_instructions_are_handed_to_the_sdk_unchanged():

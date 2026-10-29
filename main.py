@@ -759,7 +759,7 @@ async def startup(application: Application) -> None:
     sds_register()
     sds = get_server_data_service()
     sds.start()
-    # Value history for the accounts Condor reads itself (Exchange, Kraken).
+    # Value history for the accounts Condor reads itself (Crypto.com, Revolut X, Trading 212).
     from condor import portfolio_history
 
     portfolio_history.start()

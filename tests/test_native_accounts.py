@@ -15,7 +15,6 @@ from condor import portfolio_history as ph
 
 T0 = 1_790_000_000
 EXCHANGE = native_venues.get("crypto_com_exchange")
-KRAKEN = native_venues.get("kraken_xstocks")
 REVOLUT = native_venues.get("revolut_x")
 TRADING212 = native_venues.get("trading212")
 
@@ -85,7 +84,6 @@ def perf(venue, spans, service, now, user=1):
 
 def test_agents_map_to_their_venue_and_others_to_none():
     assert native_venues.for_agent("crypto_com_exchange_trader") is EXCHANGE
-    assert native_venues.for_agent("kraken_xstocks_trader") is KRAKEN
     assert native_venues.for_agent("revolut_x_trader") is REVOLUT
     assert native_venues.for_agent("adaptive_grid_trader") is None
 
@@ -173,10 +171,10 @@ def test_no_history_is_unavailable_not_a_made_up_zero():
 
 def test_venues_read_their_own_history_only():
     sample(EXCHANGE, T0, 100.0)
-    sample(KRAKEN, T0, 10.0)
+    sample(REVOLUT, T0, 10.0)
     spans = [na.SessionSpan(1, T0, live=True)]
     ex = perf(EXCHANGE, spans, FakeService(total=101.0), now=T0 + 600)
-    kr = perf(KRAKEN, spans, FakeService(total=9.5), now=T0 + 600)
+    kr = perf(REVOLUT, spans, FakeService(total=9.5), now=T0 + 600)
     assert ex.sessions[0].pnl == pytest.approx(1.0)
     assert kr.sessions[0].pnl == pytest.approx(-0.5)
 
@@ -270,7 +268,7 @@ def test_open_positions_come_from_the_ledger():
 def test_collect_views_skips_unconnected_and_skipped_venues_and_records_history():
     services = {
         "crypto_com_exchange": FakeService(total=48.0),
-        "kraken_xstocks": FakeService(total=9.0, connected=False),
+        "revolut_x": FakeService(total=9.0, connected=False),
     }
     result = run(na.collect_views(1, services=services))
     assert [v["total_usd"] for v in result.views] == [48.0]
@@ -280,7 +278,7 @@ def test_collect_views_skips_unconnected_and_skipped_venues_and_records_history(
         na.collect_views(
             1,
             skip=("crypto_com_exchange",),
-            services={**services, "kraken_xstocks": FakeService(total=9.0)},
+            services={**services, "revolut_x": FakeService(total=9.0)},
         )
     )
     assert [v["total_usd"] for v in skipped.views] == [9.0]
@@ -289,7 +287,7 @@ def test_collect_views_skips_unconnected_and_skipped_venues_and_records_history(
 def test_one_venue_failing_is_a_note_and_hides_nothing_else():
     services = {
         "crypto_com_exchange": FakeService(error=ValueError("down")),
-        "kraken_xstocks": FakeService(total=9.0),
+        "revolut_x": FakeService(total=9.0),
     }
     result = run(na.collect_views(1, services=services))
     assert [v["total_usd"] for v in result.views] == [9.0]
@@ -306,13 +304,12 @@ def test_overview_reports_each_account_with_cash_positions_ledger_and_equity_cha
         "crypto_com_exchange": FakeService(
             total=48.0, positions={"BTC": {"units": "0.001", "cost": "27"}}
         ),
-        "kraken_xstocks": FakeService(connected=False),
         "revolut_x": FakeService(connected=False),
         "trading212": FakeService(connected=False),
     }
     out = run(na.overview(1, services=services, now=T0))
     assert out["total_usd"] == 48.0
-    exchange, kraken, revolut, trading212 = out["venues"]
+    exchange, revolut, trading212 = out["venues"]
     assert trading212["connected"] is False and trading212["connector"] == "Trading 212"
     assert revolut["connected"] is False and revolut["connector"] == "Revolut X"
     assert exchange["connected"] is True
@@ -332,23 +329,21 @@ def test_overview_reports_each_account_with_cash_positions_ledger_and_equity_cha
     assert change["since_first_sample"]["change_usd"] == 8.0
     assert change["last_24h"]["change_usd"] == 8.0
     assert "deposits" in change["basis"]
-    assert kraken["connected"] is False and "account" not in kraken
     assert any("get_portfolio_overview" in n for n in out["notes"])
 
 
 def test_overview_says_so_when_a_venue_cannot_be_valued_and_leaves_it_out_of_the_total():
     services = {
         "crypto_com_exchange": FakeService(error=ValueError("down")),
-        "kraken_xstocks": FakeService(total=9.0),
-        "revolut_x": FakeService(connected=False),
+        "revolut_x": FakeService(total=9.0),
         "trading212": FakeService(connected=False),
     }
     out = run(na.overview(1, services=services, now=T0))
-    exchange, kraken, _revolut, _trading212 = out["venues"]
+    exchange, revolut, _trading212 = out["venues"]
     assert "Could not be valued" in exchange["error"]
     assert "account" not in exchange
     assert out["total_usd"] == 9.0
-    assert kraken["equity_change"] == {
+    assert revolut["equity_change"] == {
         "available": False,
         "reason": "no_history",
         "basis": na.BASIS_LABEL,
@@ -393,22 +388,17 @@ def test_revolut_x_is_registered_once_and_is_a_real_valued_account():
 def test_revolut_x_joins_the_dashboard_views_and_the_history_once():
     services = {
         "crypto_com_exchange": FakeService(total=48.0, connected=False),
-        "kraken_xstocks": FakeService(total=9.0, connected=False),
         "revolut_x": EuroService(total=61.2),
     }
     result = run(na.collect_views(1, services=services))
     assert [v["connector"] for v in result.views] == ["Revolut X"]
     assert [v["total_usd"] for v in result.views] == [61.2]
     assert [v for _, v in ph.series(1, since=0)[ph.REVOLUT]] == [61.2]
-    # Hummingbot's kraken connector never stands in for Revolut X.
-    kept = run(na.collect_views(1, skip=("kraken_xstocks",), services=services))
-    assert [v["total_usd"] for v in kept.views] == [61.2]
 
 
 def test_revolut_x_failing_is_its_own_note():
     services = {
         "crypto_com_exchange": FakeService(total=48.0),
-        "kraken_xstocks": FakeService(connected=False),
         "revolut_x": FakeService(error=ValueError("no EUR/USD rate")),
     }
     result = run(na.collect_views(1, services=services))
@@ -425,11 +415,10 @@ def test_revolut_x_equity_change_is_measured_in_usd_not_euros():
     sample(REVOLUT, T0 - 86400, 55.0)
     services = {
         "crypto_com_exchange": FakeService(connected=False),
-        "kraken_xstocks": FakeService(connected=False),
         "revolut_x": EuroService(total=61.2),
     }
     out = run(na.overview(1, services=services, now=T0))
-    revolut = out["venues"][2]
+    revolut = out["venues"][1]
     assert revolut["ledger"]["quote"] == "EUR"
     assert revolut["ledger"]["cash"] == "40"
     # Cash is the EUR balance valued in USD (not 40), and counted once.
@@ -484,7 +473,6 @@ def test_trading212_is_registered_once_with_its_crew():
 def test_trading212_joins_the_dashboard_views_and_the_history_once():
     services = {
         "crypto_com_exchange": FakeService(connected=False),
-        "kraken_xstocks": FakeService(connected=False),
         "revolut_x": FakeService(connected=False),
         "trading212": Trading212Service(total=54.0),
     }
@@ -497,7 +485,6 @@ def test_trading212_joins_the_dashboard_views_and_the_history_once():
 def test_trading212_failing_is_its_own_note():
     services = {
         "crypto_com_exchange": FakeService(total=48.0),
-        "kraken_xstocks": FakeService(connected=False),
         "revolut_x": FakeService(connected=False),
         "trading212": FakeService(error=ValueError("no EUR/USD rate")),
     }
@@ -515,12 +502,11 @@ def test_trading212_equity_change_is_measured_in_usd_not_euros():
     sample(TRADING212, T0 - 86400, 50.0)
     services = {
         "crypto_com_exchange": FakeService(connected=False),
-        "kraken_xstocks": FakeService(connected=False),
         "revolut_x": FakeService(connected=False),
         "trading212": Trading212Service(total=54.0),
     }
     out = run(na.overview(1, services=services, now=T0))
-    entry = out["venues"][3]
+    entry = out["venues"][2]
     assert entry["ledger"]["quote"] == "EUR"
     assert entry["account"]["cash_usd"] == 44.0
     assert [p["token"] for p in entry["account"]["positions"]] == ["AAPL"]

@@ -19,7 +19,6 @@ from condor import portfolio_history as ph
 from condor.web.auth import get_current_user
 from condor.web.models import WebUser
 from condor.web.routes import crypto_com_exchange as crypto_routes
-from condor.web.routes import kraken_xstocks as kraken_routes
 from condor.web.routes import revolut_x as revolut_routes
 from condor.web.routes import trading212 as t212_routes
 
@@ -156,18 +155,6 @@ def test_a_fee_in_a_third_currency_is_not_guessed():
     assert block["fees"]["unconverted"] == 1 and block["fees"]["complete"] is False
 
 
-def test_kraken_reports_a_coin_fee_in_usd_and_it_is_taken_off_the_units():
-    orders = [
-        order("buy", "AAPL", 10, 100, fee=1, currency="AAPLx"),
-        order("sell", "AAPL", "4.9", 49, fee="0.49", currency="AAPLx"),
-    ]
-    remaining = {"AAPL": {"units": "4.951", "cost": "50.0101010101"}}
-    result = perf.replay("kraken_xstocks", ledger(orders, remaining))
-    # 9.9 units cost 100; the sale takes 4.9 + 0.049 units and keeps all 49
-    assert float(pnl(result)) == pytest.approx(49 - 100 * 4.949 / 9.9)
-    assert perf.realized_block(result, "USD")["fees"]["value"] == pytest.approx(1.49)
-
-
 def test_an_estimated_fee_is_labelled_an_estimate():
     orders = [
         order("buy", "BTC", 1, 100, fee="0.5", currency="EUR", fee_source="estimate"),
@@ -225,7 +212,7 @@ def test_a_position_adopted_at_a_sync_has_its_cost_solved_from_the_ledger():
     # 4 ETH adopted at a bid of 25 (cost 100), then 1 sold for 30.
     orders = [order("sell", "ETH", 1, 30)]
     final = ledger(orders, {"ETH": {"units": "3", "cost": "75"}})
-    result = perf.replay("kraken_xstocks", final)
+    result = perf.replay("revolut_x", final)
     asset = result.assets["ETH"]
     assert asset.opening_units == Decimal(4)
     assert asset.opening_cost == Decimal(100)
@@ -238,7 +225,7 @@ def test_a_truncated_order_list_is_flagged_and_still_priced():
     orders = [order("buy", "ETH", "0.01", "0.25") for _ in range(199)]
     orders.append(order("sell", "ETH", 1, 30))
     final = ledger(orders, {"ETH": {"units": "4.99", "cost": "124.75"}})
-    result = perf.replay("kraken_xstocks", final)
+    result = perf.replay("revolut_x", final)
     assert len(final["orders"]) == perf.ORDER_CAP
     asset = result.assets["ETH"]
     assert asset.opening_origin == "before_recorded_orders"
@@ -258,7 +245,7 @@ def test_an_adopted_lot_that_was_sold_out_has_no_recoverable_cost():
         order("buy", "ETH", 1, 30),
         order("sell", "ETH", 1, 33),
     ]
-    result = perf.replay("kraken_xstocks", ledger(orders))
+    result = perf.replay("revolut_x", ledger(orders))
     first, second = result.sells
     assert first.pnl is None and "not on record" in first.reason
     assert second.pnl == Decimal(3)
@@ -274,13 +261,13 @@ def test_a_lot_almost_entirely_sold_is_not_solved_from_rounded_ledger_cost():
     # eight-decimal cost cannot recover what the lot cost.
     orders = [order("sell", "ETH", "3.9998", 100)]
     final = ledger(orders, {"ETH": {"units": "0.0002", "cost": "0.005"}})
-    result = perf.replay("kraken_xstocks", final)
+    result = perf.replay("revolut_x", final)
     assert result.assets["ETH"].opening_cost is None
     assert result.sells[0].pnl is None
 
 
 def test_only_unknown_sells_gives_no_realized_figure():
-    result = perf.replay("kraken_xstocks", ledger([order("sell", "ETH", 4, 90)]))
+    result = perf.replay("revolut_x", ledger([order("sell", "ETH", 4, 90)]))
     block = perf.realized_block(result, "USD")
     assert block["realized"]["value"] is None
     assert "not on record" in block["realized"]["reason"]
@@ -500,10 +487,9 @@ def test_a_report_is_reused_for_a_few_seconds():
     assert first is second and service.valuations == 1
 
 
-def test_all_four_venues_are_covered_by_the_registry():
+def test_all_three_venues_are_covered_by_the_registry():
     assert [v.key for v in native_venues.account_venues()] == [
         "crypto_com_exchange",
-        "kraken_xstocks",
         "revolut_x",
         "trading212",
     ]
@@ -515,7 +501,7 @@ def test_all_four_venues_are_covered_by_the_registry():
 @pytest.fixture
 def client():
     app = FastAPI()
-    for module in (crypto_routes, kraken_routes, revolut_routes, t212_routes):
+    for module in (crypto_routes, revolut_routes, t212_routes):
         app.include_router(module.router)
     app.dependency_overrides[get_current_user] = lambda: WebUser(
         id=USER, username="u", first_name="U", role="user"
@@ -527,7 +513,6 @@ def client():
     "path,key,label",
     [
         ("/crypto-exchange/performance", "crypto_com_exchange", "Crypto.com"),
-        ("/kraken-xstocks/performance", "kraken_xstocks", "Kraken xStocks"),
         ("/revolut-x/performance", "revolut_x", "Revolut X"),
         ("/trading212/performance", "trading212", "Trading 212"),
     ],

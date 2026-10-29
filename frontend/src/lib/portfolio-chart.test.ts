@@ -38,7 +38,7 @@ const history = (over: Partial<PortfolioHistoryResponse> = {}): PortfolioHistory
     { source: "Hummingbot", first_ts: 1, status: "recording" },
     { source: "Crypto.com", first_ts: 5, status: "recording" },
     { source: "Revolut X", first_ts: 10, status: "recording" },
-    { source: "Kraken xStocks", first_ts: null, status: "pending" },
+    { source: "Trading 212", first_ts: null, status: "pending" },
   ],
   result_points: [
     { timestamp: 10, result_usd: 0 },
@@ -121,7 +121,7 @@ describe("state", () => {
   it("the empty message names accounts that are not recording yet", () => {
     const text = emptyMessage(history());
     expect(text).toMatch(/at least two readings/);
-    expect(text).toContain("Kraken xStocks has no recorded value yet");
+    expect(text).toContain("Trading 212 has no recorded value yet");
   });
 });
 
@@ -139,7 +139,7 @@ describe("notes", () => {
   });
 
   it("names pending accounts, singular and plural", () => {
-    expect(pendingNote(history())).toBe("Kraken xStocks has no recorded value yet and is not in this chart.");
+    expect(pendingNote(history())).toBe("Trading 212 has no recorded value yet and is not in this chart.");
     expect(
       pendingNote(
         history({

@@ -1,7 +1,7 @@
 /**
  * Top Holdings: what is held per token, summed over every connector.
  *
- * The same asset can sit on several connectors (Kraken USD and Crypto.com USD cash are two
+ * The same asset can sit on several connectors (Revolut X USD and Crypto.com USD cash are two
  * accounts but one holding), so listing the rows as they come printed "USD" twice. The Assets
  * table keeps one row per connector; this is the by-token view.
  */

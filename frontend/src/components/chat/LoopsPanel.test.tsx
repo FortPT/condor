@@ -223,7 +223,7 @@ describe("LoopsPanel", () => {
     expect(cards()[0].textContent).not.toContain("$0.00");
   });
 
-  // A native crew (Crypto.com, Kraken xStocks) trades outside
+  // A native crew (Crypto.com, Trading 212) trades outside
   // Hummingbot: its figure is the account's equity change, computed from the
   // venue's own history, so the card must print it like any other PnL.
   describe("a native crew", () => {

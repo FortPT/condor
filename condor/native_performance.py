@@ -1,7 +1,7 @@
 """What each native venue earns and loses, from real recorded data only.
 
 One report for the four venues in :mod:`condor.native_venues` (Crypto.com,
-Kraken xStocks, Revolut X, Trading 212), behind ``GET /<venue>/performance``.
+Revolut X, Trading 212), behind ``GET /<venue>/performance``.
 Nothing here moves money or places an order, and the replay never contacts an
 exchange: it reads the venue's own ledger (cash, positions, the filled orders
 the service recorded) and the value history the recorder keeps.
@@ -69,7 +69,7 @@ MAX_BASELINE_GAP_SEC = 3 * 3600
 MIN_OPENING_SHARE = Decimal("0.0001")
 ZERO = Decimal(0)
 #: Venues whose ledger takes a sale's fee in the coin out of the position as well.
-_SELL_FEE_UNITS_OUT = frozenset({"revolut_x", "kraken_xstocks"})
+_SELL_FEE_UNITS_OUT = frozenset({"revolut_x"})
 
 _cache: dict[tuple[str, int], tuple[float, dict]] = {}
 
@@ -134,9 +134,8 @@ def _fee_parts(
     """``(fee paid in quote, fee paid in units, fee in quote terms, convertible)``.
 
     The currency the order says it was charged in decides how the ledger booked it:
-    in the quote currency it is cash; in the coin it is taken off the units. Kraken
-    reports the number in the quote currency even when the fee was taken from the
-    coin (the currency then reads ``AAPLx``), so it converts at the fill price.
+    in the quote currency it is cash; in the coin it is taken off the units, and the number is converted
+    at the fill price.
     """
     fee = _dec(order.get("fee"), ZERO) or ZERO
     if fee <= 0:
@@ -145,10 +144,6 @@ def _fee_parts(
     quote = quote.upper()
     if currency == quote:
         return fee, ZERO, fee, True
-    if venue_key == "kraken_xstocks" and currency == f"{symbol.upper()}X":
-        if price and price > 0:
-            return ZERO, fee / price, fee, True
-        return ZERO, ZERO, fee, False
     if currency == symbol.upper():
         if price and price > 0:
             return ZERO, fee, fee * price, True

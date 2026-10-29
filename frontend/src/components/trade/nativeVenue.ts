@@ -1,11 +1,11 @@
-/** Configuration and pure helpers for the read-only Kraken xStocks, Revolut X and Trading 212 Trade panels. */
+/** Configuration and pure helpers for the read-only Revolut X and Trading 212 Trade panels. */
 import { useQuery } from "@tanstack/react-query";
 
 import type { ExchangeLedger } from "@/hooks/useCredentials";
 import { apiFetch } from "@/lib/api";
 import { num } from "./tradeFormat";
 
-export type NativeVenueKey = "kraken-xstocks" | "revolut-x" | "trading212";
+export type NativeVenueKey = "revolut-x" | "trading212";
 
 export type NativeVenue = {
   key: NativeVenueKey;
@@ -29,8 +29,6 @@ export type NativeVenue = {
   priceQuote: string;
   /** Set when the market rows are a REFERENCE feed, not the venue's own quotes: who supplies them. */
   referenceLabel?: string;
-  /** Which field names the venue's `/history` rows use. */
-  historyShape: "revolut" | "kraken";
   /** The ledger is valued by the venue's own `/valuation`, read on load, not from the market rows. */
   autoValuation: boolean;
 };
@@ -40,22 +38,6 @@ export const REFERENCE_NOTE =
   "Reference prices in USD from Kraken xStocks public data (a tokenized copy of the stock), not Trading 212 quotes; Trading 212 has no quote endpoint. Orders fill at Trading 212's own price.";
 
 export const NATIVE_VENUES: Record<NativeVenueKey, NativeVenue> = {
-  "kraken-xstocks": {
-    key: "kraken-xstocks",
-    title: "Kraken xStocks",
-    base: "/api/v1/kraken-xstocks",
-    quote: "USD",
-    noun: "stocks",
-    listKey: "stocks",
-    changeKey: "change_since_open_pct",
-    changeLabel: "Since open",
-    volumeKey: "volume_24h_usd",
-    volumeLabel: "24h volume",
-    marketsPath: "coins",
-    priceQuote: "USD",
-    historyShape: "kraken",
-    autoValuation: false,
-  },
   "revolut-x": {
     key: "revolut-x",
     title: "Revolut X",
@@ -69,7 +51,6 @@ export const NATIVE_VENUES: Record<NativeVenueKey, NativeVenue> = {
     volumeLabel: "24h volume",
     marketsPath: "coins",
     priceQuote: "EUR",
-    historyShape: "revolut",
     autoValuation: false,
   },
   trading212: {
@@ -86,13 +67,12 @@ export const NATIVE_VENUES: Record<NativeVenueKey, NativeVenue> = {
     marketsPath: "stocks",
     priceQuote: "USD",
     referenceLabel: "Kraken xStocks reference",
-    historyShape: "revolut",
     autoValuation: true,
   },
 };
 
 export const isNativeVenueKey = (value: string | null): value is NativeVenueKey =>
-  value === "kraken-xstocks" || value === "revolut-x" || value === "trading212";
+  value === "revolut-x" || value === "trading212";
 
 /** What both native services answer on `/status` (a subset of their own status types). */
 export type NativeStatus = {
@@ -180,23 +160,22 @@ export type HistoryRow = {
   fee: string;
 };
 
-/** The final orders of `/history`, in one shape (Revolut X and Kraken name their fields differently; Trading 212 follows Revolut X). */
-export function historyOf(venue: NativeVenue, payload: unknown): HistoryRow[] {
+/** The final orders of `/history`, in one shape (Revolut X field names; Trading 212 follows Revolut X). */
+export function historyOf(payload: unknown): HistoryRow[] {
   if (!Array.isArray(payload)) return [];
   return payload.filter(isRecord).map((row, index) => {
-    const revolut = venue.historyShape === "revolut";
-    const when = num(text(revolut ? row.updated : row.closetm));
+    const when = num(text(row.updated));
     const fee = text(row.total_fee ?? row.fee);
     const feeCurrency = text(row.fee_currency);
     return {
       id: text(row.order_id) ?? `${index}`,
-      time: when === null ? null : revolut ? when : when * 1000,
+      time: when,
       pair: text(row.pair) ?? "—",
       side: text(row.side) ?? "—",
       status: text(row.status) ?? "—",
-      quantity: text(revolut ? row.filled_quantity : row.vol_exec) ?? "—",
-      average_price: text(revolut ? row.average_fill_price : row.avg_price) ?? "—",
-      value: text(revolut ? row.filled_amount : row.cost) ?? "—",
+      quantity: text(row.filled_quantity) ?? "—",
+      average_price: text(row.average_fill_price) ?? "—",
+      value: text(row.filled_amount) ?? "—",
       fee: fee === undefined ? "—" : `${fee}${feeCurrency ? ` ${feeCurrency}` : ""}`,
     };
   }).sort((a, b) => (b.time ?? 0) - (a.time ?? 0)).slice(0, 10);
@@ -213,11 +192,7 @@ export function accountsOf(payload: unknown): AccountRow[] {
   });
 }
 
-/** Kraken names its dollar balance ZUSD. */
-export const isQuoteCurrency = (venue: NativeVenue, currency: string) => {
-  const upper = currency.toUpperCase();
-  return upper === venue.quote || (venue.key === "kraken-xstocks" && upper === "ZUSD");
-};
+export const isQuoteCurrency = (venue: NativeVenue, currency: string) => currency.toUpperCase() === venue.quote;
 
 /** A balance in the quote currency at the best bid, or null when the asset has no live price here. */
 export function accountValue(venue: NativeVenue, currency: string, balance: string, known: Map<string, VenueRow>) {
@@ -225,9 +200,7 @@ export function accountValue(venue: NativeVenue, currency: string, balance: stri
   if (amount === null) return null;
   if (isQuoteCurrency(venue, currency)) return amount;
   const upper = currency.toUpperCase();
-  // Kraken writes a tokenised stock as AAPLx.
-  const row = known.get(upper) ?? (venue.key === "kraken-xstocks" && upper.endsWith("X") ? known.get(upper.slice(0, -1)) : undefined);
-  const bid = num(row?.bid);
+  const bid = num(known.get(upper)?.bid);
   return bid === null ? null : amount * bid;
 }
 

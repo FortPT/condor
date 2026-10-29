@@ -1,4 +1,4 @@
-"""One reading of the accounts Condor trades itself (Crypto.com, Kraken xStocks).
+"""One reading of the accounts Condor trades itself (Crypto.com, Revolut X, Trading 212).
 
 Hummingbot sees none of this money, so three surfaces used to show it as zero or
 not at all. They now share this module, on the venue registry in
@@ -128,7 +128,7 @@ async def collect_views(
 
     The samples the history chart reads are recorded as a side effect (the
     recorder throttles). ``skip`` names venue keys already counted elsewhere
-    (Hummingbot's own ``kraken`` connector values the same account). One venue
+    (an account another source already values). One venue
     failing becomes a note and never hides another.
     """
     result = NativeViews()
@@ -662,7 +662,6 @@ async def overview(
         "notes": [
             "Whole accounts at the last traded price, in USD. Only the bot allocation (ledger) may be traded.",
             "Hummingbot-connected accounts are not included; get_portfolio_overview covers those.",
-            "Kraken xStocks is the same Kraken account that Hummingbot's `kraken` connector may also report; do not add both.",
             "Equity change is the change in account value between readings, net of the confirmed deposits and withdrawals recorded for that venue (see its flows block). When a venue's basis says deposits are not tracked, a deposit still reads as a gain. Pending (unconfirmed) movements are not subtracted; mention them to the owner, who confirms or dismisses them in the Trade page.",
         ],
     }

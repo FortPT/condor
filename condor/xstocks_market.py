@@ -1,10 +1,11 @@
 """Kraken's public market data for the tokenized US stocks (xStocks), and the US session clock.
 
 No exchange account, no key and no order: this reads Kraken's public endpoints (asset
-pairs, ticker, OHLC) and answers whether the regular US session is open. The live
-Kraken xStocks service (:mod:`condor.kraken_xstocks`) uses it for pair rules, prices
-and candles, and the stock scheduler reads the session clock through the
-``/kraken-xstocks/market`` route. Nothing here can move money.
+pairs, ticker, OHLC) and answers whether the regular US session is open. Trading 212
+(:mod:`condor.trading212`) has no quote endpoint, so it uses this for reference prices
+and candles, and Revolut X and Trading 212 use its EUR/USD rate to value their
+accounts in USD. The stock scheduler reads the session clock through Trading 212's
+``/trading212/market`` route. Nothing here can move money.
 """
 
 from __future__ import annotations
@@ -75,6 +76,23 @@ def us_market_open(now: float | None = None) -> dict:
 class XStocksMarket:
     def __init__(self):
         self._pairs = (0.0, {})
+        self._eur_usd = (0.0, None)
+
+    async def eur_usd(self):
+        """USD per euro from Kraken's plain EURUSD pair, or None (cached a minute)."""
+        stamp, cached = self._eur_usd
+        if cached and time.monotonic() - stamp < 60:
+            return cached
+        try:
+            result = await self._get("Ticker", {"pair": "EURUSD"}, asset_class=False)
+            ticker = next(iter(result.values()), {})
+            rate = _decimal(ticker["c"][0])
+        except (ValueError, KeyError, IndexError, TypeError):
+            return None
+        if not rate or rate <= 0:
+            return None
+        self._eur_usd = (time.monotonic(), rate)
+        return rate
 
     async def _get(self, path: str, params: dict, *, asset_class: bool = True):
         import aiohttp

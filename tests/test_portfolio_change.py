@@ -124,8 +124,8 @@ class ChangeTests(Base):
     def test_a_source_hummingbot_already_counts_is_skipped(self):
         out = self.compute(
             hb((SINCE + 60, 9.0), (NOW, 9.5)),
-            {ph.KRAKEN: [(SINCE + 36000, 9.4), (NOW - 60, 9.5)]},
-            skip=(ph.KRAKEN,),
+            {ph.REVOLUT: [(SINCE + 36000, 9.4), (NOW - 60, 9.5)]},
+            skip=(ph.REVOLUT,),
         )
         self.assertTrue(out["available"])
         self.assertEqual(out["sources"], ["Hummingbot"])

@@ -204,7 +204,7 @@ class RunningInstance(BaseModel):
 #: session that traded nothing. The reason is all a refused caller gets: never
 #: the creator, never a figure.
 #:
-#: A native crew (Crypto.com, Kraken xStocks) has no Hummingbot server;
+#: A native crew (Crypto.com, Revolut X, Trading 212) has no Hummingbot server;
 #: its money is the venue's account equity. ``no_history`` — no equity has been
 #: recorded for that venue yet, so a change cannot be stated.
 Unavailable = Literal["", "no_server", "no_access", "unreachable", "no_history"]

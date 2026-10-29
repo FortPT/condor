@@ -2,7 +2,7 @@
 
 Condor trades US large-cap stocks on the owner's **Trading 212 Invest account** through
 Trading 212's public API, live only, in EUR, during the regular US session. It follows
-the pattern of the Kraken xStocks and Revolut X modules: a per-user ledger of the bot's
+the pattern of the Revolut X module: a per-user ledger of the bot's
 allocation, a native service (`condor/trading212.py`), web routes (`/api/v1/trading212`),
 an MCP tool (`trading212`), a three-agent crew (`trading212_trader`, `trading212_analyst`,
 `trading212_risk_reviewer`; loop `intraday`), a Settings tab and a read-only Trade tab.
@@ -50,7 +50,7 @@ the tool answers, the Trade tab and the crew prompts. For a stock the account al
 holds, Trading 212's own current price (positions endpoint) is used for a sale's limit
 (the lower of the two). The real fill price, quantity and fees come only from Trading
 212: the historical-orders endpoint and the account cash change, never from the
-reference. The EUR/USD rate for sizing is Kraken's public EURUSD (`kraken_xstocks`'s
+reference. The EUR/USD rate for sizing is Kraken's public EURUSD (`xstocks_market`'s
 `eur_usd`), not Trading 212's own conversion rate (a 0.5% sizing buffer covers the
 difference).
 
@@ -431,19 +431,18 @@ is what the bot may trade.
   withdrawal (or deposit) in the Trade tab. The false "unconfirmed cash movement" it used
   to raise is gone (see `docs/native-flows.md`); the result, not the flow list, carries it.
 
-## The stock scheduler (VM, not touched by this change)
+## The stock scheduler (on the VM, outside this repository)
 
-`/srv/fortpt/ai-trade-crew/ops/stock_session.sh` currently starts only
-`kraken_xstocks_trader.intraday` at the US open and stops it at the close. This is the
-exact generalisation to apply on the VM: it starts and stops **both** loops, each one
-only if **its own venue** is enabled, synced and not uncertain (`enabled` already means
-"enabled and no uncertain order"). The session clock is read from the same route as
-before; a failure to read it changes nothing. A loop that is running at the close is
-stopped whichever venue it belongs to.
+`/srv/fortpt/ai-trade-crew/ops/stock_session.sh` runs every five minutes on weekdays from cron
+(`*/5 12-21 * * 1-5`, UTC; the window is wide enough for both daylight-saving regimes). It starts
+`trading212_trader.intraday` at the US open and stops it at the close, and only if the venue is
+enabled, synced and has no uncertain order (`enabled` already means "enabled and no uncertain
+order"). The session clock is read from `/trading212/market`, which needs no account; a failure
+to read it changes nothing. A loop that is running at the close is stopped.
 
 ```bash
 #!/bin/bash
-# Start the stock crews (Kraken xStocks, Trading 212) when the regular US session opens and
+# Start the stock crew (Trading 212) when the regular US session opens and
 # stop them at the close. Each one starts only if its own venue is enabled, synced and has no
 # uncertain order; orders still need that venue's trading switched on.
 exec docker exec -i -w /var/lib/condor fortpt-ai-trade-crew-condor-1 /var/lib/condor/.venv/bin/python - <<'PY'
@@ -452,9 +451,7 @@ from condor.web.auth import create_jwt
 from utils.config import WEB_PORT
 
 LOOP = "intraday"
-#: (crew slug, the venue's status route)
 CREWS = (
-    ("kraken_xstocks_trader", "/kraken-xstocks/status"),
     ("trading212_trader", "/trading212/status"),
 )
 token = create_jwt(1, role="user")
@@ -472,7 +469,7 @@ def call(method, path, body=None):
         return {"error": type(e).__name__}
 
 stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()) + "Z"
-status = call("GET", "/xstocks-paper/status")
+status = call("GET", "/trading212/market")
 market = (status or {}).get("market") or {}
 if "open" not in market:
     print(stamp, "market status unavailable; no change:", json.dumps(status)[:120]); raise SystemExit(0)
@@ -498,13 +495,6 @@ for slug, venue_route in CREWS:
             print(stamp, slug, "session closed; loop idle")
 PY
 ```
-
-Notes: `/xstocks-paper/status` is the legacy name of the US session clock that stays
-registered for exactly this script; `/trading212/market` answers the same clock and
-needs no Kraken module. The two crews trade different accounts with separate ledgers,
-so neither start condition depends on the other. Install it the same way
-`install_stock_schedule.sh` installed the old one (write the file, `chmod 700`, run it once
-while the market is closed and expect "session closed; loop idle" twice).
 
 ## Left out
 

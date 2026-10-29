@@ -145,20 +145,20 @@ class BaselineTests(Base):
         self.assertEqual(by_name[ph.REVOLUT], "disconnected")
         self.assertEqual({p["total_usd"] for p in out["chart_points"]}, {43.0})
 
-    def test_kraken_is_not_counted_twice_when_hummingbot_has_its_connector(self):
-        # Hummingbot's kraken (9.4) and Kraken xStocks describe the same account.
+    def test_a_skipped_source_is_not_counted_twice_when_hummingbot_has_it(self):
+        # Hummingbot's own connector (9.4) and the native reading are the same account.
         points = hb_series(T0, NOW, 9.4)
-        record(ph.KRAKEN, T0 + 5400, NOW, 9.4)
+        record(ph.REVOLUT, T0 + 5400, NOW, 9.4)
         record(ph.EXCHANGE, T0, NOW, 43.0)
-        out = self.build(points, skip=(ph.KRAKEN,))
+        out = self.build(points, skip=(ph.REVOLUT,))
         names = [s["source"] for s in out["sources"]]
-        self.assertNotIn(ph.KRAKEN, names)
+        self.assertNotIn(ph.REVOLUT, names)
         # Neither the late xStocks readings move the baseline nor its value is added.
         self.assertEqual(out["baseline_ts"], T0)
         self.assertEqual({p["total_usd"] for p in out["chart_points"]}, {52.4})
 
-    def test_kraken_xstocks_counts_when_hummingbot_does_not_have_it(self):
-        record(ph.KRAKEN, T0 + 5400, NOW, 9.4)
+    def test_a_native_source_counts_when_hummingbot_does_not_have_it(self):
+        record(ph.REVOLUT, T0 + 5400, NOW, 9.4)
         record(ph.EXCHANGE, T0, NOW, 43.0)
         out = self.build()
         self.assertEqual(out["baseline_ts"], T0 + 5400)
@@ -521,21 +521,6 @@ class OutlierTests(Base):
         self.assertEqual([p["total_usd"] for p in out["chart_points"]][-1], 25.0)
         self.assertNotIn(None, [p["total_usd"] for p in out["chart_points"]])
 
-    def test_native_kraken_preference_needs_readings_and_a_live_source(self):
-        rows = {ph.KRAKEN: [(T0, 10.0)]}
-        self.assertTrue(chart.native_kraken_preferred(rows, T0 + 100, None))
-        self.assertTrue(chart.native_kraken_preferred(rows, T0 + 99999, {ph.KRAKEN}))
-        self.assertFalse(chart.native_kraken_preferred(rows, T0 + 99999, set()))
-        self.assertFalse(chart.native_kraken_preferred({}, T0, None))
-        self.assertFalse(chart.native_kraken_preferred({ph.KRAKEN: []}, T0, None))
-
-    def test_without_part_takes_only_that_connectors_value_out(self):
-        points = hb((T0, 15.19), (T0 + 300, 15.19), (T0 + 600, 5.0))
-        out = chart.without_part(points, {T0: 10.19, T0 + 300: 10.19}, from_ts=T0 + 300)
-        self.assertEqual([round(p.total_usd, 2) for p in out], [15.19, 5.0, 5.0])
-        # The originals are untouched.
-        self.assertEqual(points[1].total_usd, 15.19)
-
 
 class RouteTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -600,135 +585,6 @@ class RouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(out.points)
         self.assertIsNone(out.chart_points)
         self.assertEqual(out.flows, [])
-
-    async def test_native_kraken_stands_in_for_hummingbots_kraken_connector(self):
-        for k in range(40):
-            ph.record(USER, ph.KRAKEN, 9.3, now=int(self.now) - 300 * (40 - k))
-        out = await self.get()
-        # Hummingbot reports only its kraken connector here, so once the native
-        # source has readings it is the only source and the same account is not twice.
-        self.assertEqual([s.source for s in out.sources], [ph.KRAKEN])
-        self.assertEqual({p.total_usd for p in out.chart_points}, {9.3})
-
-    async def test_without_native_readings_hummingbots_kraken_is_used(self):
-        out = await self.get()
-        self.assertEqual([s.source for s in out.sources], ["Hummingbot"])
-
-
-class NativeKrakenRouteTests(unittest.IsolatedAsyncioTestCase):
-    """The live spike: one bad Hummingbot kraken row (20.62 between 10.19 rows)."""
-
-    def setUp(self):
-        import time
-
-        self.tmp = tempfile.TemporaryDirectory()
-        self.env = patch.dict(os.environ, {"CONDOR_DATA_DIR": self.tmp.name})
-        self.env.start()
-        self.now = int(time.time()) // 300 * 300
-        self.since = self.now - 7 * 86400
-        self.hours = 6
-        self.start = self.now - self.hours * 3600
-        self.patches = []
-
-    def tearDown(self):
-        for p in self.patches:
-            p.stop()
-        self.env.stop()
-        self.tmp.cleanup()
-
-    def history(self, kraken, others=None):
-        """Snapshots every 5 min over the native span; ``kraken(ts)`` is its value."""
-
-        def snapshot(ts):
-            connectors = {"kraken": [{"token": "EUR", "value": kraken(ts)}]}
-            if others is not None:
-                connectors["solana"] = [{"token": "SOL", "value": others(ts)}]
-            return {"timestamp": ts, "state": {"master": connectors}}
-
-        history = [snapshot(ts) for ts in range(self.since + 300, self.now + 1, 300)]
-        sds = SimpleNamespace(get_or_fetch=AsyncMock(return_value=history))
-        patcher = patch.object(portfolio_route, "get_server_data_service", lambda: sds)
-        patcher.start()
-        self.patches.append(patcher)
-
-    def native(self, source, value, start=None):
-        for ts in range(start or self.start, self.now + 1, 300):
-            ph.record(USER, source, value, now=ts)
-
-    async def get(self, range_="1W"):
-        return await portfolio_route.get_portfolio_history(
-            name="vm08",
-            range=range_,
-            breakdown=False,
-            user=WebUser(id=USER, role="admin"),
-        )
-
-    async def test_a_bad_hummingbot_kraken_row_does_not_spike_the_chart(self):
-        bad = self.now - 3 * 3600
-        self.history(lambda ts: 20.62 if ts == bad else 10.19, others=lambda ts: 5.0)
-        self.native(ph.KRAKEN, 10.19)
-        out = await self.get()
-        # Native Kraken is used and Hummingbot's kraken connector is dropped: what is
-        # left of Hummingbot is its other connector, unchanged.
-        self.assertEqual({s.source for s in out.sources}, {"Hummingbot", ph.KRAKEN})
-        values = {round(p.total_usd, 2) for p in out.chart_points}
-        self.assertEqual(values, {15.19})
-        self.assertEqual(out.gaps, [])
-        self.assertEqual(out.anomalies, [])
-        # The legacy series agrees (it is flat at 15.19 once native recording began).
-        legacy = [p.total_usd for p in out.points if p.timestamp >= self.start]
-        self.assertTrue(legacy)
-        self.assertLess(max(legacy), 15.2)
-
-    async def test_the_hummingbot_gap_is_covered_by_native_and_the_baseline_moves_earlier(
-        self,
-    ):
-        gap_from, gap_to = self.start + 3600, self.start + 3 * 3600
-        # Hummingbot's kraken was empty (0) for two hours, then back.
-        self.history(lambda ts: 0.0 if gap_from <= ts < gap_to else 10.19)
-        self.native(ph.EXCHANGE, 43.0)
-        self.native(ph.KRAKEN, 10.19)
-        out = await self.get()
-        self.assertEqual(out.baseline_ts, self.start)
-        self.assertEqual(out.series_start_ts, self.start)
-        self.assertEqual(out.gaps, [])
-        self.assertNotIn("Hummingbot", [s.source for s in out.sources])
-        self.assertNotIn(None, [p.total_usd for p in out.chart_points])
-        self.assertEqual({round(p.total_usd, 2) for p in out.chart_points}, {53.19})
-
-    async def test_revolut_x_still_sets_the_baseline_when_it_starts_last(self):
-        self.history(lambda ts: 10.19)
-        self.native(ph.EXCHANGE, 43.0)
-        self.native(ph.KRAKEN, 10.19)
-        late = self.start + 2 * 3600 + 240
-        self.native(ph.REVOLUT, 4.27, start=late)
-        out = await self.get()
-        self.assertEqual(out.baseline_ts, late)
-        self.assertEqual(out.series_start_reason, "all_accounts_recording_from")
-        self.assertEqual(
-            {s.source for s in out.sources}, {ph.EXCHANGE, ph.KRAKEN, ph.REVOLUT}
-        )
-        self.assertEqual({round(p.total_usd, 2) for p in out.chart_points}, {57.46})
-
-    async def test_the_change_figure_keeps_using_hummingbots_own_kraken_history(self):
-        self.history(lambda ts: 10.19)
-        self.native(ph.KRAKEN, 10.19)
-        out = await self.get()
-        self.assertTrue(out.change.available)
-        self.assertEqual(out.change.sources, ["Hummingbot"])
-
-    async def test_without_native_a_bad_hummingbot_row_is_excluded_and_reported(self):
-        bad = self.now - 3 * 3600
-        self.history(lambda ts: 20.62 if ts == bad else 10.19)
-        out = await self.get()
-        self.assertEqual([s.source for s in out.sources], ["Hummingbot"])
-        values = [p.total_usd for p in out.chart_points]
-        self.assertNotIn(20.62, values)
-        self.assertIn(None, values)
-        self.assertEqual(
-            [(a.source, a.ts, a.value, a.neighbour_value) for a in out.anomalies],
-            [("Hummingbot", bad, 20.62, 10.19)],
-        )
 
 
 if __name__ == "__main__":

@@ -13,7 +13,6 @@ const summary = (over: Partial<FlowVenueSummary> = {}): FlowVenueSummary => ({
 describe("flowVenueKey", () => {
   it("maps the Trade page's venue keys to the server's", () => {
     expect(flowVenueKey("revolut-x")).toBe("revolut_x");
-    expect(flowVenueKey("kraken-xstocks")).toBe("kraken_xstocks");
     expect(flowVenueKey("trading212")).toBe("trading212");
     expect(flowVenueKey("crypto_com_exchange")).toBe("crypto_com_exchange");
   });

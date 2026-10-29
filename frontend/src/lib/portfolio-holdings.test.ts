@@ -7,13 +7,13 @@ const bal = (token: string, usd_value: number) => ({ token, usd_value });
 describe("Top Holdings", () => {
   it("lists a token held on two connectors once, summed", () => {
     const rows = topHoldings([
-      { connector: "Kraken xStocks", balances: [bal("USD", 40), bal("TSLA", 1500)] },
+      { connector: "Trading 212", balances: [bal("USD", 40), bal("TSLA", 1500)] },
       { connector: "Crypto.com", balances: [bal("USD", 26), bal("HYPE", 16.93)] },
     ]);
     expect(rows.map((row) => row.token)).toEqual(["TSLA", "USD", "HYPE"]);
     const usd = rows.find((row) => row.token === "USD")!;
     expect(usd.usd_value).toBe(66);
-    expect(usd.connector).toBe("Kraken xStocks, Crypto.com");
+    expect(usd.connector).toBe("Trading 212, Crypto.com");
     expect(rows.filter((row) => row.token === "USD")).toHaveLength(1);
   });
 

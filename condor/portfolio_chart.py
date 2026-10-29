@@ -111,47 +111,6 @@ def _cadence(interval_seconds: int) -> float:
     return float(max(int(interval_seconds), MIN_CADENCE_SEC))
 
 
-def native_kraken_preferred(
-    native: Mapping[str, Sequence[tuple[float, float]]],
-    now: float,
-    connected: set[str] | None = None,
-) -> bool:
-    """Whether the native Kraken xStocks readings stand in for Hummingbot's ``kraken``.
-
-    Both describe the same account. Condor's own recorder has a reading every five
-    minutes, while Hummingbot's history for it has had real gaps and a bad row, so the
-    native source is preferred whenever it has readings (and is still being recorded).
-    """
-    rows = native.get(portfolio_history.KRAKEN) or ()
-    if not rows:
-        return False
-    if connected is None or portfolio_history.KRAKEN in connected:
-        return True
-    return (
-        now - float(rows[-1][0])
-        <= TOLERANCE_INTERVALS * portfolio_history.SAMPLE_EVERY_SEC
-    )
-
-
-def without_part(
-    points: Sequence[Any], parts: Mapping[float, float], from_ts: float = 0.0
-) -> list[Any]:
-    """Copies of Hummingbot ``points`` with one connector's value taken out of the total.
-
-    ``parts`` maps a point's timestamp to that connector's USD value in it. Only points
-    at or after ``from_ts`` are changed. Nothing is estimated: the total is the sum of
-    the other connectors as Hummingbot reported them.
-    """
-    out = []
-    for p in points:
-        part = parts.get(float(p.timestamp), 0.0)
-        if part and float(p.timestamp) >= from_ts:
-            p = copy.copy(p)
-            p.total_usd = max(float(p.total_usd) - part, 0.0)
-        out.append(p)
-    return out
-
-
 def exclude_outliers(
     rows: Sequence[tuple[float, float]], tolerance: float
 ) -> tuple[list[tuple[float, float]], list[dict[str, Any]]]:
@@ -341,7 +300,7 @@ def build(
     ``hummingbot_points`` are the route's points before the native sources are
     merged in (``timestamp``, ``total_usd``, ``tokens``); ``native`` is
     :func:`condor.portfolio_history.series` (fetch it from ``since - EDGE_MARGIN_SEC``);
-    ``skip`` names sources Hummingbot already counts (Kraken is never counted twice);
+    ``skip`` names sources Hummingbot already counts (never counted twice);
     ``connected`` is :func:`connected_sources`, or ``None`` to treat all as connected.
     """
     sources, report, effective_first, anomalies = _sources(

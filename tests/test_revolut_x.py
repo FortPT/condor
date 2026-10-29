@@ -1916,7 +1916,7 @@ class RevolutXTests(unittest.IsolatedAsyncioTestCase):
         async def kraken_rate():
             return Decimal("1.11")
 
-        with patch("condor.kraken_xstocks.service.eur_usd", kraken_rate):
+        with patch("condor.xstocks_market.service.eur_usd", kraken_rate):
             data = await self.svc.portfolio(1)
         by = {b["token"]: b for b in data["balances"]}
         self.assertAlmostEqual(by["EUR"]["usd_value"], 44.4, places=6)
@@ -1937,7 +1937,7 @@ class RevolutXTests(unittest.IsolatedAsyncioTestCase):
         async def none():
             return None
 
-        with patch("condor.kraken_xstocks.service.eur_usd", none):
+        with patch("condor.xstocks_market.service.eur_usd", none):
             with self.assertRaises(ValueError):
                 await self.svc.portfolio(1)
 
