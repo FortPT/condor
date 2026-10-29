@@ -45,6 +45,16 @@ preview's round-trip cost (for example 1.25% when the preview shows 1.06%), neve
 preview's own number or less. The spread moves between the preview and the order, and a
 bound with no room for that drops an approved trade for no reason.
 
+Optional maker mode: a bounded intent may carry mode maker or taker (taker when absent).
+A maker intent must also bind purpose entry or target_exit (a stop exit is never maker), the preview's
+resting_price, maker_fee_pct with its source, maker_taker_round_trip_pct and the wait in seconds
+(at most 75). Apply the cost headroom to maker_taker_round_trip_pct (at least 0.15 percentage points
+above it) and the same maximum slippage and cost bounds to the effective price: a resting price sits
+at the touch, so reject an intent whose resting price is above the reviewed ask for a buy or below
+the reviewed bid for a sell. A maker order may not fill and an unfilled order is not a trade: your
+approval covers one attempt until the deadline, never a retry as a taker order. Missing maker fields
+mean incomplete.
+
 Check market evidence and plausible net benefit against the round-trip cost; no
 compulsory trade or promised return. Use only the single native bot ledger and run
 context, never generic scheduler capital or outside account holdings. Do not

@@ -123,8 +123,19 @@ def test_crypto_com_exchange_schema_exposes_no_credential_or_enable_arguments():
         "reconcile",
         "predict",
         "scorecard",
+        "maker_stats",
     }
     assert not {"api_key", "api_secret", "enabled", "user_id"} & properties.keys()
+    # Maker mode is opt-in per call; the owner switch is not an MCP argument.
+    assert properties["mode"]["enum"] == ["taker", "maker"]
+    assert properties["mode"]["default"] == "taker"
+    assert set(properties["purpose"]["enum"]) == {
+        "",
+        "entry",
+        "target_exit",
+        "stop_exit",
+    }
+    assert not {"maker_enabled", "maker_fee_overrides"} & properties.keys()
 
 
 def test_xstocks_paper_schema_has_the_simulated_order_actions_and_no_reset():

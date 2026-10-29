@@ -57,6 +57,155 @@ Requests are signed with HMAC-SHA256 over the method, id, API key, the flattened
 parameters and the nonce, as the Exchange documents. The Exchange allows 15 requests
 per 100 ms for order methods; Condor limits itself to 90 per minute.
 
+## Maker mode
+
+Optional and off by default. The account's measured fees are maker 0.25% and taker
+0.50% (`private/get-fee-rate`), so a resting order saves up to 0.25 percentage points a
+side, plus the spread it does not cross, but it may not fill. It is a separate mode on
+`preview` and `order`; the taker path above is unchanged.
+
+**Switch.** The owner turns it on in the Exchange panel (`PUT /crypto-exchange/maker-mode`,
+stored in `maker_settings.json` beside the ledger, default off). It is not an MCP action
+or tool argument, so the crew cannot enable it. A maker `order` while it is off is refused
+before anything is placed; `preview` still works and reports `maker_mode_enabled`.
+
+**Arguments.** `mode` = `taker` (default) or `maker`; `purpose` = `entry` (a buy),
+`target_exit` (a sell) or `stop_exit`; `maker_wait_sec` = 5 to 75 whole seconds (default
+60). In maker mode `purpose` is required, and `stop_exit` is refused for both `preview`
+and `order` with a message to use taker mode: a stop or invalidation exit must complete.
+`maker_wait_sec` with taker mode is refused.
+
+**What an order does.**
+
+1. Reads the live book and rests a POST_ONLY limit order at the best bid (buy, rounded
+   down to the tick) or the best ask (sell, rounded up), never through the touch. A
+   locked or crossed book, a spread above 1% or a lot below the minimum is refused.
+2. The same guards as a taker order apply to the resting notional (single-asset cap,
+   reserve, positions, floor, balance, ten orders a minute). The ledger is written
+   uncertain with the `client_oid` before the send, as for a taker order.
+3. Polls `get-order-detail` every 2.5 s until the order is FILLED, cancelled, rejected
+   or expired, or the wait ends. The wait is also capped so placement, wait, cancel and
+   the final read finish inside the 90 s MCP budget (72 s after the call started).
+   Poll errors are tolerated; three in a row stop the wait.
+4. At the deadline it sends `private/cancel-order` (retried once, a cancel is
+   idempotent) and reads the order again until it is final.
+5. Returns `outcome` (`filled`, `partial` or `unfilled`) and a `maker` block: resting
+   price, ordered, filled and `unfilled_quantity`, average price, fee, fee currency,
+   `effective_fee_pct` and `fee_class` (maker, taker, other or unknown, judged against
+   the account's rates), wait and time to fill. `status` stays the service status object
+   it is for taker orders; the maker result is `outcome`.
+
+An `unfilled` order is a normal result: no trade happened and the ledger (cash,
+positions, order list) is unchanged. A partial fill updates the ledger like a partial
+taker fill; the rest is cancelled and is not retried.
+
+**Refusals and uncertainty.** A post-only order that the Exchange refuses at placement
+(documented reason code 43005, `POST_ONLY_REJ`) or reports REJECTED with nothing filled
+is a definite refusal: nothing was placed, the ledger is unchanged, and it is never
+retried as a taker order; the caller decides. 429 and other 4xx answers to the create are
+definite refusals; 5xx answers, a timeout or an unreadable reply are uncertain. If the
+placement is uncertain, if the cancel cannot be confirmed (two failures), or if the final
+state cannot be read, the write-before-send record stays: trading is paused and `reconcile`
+reads the order by `client_oid`; for a maker order that is still open it cancels it first,
+reads the final state, applies any fill and logs the attempt. A cancel that answers
+`NO_ACTIVE_ORDER` (316) means the order had already ended, and the final read decides.
+If the whole call is cut off while the order rests (a client or tool timeout), the same
+record keeps trading paused and `reconcile` cancels the order.
+
+**Preview.** `resting_price`, `quantity`, `notional`, `maker_fee_pct` and its source
+(`exchange_get_fee_rate`, `default_estimate_not_read` when the rate could not be read, or
+`owner_override`), `taker_fee_pct`, and three round trips in percent, all fees only and
+paid only if the order fills: `maker_taker_round_trip_pct` (also
+`estimated_round_trip_pct`: a maker entry and a taker exit pay no spread at the same
+touch), `maker_maker_round_trip_pct` and `taker_taker_round_trip_pct` (spread plus two
+taker fees, the old estimate). The saving is before adverse selection: a resting order
+fills most when the price moves against it. The book gives the queue at the touch
+(`touch_queue_quantity` and `touch_queue_value`); there is no trade-flow estimate, so the
+preview says the fill probability is unknown.
+
+**Per-pair maker fee override.** `ExchangeService.set_maker_fee_override(user_id, pair,
+pct)` stores a maker rate for one pair (percent, 0 to 1) in `maker_settings.json`, for a
+promotion such as a zero-fee token once its terms are read. It changes only the preview
+estimate and the `fee_class` label. It has no route and no MCP action, and nothing assumes
+it exists. The ledger always books the fee the Exchange reports.
+
+**Measurement.** Every attempt is appended to `maker_log.json` beside the ledger (time,
+pair, side, purpose, resting price, wait, outcome, filled fraction, fee, fee in quote,
+taker rate then, time to fill; the last 1000 are kept). `GET /crypto-exchange/maker-stats`
+and the MCP action `maker_stats` (read-only) return the attempts, outcomes, fill rate
+(complete fills over placed and resolved orders), any-fill rate, average filled fraction,
+average seconds to fill, average fee percent, `fee_saved_vs_taker`, the notional left
+unfilled, a split by purpose and the last ten attempts. An attempt logged as uncertain is
+replaced by its reconciled row. Fee saved is not the whole story: judge after some days
+whether it beats the moves missed by unfilled orders. The Trade page shows a compact block.
+
+**Crew.** The trader prompt uses maker mode only for entries and target exits with a window
+of at least an hour whose maker round trip, times the usual 1.3 multiple, is at most the
+target; the 1.6% target bar is unchanged. Stops, rotation legs and anything that must
+complete stay taker. An unfilled or partial maker order is never retried as a taker order
+in the same tick. The reviewer's bounded intent carries an optional `mode`, and the analyst
+says whether an entry is patient or urgent. These are prompts, not server authorization.
+
+### Verified and not verified
+
+Read on 29 Oct 2026 from the public Exchange API v1 documentation
+(`exchange-developer.crypto.com`, formerly `exchange-docs.crypto.com`) and ccxt's
+`cryptocom.py`. Nothing below was tested against the live Exchange or the UAT sandbox, no
+private endpoint was called, and the tests use fakes.
+
+Verified in the documents:
+
+* `private/create-order` takes `instrument_name`, `side`, `type` (LIMIT), `price`,
+  `quantity`, `client_oid` (up to 36 characters), `time_in_force` (`GOOD_TILL_CANCEL`,
+  `IMMEDIATE_OR_CANCEL`, `FILL_OR_KILL`) and `exec_inst`, an array that may hold
+  `POST_ONLY` or `SMART_POST_ONLY` (mutually exclusive). ccxt sends post-only as
+  `exec_inst: ["POST_ONLY"]` with `GOOD_TILL_CANCEL`, which is what Condor sends.
+* `create-order` and `cancel-order` are asynchronous: the reply only confirms the request.
+  `cancel-order` takes `order_id` or `client_oid`.
+* Reason code 43005 `POST_ONLY_REJ` ("Rejected POST_ONLY create-order request"), code 316
+  `NO_ACTIVE_ORDER`, 42901 `TOO_MANY_REQUESTS` on HTTP 429, 204 `DUPLICATE_CLORDID`.
+* `get-order-detail` returns `status` (PENDING, NEW, ACTIVE, FILLED, CANCELED, REJECTED,
+  EXPIRED), `quantity`, `limit_price`, `avg_price`, `cumulative_quantity`,
+  `cumulative_value`, `cumulative_fee`, `fee_instrument_name`, `exec_inst`, `reason`,
+  `maker_fee_rate` and `taker_fee_rate`.
+* Rate limits: 15 requests per 100 ms each for create, cancel and cancel-all; 30 per
+  100 ms for get-order-detail. A maker wait uses about 30 requests of the
+  module's own 90 a minute budget.
+* `private/get-fee-rate` reports the effective spot maker and taker rate in basis points
+  (the owner's account: 25 and 50, read earlier).
+
+Not verified:
+
+* Whether a post-only order that would cross is refused synchronously (code 43005) or
+  accepted and then ended as REJECTED or CANCELED. The documented text for 43005 only
+  names a time-in-force mismatch, not a crossing. Condor handles both: 43005 on the create
+  and a REJECTED order with nothing filled are definite refusals; a zero-fill CANCELED or
+  EXPIRED order before the deadline is reported as `unfilled` with `cancelled_by:
+  exchange`.
+* The HTTP status of 43005 (the table lists it under 500, which Condor treats as a definite
+  refusal for this one code only), and the exact reply to a cancel of an order that has
+  just filled (assumed code 316).
+* That a partly filled resting order reads `ACTIVE` with a non-zero `cumulative_quantity`,
+  and `CANCELED` with its partial fill after the cancel.
+* How long the cancel takes to show; Condor reads up to 10 times, 1 s apart.
+* The fee on a maker fill: its currency (base, quote or CRO), whether `cumulative_fee` is
+  reported for it, and whether it matches `effective_spot_maker_rate_bps`. A fee in a
+  currency other than the coin or the quote is recorded but not applied to the ledger, as
+  for taker orders.
+* Whether `get-order-detail` answers at once after the create (a "not found" is tolerated
+  while polling, but not after the cancel).
+* Minimum order size or notional for post-only orders, and the book's third column (order
+  count) and exact size semantics at a level.
+* Self-trade prevention (code 43012) with a resting order.
+* The "Zero-Fee Token" promotion: not enabled, its terms unread; nothing assumes it.
+* Fill probability: no trade-flow or queue-position data is read.
+
+**First live use.** Nothing has been run live. The first live maker order must be a tiny
+manual one the owner approves: the owner switches maker mode on, a single minimum-size
+order is placed through the owner's own API call, and its `maker` block, the Exchange order
+history and `maker_stats` are checked against the points above before the crew is allowed
+to use it.
+
 ## Market data
 
 `coins` lists the top pairs by 24-hour volume in the quote currency with bid, ask,

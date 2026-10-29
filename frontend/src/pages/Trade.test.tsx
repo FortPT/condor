@@ -22,6 +22,7 @@ const exchangeStatus = { connected: true, environment: "production", enabled: fa
 const flowsRead = (path: unknown) => String(path).startsWith("/api/v1/native-flows?venue=");
 const onlyReads = (calls: unknown[][]) => calls.every(([path, init]) =>
   (flowsRead(path) || path === "/api/v1/crypto-exchange/status" || path === "/api/v1/crypto-exchange/scorecard" ||
+    path === "/api/v1/crypto-exchange/maker-stats" ||
     String(path).startsWith("/api/v1/crypto-exchange/coins?") || String(path).startsWith("/api/v1/crypto-exchange/candles?")) && !init);
 vi.mock("@/lib/api", async () => ({
   apiFetch: request.fetch,
