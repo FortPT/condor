@@ -1715,3 +1715,10 @@ class HistoryTests(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_response_cap_fits_the_full_instrument_list():
+    # The live instrument list is several MB (about 17k rows); a 4 MiB cap made every sync fail.
+    from condor import trading212
+
+    assert trading212.MAX_BYTES >= 16 * 1024 * 1024

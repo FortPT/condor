@@ -127,7 +127,9 @@ PENDING_POLLS = 6
 CANCEL_POLLS = 5
 HISTORY_POLLS = 3
 POLL_WAIT_SEC = 2.0
-MAX_BYTES = 4 * 1024 * 1024
+# The full instrument list (about 17k rows) is far larger than any other answer; it is fetched
+# at most once per INSTRUMENT_TTL_SEC and Trading 212 allows it once per 50 s.
+MAX_BYTES = 32 * 1024 * 1024
 MAX_PAGES = 4
 INSTRUMENT_TTL_SEC = 1800
 EXCHANGE_TTL_SEC = 1800
