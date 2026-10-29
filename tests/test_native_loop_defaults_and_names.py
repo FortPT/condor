@@ -74,12 +74,13 @@ def test_tool_descriptions_name_the_venue_crypto_com_and_do_not_call_the_scoreca
         "crypto_com_exchange",
         "kraken_xstocks",
         "revolut_x",
+        "trading212",
         "native_portfolio",
     ):
         text = described[name]
         assert "Crypto.com Exchange" not in text, name
         assert "paper" not in text.lower(), name
-    for name in ("crypto_com_exchange", "kraken_xstocks", "revolut_x"):
+    for name in ("crypto_com_exchange", "kraken_xstocks", "revolut_x", "trading212"):
         assert "scores the calls, not the trades actually placed" in described[name]
     assert "Crypto.com" in short["crypto_com_exchange"]
     assert "Exchange" not in short["crypto_com_exchange"]

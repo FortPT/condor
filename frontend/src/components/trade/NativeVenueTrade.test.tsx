@@ -334,3 +334,100 @@ describe("Revolut X recent orders", () => {
   });
 });
 
+
+describe("trading212 panel (EUR ledger, USD reference market rows)", () => {
+  const venue = NATIVE_VENUES.trading212;
+  const rows = [
+    { symbol: "AAPL", ticker: "AAPL_US_EQ", price: "270", bid: "269.9", ask: "270.1", spread_pct: "0.074", volume_24h_usd: 9_000_000, change_since_open_pct: "0.8" },
+    { symbol: "TSLA", ticker: "TSLA_US_EQ", price: "300", bid: "300", ask: "300.4", spread_pct: "0.133", volume_24h_usd: 5_000_000, change_since_open_pct: "-1.2" },
+  ];
+  const valuation = {
+    equity: "41.6", quote: "EUR",
+    positions: [{ symbol: "TSLA", ticker: "TSLA_US_EQ", units: "0.05", cost_eur: "10", price_eur: "232", value_eur: "11.6", price_usd: "300" }],
+  };
+
+  function setup(opts: { connected?: boolean; valuation?: unknown } = {}) {
+    status = {
+      connected: opts.connected ?? true, has_secret: true, account_currency: "EUR", venue: "Trading 212", quote: "EUR", enabled: true,
+      market: { open: true, new_york_time: "Wed 10:00", minutes_to_close: 360 },
+      ledger: { quote: "EUR", cash: "30", positions: { TSLA: { units: "0.05", cost: "10" } }, uncertain_order: null, enabled: true, floor: "2", synced: true, orders: [] },
+    };
+    mocks.fetch.mockReset().mockImplementation((path: string) => {
+      if (path.endsWith("/status")) return Promise.resolve(status);
+      if (path.endsWith("/scorecard")) return Promise.resolve(scorecard);
+      if (path.includes("/stocks?keyword=TS")) return Promise.resolve({ quote: "EUR", stocks: [rows[1]] });
+      if (path.includes("/stocks")) return Promise.resolve({ quote: "EUR", stocks: rows });
+      if (path.includes("/candles")) return Promise.resolve(candles);
+      if (path.endsWith("/accounts")) return Promise.resolve({ accounts: [
+        { currency: "EUR", balance: "30", available: "30" },
+        { currency: "TSLA", balance: "0.05", available: "0.05", value_eur: "11.6" },
+        { currency: "NVDA", balance: "1", available: "1" },
+      ] });
+      if (path.endsWith("/history")) return Promise.resolve([
+        { order_id: "h1", pair: "TSLA_US_EQ", side: "buy", status: "filled", filled_quantity: "0.05", average_fill_price: "300", filled_amount: "10", total_fee: "0.02", fee_currency: "EUR", updated: 1_793_219_991_000 },
+      ]);
+      if (path.endsWith("/valuation")) return Promise.resolve("valuation" in opts ? opts.valuation : valuation);
+      return Promise.reject(new Error(`unexpected ${path}`));
+    });
+  }
+  async function open() {
+    await act(async () => root.render(<QueryClientProvider client={qc}><NativeVenueTrade venue={venue} /></QueryClientProvider>));
+    await wait();
+    await wait();
+  }
+
+  it("labels the markets as reference prices and uses the stocks route, never the coins route", async () => {
+    setup();
+    await open();
+    const markets = host.querySelector('section[aria-label="Markets"]')!.textContent!;
+    expect(host.querySelector('[data-testid="reference-note"]')!.textContent).toContain("Reference prices in USD from Kraken xStocks public data");
+    expect(host.querySelector('[data-testid="reference-note"]')!.textContent).toContain("Orders fill at Trading 212's own price");
+    expect(markets).toContain("Ref. price (USD)");
+    expect(markets).toContain("AAPL");
+    expect(markets).toContain("+0.80%");
+    expect(paths().some((path) => path.includes("/stocks?keyword="))).toBe(true);
+    expect(paths().some((path) => path.includes("/coins"))).toBe(false);
+    expect(host.textContent).toContain("US market open");
+    expect(host.textContent).toContain("TSLA/USD");
+    expect(host.textContent).toContain("Kraken xStocks reference");
+  });
+
+  it("values the EUR holdings and equity from the venue's own valuation, not the USD reference bid", async () => {
+    setup();
+    await open();
+    const holdings = host.querySelector('section[aria-label="Holdings"]')!.textContent!;
+    expect(holdings).toContain("Value at Trading 212 price (EUR)");
+    expect(holdings).toMatch(/11[.,]60 EUR/);
+    // 0.05 x 300 USD = 15 would be the wrong (USD bid) value
+    expect(holdings).not.toMatch(/15[.,]00 EUR/);
+    expect(host.textContent).toMatch(/Cash 30[.,]00 EUR/);
+    expect(host.textContent).toMatch(/Equity 41[.,]60 EUR/);
+    const balances = host.querySelector('section[aria-label="Account balances"]')!.textContent!;
+    expect(balances).toContain("Value (EUR)");
+    expect(balances).toMatch(/11[.,]60 EUR/);
+    const recent = host.querySelector('section[aria-label="Recent orders"]')!.textContent!;
+    expect(recent).toContain("TSLA_US_EQ");
+    expect(recent).toContain("0.02 EUR");
+    expect(paths().filter((path) => path.endsWith("/valuation")).length).toBe(1);
+  });
+
+  it("shows no value rather than a wrong one when the valuation has not priced a holding", async () => {
+    setup({ valuation: { equity: null, positions: [] } });
+    await open();
+    const holdings = host.querySelector('section[aria-label="Holdings"]')!.textContent!;
+    expect(holdings).toContain("TSLA");
+    expect(holdings).not.toMatch(/15[.,]00/);
+    expect(host.textContent).toContain("Equity —");
+  });
+
+  it("reads only, makes no valuation call while not connected and still shows the reference markets", async () => {
+    setup({ connected: false });
+    await open();
+    expect(paths().some((path) => path.endsWith("/valuation") || path.endsWith("/accounts") || path.endsWith("/history"))).toBe(false);
+    expect(host.querySelector("[data-state='not-connected']")!.querySelector("a")!.getAttribute("href")).toBe("/settings?tab=trading212");
+    expect(host.querySelector('section[aria-label="Markets"]')!.textContent).toContain("AAPL");
+    expect(calls().every(([path, init]) => path.startsWith(venue.base) && !init)).toBe(true);
+    const labels = Array.from(host.querySelectorAll("button")).map((b) => b.textContent ?? "");
+    expect(labels.filter((label) => /\b(buy|sell|order|place|preview|confirm|enable|pause|reconcile)\b/i.test(label))).toEqual([]);
+  });
+});

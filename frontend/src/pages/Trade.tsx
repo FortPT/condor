@@ -19,7 +19,7 @@ export function Trade() {
   const workspace = params.get("workspace") === "app" ? "crypto-exchange" : params.get("workspace");
   const explicitExchange = workspace === "hummingbot" || workspace === "exchange" ||
     params.has("type") || params.has("connector") || params.has("pair");
-  // Kraken xStocks and Revolut X are only ever opened explicitly: they never become the default.
+  // Kraken xStocks, Revolut X and Trading 212 are only ever opened explicitly: they never become the default.
   const nativeWorkspace = isNativeVenueKey(workspace) ? workspace : null;
   const cryptoWorkspace = !nativeWorkspace && (workspace === "crypto-exchange" ||
     (!explicitExchange && !!status.data?.connected && credentials.length === 0));

@@ -1842,9 +1842,131 @@ async def revolut_x(
     return {"data": result}
 
 
+# Same reasoning as the Exchange: an order waits for Trading 212 to report it final
+# (placement, a bounded wait for the fill, a cancel of any remainder, the history).
+TRADING212_ORDER_TIMEOUT = 90.0
+
+
+@handle_errors("Trading 212")
+async def trading212(
+    action: Literal[
+        "status",
+        "valuation",
+        "accounts",
+        "history",
+        "stocks",
+        "candles",
+        "preview",
+        "order",
+        "reconcile",
+        "predict",
+        "scorecard",
+    ],
+    side: Literal["buy", "sell"] = "buy",
+    symbol: str = "",
+    amount: str = "",
+    max_slippage_pct: str = "",
+    order_type: Literal["limit", "market"] = "limit",
+    timeframe: str = "15m",
+    count: str = "96",
+    keyword: str = "",
+    verdict: Literal["trade", "pass"] = "pass",
+    target_pct: str = "",
+    stop_pct: str = "",
+    horizon_hours: str = "",
+    note: str = "",
+) -> dict:
+    """Trade US stocks on Trading 212 (Invest account, EUR) within the bot's allocation.
+
+    status: bot allocation, enable state, positions, enforced limits and whether the
+    regular US session is open. valuation: equity in EUR at Trading 212's own current
+    prices (pauses at the equity floor). accounts: the Trading 212 cash and positions.
+    history: recent filled or final orders with Trading 212's own fill price and fees.
+    stocks: the most traded US stocks that Trading 212 lists AND the Kraken xStocks
+    public feed covers; `price`, `bid`, `ask`, `spread_pct`, `change_since_open_pct` and
+    `volume_24h_usd` are REFERENCE prices in USD from Kraken's public xStocks data (a
+    tokenized copy, not Trading 212's own quote; Trading 212 has no quote endpoint),
+    held stocks are always included, a keyword filters by ticker. candles: reference
+    OHLCV for `symbol` (timeframe 5m, 15m, 30m, 1h, 4h or 1D; count up to 300).
+    preview: size and price an order without placing it: quantity, limit price (USD),
+    EUR notional, the estimated round-trip cost (the 0.15% FX fee each way is Trading
+    212's published figure, the spread and slippage are ESTIMATES, all labelled) and
+    whether the cost guard would refuse a buy (round trip above 1.0%; a sale is never
+    refused for cost). order: buy (`amount` is the EUR to spend) or sell (`amount` is
+    the number of stock UNITS, fractions allowed); the default `order_type` limit is a
+    DAY limit order priced `max_slippage_pct` (default 0.3, max 2) through the
+    reference price and cancelled if it has not filled after a bounded wait; `market`
+    is for the one case where Trading 212 refuses limit orders (the service then
+    checks the fill against the reference). Never retry an order after an uncertain
+    outcome; use reconcile. predict: log one scorecard call for `symbol` (verdict
+    trade|pass, target_pct, stop_pct, horizon_hours, short note); it only logs
+    a call and never trades. scorecard: how the logged calls scored against real prices
+    after costs (it scores the calls, not the trades actually placed).
+
+    The owner saves the API key and secret, syncs the allocation and enables trading in
+    Settings. These tools cannot change credentials, sync or enable trading. Orders
+    only ever trade US stocks in a EUR account, are refused outside the regular US
+    session (Mon-Fri 09:30-16:00 New York) and enforce the bot allocation, the equity
+    floor and, below 1000 of total bot equity, a 40% cap per stock; from 1000 the 50%
+    cash reserve, three positions and one-sixth limit apply. No withdrawal exists in
+    the Trading 212 API; no margin, leverage, short selling or access to unallocated
+    holdings. A configured autonomous loop may order without per-order prompts; an
+    attended manual request should show the preview before ordering.
+    """
+    from urllib.parse import urlencode
+
+    from mcp_servers.condor.condor_client import call_main_api
+
+    if action in ("order", "preview"):
+        request = {
+            "side": side,
+            "symbol": symbol,
+            "amount": amount,
+            "max_slippage_pct": max_slippage_pct,
+            "order_type": order_type,
+        }
+        if action == "order":
+            return await call_main_api(
+                "POST",
+                "/trading212/order",
+                request,
+                timeout=TRADING212_ORDER_TIMEOUT,
+            )
+        return await call_main_api("POST", "/trading212/preview", request)
+    if action == "reconcile":
+        return await call_main_api(
+            "POST", "/trading212/reconcile", timeout=TRADING212_ORDER_TIMEOUT
+        )
+    if action == "predict":
+        return await call_main_api(
+            "POST",
+            "/trading212/predict",
+            {
+                "symbol": symbol,
+                "verdict": verdict,
+                "target_pct": target_pct,
+                "stop_pct": stop_pct,
+                "horizon_hours": horizon_hours,
+                "note": note,
+            },
+        )
+    if action == "stocks":
+        return await call_main_api(
+            "GET", "/trading212/stocks?" + urlencode({"keyword": keyword})
+        )
+    if action == "candles":
+        return await call_main_api(
+            "GET",
+            "/trading212/candles?"
+            + urlencode({"symbol": symbol, "timeframe": timeframe, "count": count}),
+        )
+    result = await call_main_api("GET", "/trading212/" + action)
+    return {"data": result}
+
+
 @handle_errors("native portfolio")
 async def native_portfolio() -> dict:
-    """Read the owner's Crypto.com, Kraken xStocks and Revolut X accounts (USD, read-only).
+    """Read the owner's Crypto.com, Kraken xStocks, Revolut X and Trading 212 accounts (USD, read-only).
 
     Hummingbot's `get_portfolio_overview` cannot see these accounts, which
     Condor trades itself, so on its own it reads as an empty portfolio for them.
@@ -1858,9 +1980,9 @@ async def native_portfolio() -> dict:
     two readings and a deposit reads as a gain. Each venue also carries a `flows`
     block: `recorded_net_flows_usd`, `confirmed_count`, `pending_count` (cash
     movements detected but not yet confirmed by the owner, which are NOT subtracted;
-    tell the owner) and whether the venue's history could be read. Revolut X's
-    ledger is in EUR (its `quote`), while every account value and change here is in
-    USD.
+    tell the owner) and whether the venue's history could be read. The Revolut X and
+    Trading 212 ledgers are in EUR (their `quote`), while every account value and
+    change here is in USD.
 
     Report these figures next to the Hummingbot ones, not instead of them. Kraken
     xStocks is the same Kraken account Hummingbot's `kraken` connector may also

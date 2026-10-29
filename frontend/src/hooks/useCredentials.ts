@@ -101,6 +101,42 @@ export type RevolutXStatus = {
   };
 };
 
+export type Trading212Status = {
+  /** API credentials are saved (the key itself is never returned). */
+  connected: boolean;
+  has_secret: boolean;
+  venue: string;
+  quote: string;
+  /** The account currency Trading 212 reported, or null before the first successful read. */
+  account_currency: string | null;
+  enabled: boolean;
+  ledger: ExchangeLedger & { account_currency?: string | null };
+  market: { open: boolean; new_york_time: string; minutes_to_close: number; note?: string };
+  limits?: {
+    floor?: string;
+    reserve_fraction?: string;
+    position_fraction?: string;
+    max_positions?: number;
+    guards_apply_from?: string;
+    max_asset_fraction_below_threshold?: string;
+    default_slippage_pct?: string;
+    pairs?: string;
+    session?: string;
+    fx_fee_pct_each_way?: string;
+    max_buy_round_trip_pct?: string;
+    min_order_eur?: string;
+  };
+};
+
+export function useTrading212Status() {
+  return useQuery({
+    queryKey: ["trading212-status"],
+    queryFn: () => apiFetch<Trading212Status>("/api/v1/trading212/status"),
+    refetchInterval: 10000,
+    retry: false,
+  });
+}
+
 export function useRevolutXStatus() {
   return useQuery({
     queryKey: ["revolut-x-status"],

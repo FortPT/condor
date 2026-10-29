@@ -25,7 +25,7 @@ export function NativeFlowsPanel({
   title,
   defaultCurrency,
 }: {
-  /** The server's venue key: `crypto_com_exchange`, `kraken_xstocks` or `revolut_x`. */
+  /** The server's venue key: `crypto_com_exchange`, `kraken_xstocks`, `revolut_x` or `trading212`. */
   venue: string;
   title: string;
   defaultCurrency: string;

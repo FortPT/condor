@@ -33,6 +33,7 @@ POST_V1_TOOLS = {
         "crypto_com_exchange",
         "kraken_xstocks",
         "revolut_x",
+        "trading212",
         "native_portfolio",
     },
     "hummingbot_api": set(),
@@ -185,6 +186,41 @@ def test_revolut_x_schema_exposes_no_credential_key_or_enable_arguments():
             "public_key",
             "enabled",
             "user_id",
+            "pair",
+        }
+        & properties.keys()
+    )
+
+
+def test_trading212_schema_exposes_no_credential_key_or_enable_arguments():
+    tool = live_surface(condor_server)["trading212"]
+    properties = tool["inputSchema"]["properties"]
+    assert set(properties["action"]["enum"]) == {
+        "status",
+        "valuation",
+        "accounts",
+        "history",
+        "stocks",
+        "candles",
+        "preview",
+        "order",
+        "reconcile",
+        "predict",
+        "scorecard",
+    }
+    # the order type is the one extra argument: limit (the default) or market
+    assert set(properties["order_type"]["enum"]) == {"limit", "market"}
+    assert properties["order_type"]["default"] == "limit"
+    assert (
+        not {
+            "api_key",
+            "api_secret",
+            "secret",
+            "credentials",
+            "enabled",
+            "sync",
+            "user_id",
+            "ticker",
             "pair",
         }
         & properties.keys()

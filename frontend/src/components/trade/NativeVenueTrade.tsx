@@ -6,8 +6,8 @@ import { apiFetch, type CandleData } from "@/lib/api";
 import { withRealFigures } from "./nativeHistory";
 import { CandleChart, Change, ScorecardPanel } from "./TradeParts";
 import {
-  accountValue, accountsOf, equityOf, historyOf, holdingsOf, rowsOf, useNativeStatus,
-  type NativeVenue, type VenueRow,
+  REFERENCE_NOTE, accountRowValue, accountsOf, equityFromValuation, equityOf, historyOf, holdingsFromValuation, holdingsOf, rowsOf,
+  useNativeStatus, type NativeVenue, type VenueRow,
 } from "./nativeVenue";
 import { money, num, price } from "./tradeFormat";
 
@@ -25,7 +25,7 @@ const volume = (value: string | number | null) => {
 };
 
 /**
- * A read-only look at a native venue (Kraken xStocks, Revolut X): the bot allocation and
+ * A read-only look at a native venue (Kraken xStocks, Revolut X, Trading 212): the bot allocation and
  * what it holds, the whole account's balances, the most traded markets, a chart, recent
  * orders and the call scorecard. There is no order ticket: the agent loop trades, and
  * connecting, syncing and enabling live in Settings.
@@ -33,7 +33,8 @@ const volume = (value: string | number | null) => {
  * The cadence is the Crypto.com panel's: status every 10 s and the top markets every
  * 30 s (public data, cached on the server). Balances, history and valuation are read once
  * and on request, never polled, because Revolut X's public endpoints allow one request a
- * second and its valuation reads a book per position.
+ * second and its valuation reads a book per position. Trading 212's market rows are only a
+ * USD reference feed, so its EUR ledger is valued from its own `/valuation`, read once on load.
  */
 export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
   const { base, key, title } = venue;
@@ -49,7 +50,7 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
 
   const top = useQuery({
     queryKey: [key, "top"],
-    queryFn: () => apiFetch<unknown>(`${base}/coins?keyword=`),
+    queryFn: () => apiFetch<unknown>(`${base}/${venue.marketsPath}?keyword=`),
     refetchInterval: 30000,
     retry: false,
   });
@@ -58,7 +59,7 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
   const found = useQuery({
     queryKey: [key, "search", term],
     enabled: term.length > 0,
-    queryFn: () => apiFetch<unknown>(`${base}/coins?keyword=${encodeURIComponent(term)}`),
+    queryFn: () => apiFetch<unknown>(`${base}/${venue.marketsPath}?keyword=${encodeURIComponent(term)}`),
     retry: false,
   });
   const topRows = useMemo(() => rowsOf(venue, top.data), [venue, top.data]);
@@ -110,14 +111,25 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
   });
   // Valuation reads a live book per position on Revolut X, so it runs on request only.
   const valuation = useMutation({ mutationFn: () => apiFetch<unknown>(`${base}/valuation`), retry: false });
+  // A venue whose market rows are only a reference values its ledger itself, once on load.
+  const own = venue.autoValuation;
+  const ownValuation = useQuery({
+    queryKey: [key, "valuation"],
+    enabled: own && connected,
+    queryFn: () => apiFetch<unknown>(`${base}/valuation`),
+    staleTime: 60000,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
 
-  const holdings = holdingsOf(ledger, known);
+  const holdings = own ? holdingsFromValuation(ledger, ownValuation.data) : holdingsOf(ledger, known);
   const cash = num(ledger?.cash);
-  const equity = equityOf(ledger, holdings);
+  const equity = own ? equityFromValuation(ledger, ownValuation.data, holdings) : equityOf(ledger, holdings);
+  const valuing = own ? ownValuation.isFetching : valuation.isPending;
   const accountRows = accountsOf(accounts.data);
   const historyRows = withRealFigures(venue, historyOf(venue, history.data), ledger?.orders);
   const botOrders = [...(ledger?.orders ?? [])].reverse().slice(0, 5);
-  const error = status.error || top.error || found.error || accounts.error || history.error || valuation.error;
+  const error = status.error || top.error || found.error || accounts.error || history.error || valuation.error || ownValuation.error;
 
   return <div className="space-y-4" data-venue={key}>
     <div className="flex flex-wrap items-center gap-3">
@@ -129,7 +141,7 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
       <div className="ml-auto flex flex-wrap gap-2">
         <button className={button} disabled={!connected || accounts.isFetching} onClick={() => void accounts.refetch()}>{accounts.isFetching ? "Reading balances…" : "Refresh balances"}</button>
         <button className={button} disabled={!connected || history.isFetching} onClick={() => void history.refetch()}>{history.isFetching ? "Reading history…" : "Refresh history"}</button>
-        <button className={button} disabled={!connected || valuation.isPending} onClick={() => valuation.mutate()}>{valuation.isPending ? "Valuing…" : "Value allocation"}</button>
+        <button className={button} disabled={!connected || valuing} onClick={() => (own ? void ownValuation.refetch() : valuation.mutate())}>{valuing ? "Valuing…" : "Value allocation"}</button>
       </div>
     </div>
     {error && <p role="alert" className="text-sm text-[var(--color-red)]">{error.message}</p>}
@@ -140,13 +152,14 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
 
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
       <section className={`${card} flex max-h-[34rem] flex-col`} aria-label="Markets">
+        {venue.referenceLabel && <p className="mb-2 text-xs text-[var(--color-text-muted)]" data-testid="reference-note">{REFERENCE_NOTE}</p>}
         <input className={input} placeholder={`Search ${venue.noun === "coins" ? "coin" : "stock"}`} value={search} onChange={(event) => setSearch(event.target.value)} aria-label={`Search ${venue.noun === "coins" ? "coin" : "stock"}`} />
         <div className="mt-2 min-h-0 flex-1 overflow-auto">
           {top.isLoading && <p role="status" className="p-2 text-sm">Loading markets…</p>}
           {term && found.isLoading && <p role="status" className="p-2 text-sm">Searching…</p>}
           {top.isError && <p className="p-2 text-sm text-[var(--color-text-muted)]">Markets unavailable: {top.error.message}</p>}
           {listed.length > 0 && <table className="w-full text-left text-sm">
-            <thead><tr><th>{venue.noun === "coins" ? "Coin" : "Stock"}</th><th>Price</th><th>Bid</th><th>Ask</th><th>Spread</th><th>{venue.changeLabel}</th><th>{venue.volumeLabel}</th></tr></thead>
+            <thead><tr><th>{venue.noun === "coins" ? "Coin" : "Stock"}</th><th>{venue.referenceLabel ? `Ref. price (${venue.priceQuote})` : "Price"}</th><th>Bid</th><th>Ask</th><th>Spread</th><th>{venue.changeLabel}</th><th>{venue.volumeLabel}</th></tr></thead>
             <tbody>{listed.map((row) => <tr key={row.symbol}>
               <td><button type="button" aria-pressed={row.symbol === symbol} className="rounded px-1 font-medium hover:bg-[var(--color-surface-hover)] aria-pressed:bg-[var(--color-surface-hover)]" onClick={() => setPicked(row.symbol)}>{row.symbol}</button>
                 {held.includes(row.symbol) && <span className="ml-1 text-xs text-[var(--color-text-muted)]">held</span>}</td>
@@ -162,7 +175,7 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
 
       <section className={card} aria-label="Chart">
         <div className="mb-2 flex flex-wrap items-baseline gap-x-4 gap-y-1">
-          <h2 className="text-lg font-semibold">{symbol ?? "—"}{symbol && <span className="ml-2 text-sm font-normal text-[var(--color-text-muted)]">{symbol}/{quote}</span>}</h2>
+          <h2 className="text-lg font-semibold">{symbol ?? "—"}{symbol && <span className="ml-2 text-sm font-normal text-[var(--color-text-muted)]">{symbol}/{venue.priceQuote}</span>}</h2>
           <span className="text-lg">{price(current?.price)}</span>
           <span className="text-sm"><Change value={current?.change_pct} label={`${venue.changeLabel} `} /></span>
           {current?.spread_pct !== undefined && <span className="text-sm text-[var(--color-text-muted)]">spread {current.spread_pct}%</span>}
@@ -177,14 +190,14 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
           {candles.data && candles.data.rows.length > 0 && <CandleChart rows={candles.data.rows} />}
           {candles.data && candles.data.rows.length === 0 && <p role="status" className="p-4 text-sm text-[var(--color-text-muted)]">{data?.market && !data.market.open ? "No recent candles: the US market is closed." : `No recent candles for ${symbol}.`}</p>}
         </div>
-        <p className="mt-2 text-xs text-[var(--color-text-muted)]">Chart: {candles.data ? `${title} ${candles.data.pair}` : `${title} candles`} ({interval}).</p>
+        <p className="mt-2 text-xs text-[var(--color-text-muted)]">Chart: {candles.data ? `${venue.referenceLabel ?? title} ${candles.data.pair}` : `${venue.referenceLabel ?? title} candles`} ({interval}).</p>
       </section>
     </div>
 
     <section className={card} aria-label="Holdings">
       <h2 className="mb-2 font-semibold">Bot holdings</h2>
       <table className="w-full text-left text-sm">
-        <thead><tr><th>Asset</th><th>Units</th><th>Cost</th><th>Value at bid</th><th>vs cost</th></tr></thead>
+        <thead><tr><th>Asset</th><th>Units</th><th>Cost</th><th>{own ? "Value at Trading 212 price (EUR)" : "Value at bid"}</th><th>vs cost</th></tr></thead>
         <tbody>
           <tr><td>{quote} cash</td><td>{ledger?.cash ?? "—"}</td><td>—</td><td>{money(cash, quote)}</td><td>—</td></tr>
           {holdings.map((row) => <tr key={row.symbol}>
@@ -194,8 +207,11 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
         </tbody>
       </table>
       {ledger && !holdings.length && <p className="mt-2 text-sm">The bot holds no positions.</p>}
-      <p className="mt-2 text-xs text-[var(--color-text-muted)]">Value uses the live best bid, the price a sale would meet first. Equity is the bot's cash plus those values, in {quote}. Only the bot allocation is traded.</p>
-      {valuation.data !== undefined && <div className="mt-2"><ExchangeResult value={valuation.data} /></div>}
+      <p className="mt-2 text-xs text-[var(--color-text-muted)]">{own
+        ? `Value uses Trading 212's own current price for each holding, in ${quote}; the USD reference rows above are never used for it. Equity is the bot's cash plus those values. Only the bot allocation is traded.`
+        : `Value uses the live best bid, the price a sale would meet first. Equity is the bot's cash plus those values, in ${quote}. Only the bot allocation is traded.`}</p>
+      {own && connected && ownValuation.isLoading && <p role="status" className="mt-2 text-sm">Valuing the allocation…</p>}
+      {(own ? ownValuation.data : valuation.data) !== undefined && <div className="mt-2"><ExchangeResult value={own ? ownValuation.data : valuation.data} /></div>}
     </section>
 
     <section className={card} aria-label="Account balances">
@@ -204,10 +220,10 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
       {connected && accounts.isLoading && <p role="status" className="text-sm">Reading balances…</p>}
       {connected && accounts.isError && <p className="text-sm text-[var(--color-text-muted)]">Balances unavailable: {accounts.error.message}</p>}
       {connected && accounts.data !== undefined && (accountRows.length ? <table className="w-full text-left text-sm">
-        <thead><tr><th>Asset</th><th>Balance</th><th>Available</th><th>Value at bid</th></tr></thead>
+        <thead><tr><th>Asset</th><th>Balance</th><th>Available</th><th>{own ? "Value (EUR)" : "Value at bid"}</th></tr></thead>
         <tbody>{accountRows.map((row) => <tr key={row.currency}>
           <td>{row.currency}</td><td>{row.balance}</td><td>{row.available}</td>
-          <td>{money(accountValue(venue, row.currency, row.balance, known), quote)}</td>
+          <td>{money(accountRowValue(venue, row, known), quote)}</td>
         </tr>)}</tbody>
       </table> : <p className="text-sm">The {title} account holds no funded balances.</p>)}
       <p className="mt-2 text-xs text-[var(--color-text-muted)]">The whole {title} account, not only the bot allocation. An asset outside the listed markets shows no value.</p>
