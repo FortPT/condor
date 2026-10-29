@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { PortfolioHistoryResponse } from "@/lib/api";
 import {
+  anomalyLabel,
   baselineNote,
   chartState,
   drawablePoints,
@@ -156,6 +157,14 @@ describe("notes", () => {
     expect(gapLabel({ source: "Hummingbot", from_ts: 100, to_ts: 200 }, time)).toBe(
       "Hummingbot: no readings from t100 to t200",
     );
+  });
+});
+
+describe("anomalies", () => {
+  it("says which reading was left out and what was around it", () => {
+    expect(
+      anomalyLabel({ source: "Hummingbot", ts: 7, value: 20.62, neighbour_value: 10.19 }, time, (v) => `$${v}`),
+    ).toBe("Hummingbot: one reading ($20.62) at t7 was left out as an outlier; the readings around it were about $10.19.");
   });
 });
 

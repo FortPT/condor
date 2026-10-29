@@ -200,6 +200,9 @@ async def get_portfolio_history(
     # carry forward their last known value instead of dropping to 0.
     points: list[PortfolioHistoryPoint] = []
     prev_connector_totals: dict[str, float] = {}
+    # What Hummingbot's own kraken connector contributed to each point: Kraken is also
+    # recorded natively, and the chart prefers that source (see below).
+    kraken_parts: dict[float, float] = {}
     for ts, snapshot in entries:
         total = (
             0 if keyed else snapshot.get("total_value", snapshot.get("total_usd", 0))
@@ -216,10 +219,17 @@ async def get_portfolio_history(
             if cur_totals:
                 prev_connector_totals = cur_totals
             total = sum(cur_totals.values())
+        else:
+            cur_totals = _extract_connector_totals(_snapshot_state(snapshot, keyed))
         if keyed and total <= 0:
             # Dict-keyed payloads historically drop zero-total points
             continue
         points.append(PortfolioHistoryPoint(timestamp=ts, total_usd=float(total)))
+        kraken_parts[ts] = sum(
+            value
+            for key, value in cur_totals.items()
+            if key.rsplit(":", 1)[-1] == "kraken"
+        )
 
     points.sort(key=lambda p: p.timestamp)
 
@@ -243,9 +253,38 @@ async def get_portfolio_history(
     skip = (portfolio_history.KRAKEN,) if hummingbot_counts_kraken else ()
     hummingbot_points = list(points)
     native: dict = {}
+    # The series (not the current total) prefers Condor's own Kraken xStocks readings to
+    # Hummingbot's kraken connector when it has them: the same account, but Hummingbot's
+    # history of it has had gaps and a bad row. Other connectors are used as they are.
+    connected = portfolio_chart.connected_sources(user.id)
+    try:
+        chart_native = portfolio_history.series(
+            user.id, since=since - portfolio_chart.EDGE_MARGIN_SEC
+        )
+    except Exception as error:  # noqa: BLE001 - never lose the Hummingbot chart
+        logger.warning("Native portfolio history skipped (%s)", type(error).__name__)
+        chart_native = {}
+    native_kraken = portfolio_chart.native_kraken_preferred(
+        chart_native, now, connected
+    )
+    chart_hummingbot, chart_skip = hummingbot_points, skip
+    if native_kraken:
+        chart_hummingbot = portfolio_chart.without_part(hummingbot_points, kraken_parts)
+        chart_skip = ()
     try:
         native = portfolio_history.series(user.id, since=since)
-        points = portfolio_history.merge(points, native, interval_seconds, skip=skip)
+        merge_points, merge_skip = points, skip
+        if native_kraken:
+            # Hummingbot's kraken stands in until Condor's own reading begins.
+            first, _ = portfolio_history.bounds(user.id, portfolio_history.KRAKEN)
+            native_from = float(first[0]) if first else since
+            merge_points = portfolio_chart.without_part(
+                points, kraken_parts, from_ts=native_from
+            )
+            merge_skip = ()
+        points = portfolio_history.merge(
+            merge_points, native, interval_seconds, skip=merge_skip
+        )
     except Exception as error:  # noqa: BLE001 - never lose the Hummingbot chart
         logger.warning("Native portfolio history skipped (%s)", type(error).__name__)
 
@@ -275,15 +314,13 @@ async def get_portfolio_history(
     try:
         chart = portfolio_chart.build(
             user.id,
-            hummingbot_points,
-            portfolio_history.series(
-                user.id, since=since - portfolio_chart.EDGE_MARGIN_SEC
-            ),
+            chart_hummingbot,
+            chart_native,
             since,
             now,
             interval_seconds,
-            skip=skip,
-            connected=portfolio_chart.connected_sources(user.id),
+            skip=chart_skip,
+            connected=connected,
         )
     except Exception as error:  # noqa: BLE001 - never lose the chart over its notes
         logger.warning("Portfolio chart series skipped (%s)", type(error).__name__)

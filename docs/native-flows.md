@@ -189,14 +189,23 @@ starts being recorded or money is deposited). It adds the fields the chart draws
   the window begins before the baseline the response carries `series_start_reason:
   "all_accounts_recording_from"`, and `sources` lists every account with its
   `first_ts` and a `status`: `recording`, `pending` (connected, no reading yet: reported,
-  never waited for) or `disconnected` (left out). Kraken xStocks is left out when
-  Hummingbot's own `kraken` connector is present, the same rule as the portfolio total, so
-  the same account is never added twice.
+  never waited for) or `disconnected` (left out). **Kraken is one account in
+  two places, and the chart prefers Condor's own readings:** when Kraken xStocks has
+  readings (and is still recording), Hummingbot's `kraken` connector is taken out of the
+  Hummingbot rows (other connectors stay as reported), because Hummingbot's history of it
+  has had real gaps and a bad row. The legacy `points` series does the same from the
+  first native reading on. Without native readings, Hummingbot's kraken is used and the
+  native source is left out, as before. The page's *current total* rule is unchanged.
 * **Gaps.** A source with no reading within two sampling intervals of a point (10 minutes
   for Condor's 5-minute recorder, two intervals of the range for Hummingbot, at least 15
   minutes; a Hummingbot reading of 0 counts as no reading) makes that point's total
   `null`. The page cuts the line there. Nothing is carried forward. `gaps` lists each
   stretch as `{source, from_ts, to_ts}`, including a source that has stopped recording.
+* **Outliers.** A single Hummingbot row that differs from both neighbours by more than
+  `max(10%, 2 USD)` while the neighbours agree within 2% is excluded and listed in
+  `anomalies` (`source`, `ts`, `value`, `neighbour_value`). The point stays in the series
+  as a `null` (a break); no replacement value is made up. A real step (a deposit, or
+  neighbours that disagree) is kept.
 * **Markers.** `flows` are the confirmed flows of the included native venues inside the
   returned window (`ts`, `venue`, `currency`, signed `amount`, `usd_value_at_time`,
   `source`), drawn as triangles on the line. `pending_flows` counts the unconfirmed ones,

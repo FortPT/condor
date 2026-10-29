@@ -1,4 +1,5 @@
 import type {
+  PortfolioAnomaly,
   PortfolioChartPoint,
   PortfolioFlowMarker,
   PortfolioHistoryGap,
@@ -143,6 +144,15 @@ export function flowLabel(flow: PortfolioFlowMarker): string {
 /** A line under the chart for one gap. */
 export function gapLabel(gap: PortfolioHistoryGap, formatTime: (ts: number) => string): string {
   return `${gap.source}: no readings from ${formatTime(gap.from_ts)} to ${formatTime(gap.to_ts)}`;
+}
+
+/** A line under the chart for a reading that was left out as an outlier (the line is cut there). */
+export function anomalyLabel(
+  anomaly: PortfolioAnomaly,
+  formatTime: (ts: number) => string,
+  formatValue: (usd: number) => string,
+): string {
+  return `${anomaly.source}: one reading (${formatValue(anomaly.value)}) at ${formatTime(anomaly.ts)} was left out as an outlier; the readings around it were about ${formatValue(anomaly.neighbour_value)}.`;
 }
 
 /**

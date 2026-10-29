@@ -447,6 +447,14 @@ export interface PortfolioHistoryGap {
   to_ts: number;
 }
 
+/** A Hummingbot reading left out as an outlier: reported, never smoothed or replaced. */
+export interface PortfolioAnomaly {
+  source: string;
+  ts: number;
+  value: number;
+  neighbour_value: number;
+}
+
 /** A confirmed deposit or withdrawal: `amount` is signed (deposits positive), in `currency`. */
 export interface PortfolioFlowMarker {
   ts: number;
@@ -475,6 +483,7 @@ export interface PortfolioHistoryResponse {
   series_start_reason?: string | null;
   sources?: PortfolioHistorySource[];
   gaps?: PortfolioHistoryGap[];
+  anomalies?: PortfolioAnomaly[];
   flows?: PortfolioFlowMarker[];
   pending_flows?: number;
   flows_note?: string | null;
