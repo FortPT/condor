@@ -231,6 +231,11 @@ Account EUR, free cash 30.00, US session open. `POST /trading212/order` buy AAPL
 * The owner's MRNA position (0.0467626) was in the account and not in the ledger: the
   bot compares per ticker, so a holding it did not open never confuses an order.
 * The module's protections worked: write-before-send, the pause on doubt, no resubmit.
+* **`GET /equity/history/transactions` answered HTTP 400 `/api-errors/invalid-request`**
+  to the first reader (`limit=50` and `time=2026-09-29T14:15:22Z`, no milliseconds), so
+  the venue showed `unavailable: transactions: ...`. Which part Trading 212 refused
+  was not in the error body. Fixed to the documented form below; the corrected call has
+  **not** been run live yet (no key in the fixing session).
 
 ## VERIFIED (read from Trading 212's public documentation on 2026-10-29)
 
@@ -268,8 +273,27 @@ sections, the per-endpoint pages) and the help centre FX fee articles.
   filledAt, type, walletImpact{currency, fxRate, netValue, realisedProfitLoss,
   taxes[{name, quantity, currency, chargedAt}]}}`; `taxes[].name` includes
   `CURRENCY_CONVERSION_FEE`; cursor pagination with `limit` (max 50) and `nextPagePath`.
-* Transactions: `items[]` with `amount`, `currency`, `dateTime`, `reference`, `type`
-  (WITHDRAW, DEPOSIT, FEE, TRANSFER, INTEREST_ON_FREE_CASH, LENDING_INTEREST).
+* Transactions (`GET /api/v0/equity/history/transactions`, the OpenAPI spec at
+  `docs.trading212.com/_spec/api.json`, read 2026-10-29): query parameters are exactly
+  `cursor` (string), `time` (string, `format: date-time`, "Retrieve transactions starting
+  from the specified time") and `limit` (integer, default 20, "Max items: 50"); the
+  spec has no other filter and no example. `items[]` with `amount` (in the transaction's
+  currency), `currency`, `dateTime` (date-time), `reference` (an ID), `type` (WITHDRAW,
+  DEPOSIT, FEE, TRANSFER, INTEREST_ON_FREE_CASH, LENDING_INTEREST); `nextPagePath`
+  (string). Errors 400 ("Bad filtering arguments"), 401, 403 (scope
+  `history:transactions`), 408, 429; 20 requests per minute. NOT in the spec but seen in
+  Trading 212's community thread on the API update (January/February 2026, user reports,
+  not an official statement): every example writes `time` with milliseconds and a `Z`
+  (`2026-01-12T11:12:31.337Z`); `nextPagePath` is sometimes only a query string
+  (`limit=5&cursor=..&time=..`), sometimes null for some accounts, and following it can
+  fail on a later page (404 "Transaction with id .. not found"); some accounts miss
+  deposits.
+* Account summary (`GET /equity/account/summary`) cash fields, from the spec:
+  `availableToTrade` ("funds available for investing"), `inPies` ("the sum of the cash
+  inside of all pies that is not yet invested"), `reservedForOrders` ("the amount of
+  cash reserved for pending orders; this cash is not available for placing new trades");
+  `totalValue` is described only as "Investments value in your account's primary
+  currency" (ambiguous: whole account or investments only).
 * Scopes seen in the error tables: `account`, `portfolio`, `metadata`, `orders:read`,
   `orders:execute`, `history:orders`, `history:transactions`.
 * Selling = negative `quantity`. Orders execute only in the account's primary currency.
@@ -321,9 +345,14 @@ sections, the per-endpoint pages) and the help centre FX fee articles.
 13. The **spread, slippage, regulatory and rounding** parts of the round-trip estimate
     (all estimates or assumptions), and the FX fee itself on an EU/EUR account (the help
     centre page does not name a region; the 0.15% figure is the published one).
-14. `GET /equity/history/transactions`: the **sign of WITHDRAW amounts** (Condor signs by
-    type), what the `time` filter means, and whether card or bank deposits appear as
-    `DEPOSIT`.
+14. `GET /equity/history/transactions`: that the corrected request (`limit=50`, `time` as
+    `YYYY-MM-DDTHH:MM:SS.mmmZ`) is accepted (the first, millisecond-less form was refused
+    with HTTP 400; that milliseconds are what it wanted is an inference from the
+    published examples, and if a 400 persists the reader retries the first page with only
+    `limit` and cuts the rows to the lookback itself), whether the rows come newest or
+    oldest first, how `nextPagePath` behaves for this account (a full page without one is
+    reported as an incomplete read), the **sign of WITHDRAW amounts** (Condor signs by
+    type), and whether card or bank deposits appear as `DEPOSIT`.
 15. That the **key permissions** offered in the app match the scope names above, and
     that a key without `history:*` or `metadata` degrades as intended (deposit tracking
     "unavailable"; no instrument list is an error for trading).
@@ -358,11 +387,49 @@ sections, the per-endpoint pages) and the help centre FX fee articles.
 
 ## Deposits and withdrawals
 
-`condor/native_flow_fetchers.py` reads `GET /equity/history/transactions` (cursor
-pagination, `DEPOSIT` and `WITHDRAW` rows, signed by type; fees, interest and transfers
-are not external flows) so the loop card PnL is a trading result. It degrades to
-"unavailable: <reason>" like the other venues, and the Trade tab's deposits panel is
-included automatically. See `docs/native-flows.md`.
+`condor/native_flow_fetchers.py` reads `GET /equity/history/transactions` (`limit=50`, `time`
+as a millisecond ISO timestamp, cursor pagination by `nextPagePath`, whole path or only
+its query string; `DEPOSIT` and `WITHDRAW` rows, signed by type; `TRANSFER`, `FEE`,
+`INTEREST_ON_FREE_CASH` and `LENDING_INTEREST` are never external flows) so the loop
+card PnL is a trading result. A 400 on the first page is retried once with only `limit`.
+It degrades to "unavailable: <reason>" like the other venues (a later page failing keeps
+the rows already read and says so), and the Trade tab's deposits panel is included
+automatically. See `docs/native-flows.md`.
+
+## Whole-account value, and the trading result
+
+The value the dashboard shows and the history samples every five minutes
+(`portfolio()`, in USD) is the whole account: free cash (`availableToTrade`) + cash
+reserved for pending orders (`reservedForOrders`) + cash in pies (`inPies`) + every
+position at Trading 212's own current value. The bot allocation (the ledger and
+`valuation`: free cash + the bot's positions, never the excluded tickers) is separate and
+is what the bot may trade.
+
+* **A pending order must not make money vanish.** On 2026-10-29 the owner's market order
+  for MRNA (9.11 EUR) was queued before the open. The first history sample read 30.00 EUR
+  = 33.42 USD; after the 13:30 fill the account read about 39 EUR, so "trading result
+  since the first sample" showed +10.2 USD with nothing earned. The code already added
+  `reservedForOrders` and `inPies`, so the live summary evidently did not itemise that
+  reservation in any cash field. Now, when the account's own `totalValue` exceeds the
+  itemised sum (cash fields + positions, every position priced) by more than
+  max(0.10 EUR, 0.2%), the difference is counted as cash and named in the sample's note
+  (`composition_eur.not_itemised`). If `totalValue` is only the investments' value (the
+  spec's wording) it is always below the sum and nothing is added: the rule can only
+  add money Trading 212 itself reports. **UNVERIFIED live**: whether `totalValue` is the
+  whole account, and where the live API put the reservation.
+* **The owner's excluded holdings are in the whole-account total** (the portfolio page and
+  the history chart keep them) **and out of the trading result.** The view carries
+  `excluded_value_usd` (the excluded tickers' market value) and the recorder stores it
+  beside each sample (`sample_excluded` table). The trading result is
+  `(now - excluded now) - (start - excluded at start) - confirmed flows`, so the owner's
+  shares never count as the bot's profit or loss. A sample recorded before that value was
+  stored has no figure: the comparison with it stays the plain equity change and says so
+  in its note (it is never assumed zero).
+* **Known limit:** cash that the owner turns into an excluded share by hand (or the
+  reverse) moves value between the bot's side and the owner's side and shows as a loss
+  (or gain) of that amount in the trading result until it is entered as a manual
+  withdrawal (or deposit) in the Trade tab. The false "unconfirmed cash movement" it used
+  to raise is gone (see `docs/native-flows.md`); the result, not the flow list, carries it.
 
 ## The stock scheduler (VM, not touched by this change)
 

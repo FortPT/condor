@@ -67,12 +67,29 @@ def _connect(user_id: int) -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS samples (
             ts INTEGER NOT NULL, source TEXT NOT NULL, total_usd REAL NOT NULL,
             PRIMARY KEY (source, ts));
+        -- The part of a sample's total_usd that is the owner's own holdings kept
+        -- outside the bot (Trading 212's exclusion list). A side table, so the samples
+        -- table keeps its shape; a sample without a row here did not record it.
+        CREATE TABLE IF NOT EXISTS sample_excluded (
+            ts INTEGER NOT NULL, source TEXT NOT NULL, excluded_usd REAL NOT NULL,
+            PRIMARY KEY (source, ts));
         """)
     return conn
 
 
-def record(user_id: int, source: str, total_usd, now: float | None = None) -> bool:
-    """Store one sample; False when it was skipped (bad value or too soon)."""
+def record(
+    user_id: int,
+    source: str,
+    total_usd,
+    now: float | None = None,
+    excluded_usd=None,
+) -> bool:
+    """Store one sample; False when it was skipped (bad value or too soon).
+
+    ``total_usd`` is the whole account. ``excluded_usd`` is the part of it that is
+    the owner's own holdings kept outside the bot (0 for a venue with none; ``None``
+    when unknown), so the trading result can leave them out.
+    """
     if not isinstance(source, str) or not _SOURCE.fullmatch(source):
         raise ValueError("Invalid history source")
     try:
@@ -81,6 +98,12 @@ def record(user_id: int, source: str, total_usd, now: float | None = None) -> bo
         return False
     if not total == total or total < 0:  # NaN or negative
         return False
+    try:
+        excluded = None if excluded_usd is None else float(excluded_usd)
+    except (TypeError, ValueError):
+        excluded = None
+    if excluded is not None and not excluded >= 0:  # negative or NaN
+        excluded = None
     stamp = int(now if now is not None else time.time())
     source = _stored(source)
     with closing(_connect(user_id)) as conn:
@@ -92,9 +115,38 @@ def record(user_id: int, source: str, total_usd, now: float | None = None) -> bo
         conn.execute(
             "INSERT OR REPLACE INTO samples VALUES (?, ?, ?)", (stamp, source, total)
         )
+        if excluded is None:
+            conn.execute(
+                "DELETE FROM sample_excluded WHERE source = ? AND ts = ?",
+                (source, stamp),
+            )
+        else:
+            conn.execute(
+                "INSERT OR REPLACE INTO sample_excluded VALUES (?, ?, ?)",
+                (stamp, source, excluded),
+            )
         conn.execute("DELETE FROM samples WHERE ts < ?", (stamp - RETENTION_SEC,))
+        conn.execute(
+            "DELETE FROM sample_excluded WHERE ts < ?", (stamp - RETENTION_SEC,)
+        )
         conn.commit()
     return True
+
+
+def excluded_at(user_id: int, source: str, ts: float) -> float | None:
+    """The excluded holdings' USD value stored with the sample at ``ts``.
+
+    ``None`` when that sample did not record it (taken before it was stored) or
+    there is no such sample: the caller must not assume zero.
+    """
+    if not _db(user_id).exists():
+        return None
+    with closing(_connect(user_id)) as conn:
+        row = conn.execute(
+            "SELECT excluded_usd FROM sample_excluded WHERE source = ? AND ts = ?",
+            (_stored(source), int(ts)),
+        ).fetchone()
+    return None if row is None or row[0] is None else float(row[0])
 
 
 def series(
@@ -229,7 +281,12 @@ async def sample_user(user_id: int, exchange=None, kraken=None, **services) -> N
             if not service.status(user_id)["connected"]:
                 continue
             data = await service.portfolio(user_id)
-            record(user_id, venue.label, data["total_usd"])
+            record(
+                user_id,
+                venue.label,
+                data["total_usd"],
+                excluded_usd=data.get("excluded_value_usd") or 0.0,
+            )
             # Deposit/withdrawal upkeep rides the same reading; it never raises.
             await native_flows.observe(user_id, venue.key, service, data)
         except Exception as error:  # noqa: BLE001 - history must never break a read

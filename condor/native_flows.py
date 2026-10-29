@@ -24,6 +24,7 @@ here talks to an exchange except the read-only history fetch in :func:`sync`.
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import re
@@ -68,6 +69,9 @@ SUPERSEDE_REL = 0.05
 #: A detection the owner already confirmed is the same money as a history row only when
 #: the two are stamped this close (it is already counted, so the match is stricter).
 SUPERSEDE_CONFIRMED_SEC = 1800
+#: Detected moves that offset each other are searched in subsets only up to this many
+#: legs (2 ** 12 subsets); a larger set is only tried as a whole.
+MAX_NET_LEGS = 12
 MAX_AMOUNT = Decimal("1000000000000")
 FUTURE_SLACK_SEC = 300
 
@@ -104,6 +108,15 @@ def _connect(user_id: int) -> sqlite3.Connection:
             venue TEXT PRIMARY KEY, ts REAL NOT NULL, ok INTEGER NOT NULL,
             reason TEXT NOT NULL DEFAULT '', count INTEGER NOT NULL DEFAULT 0);
         """)
+    # The bot ledger's cash and units at each reading (a later column, so an older
+    # file gets it added; the rows it already holds are untouched).
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(marks)")}
+    if "ledger" not in columns:
+        try:
+            conn.execute("ALTER TABLE marks ADD COLUMN ledger TEXT")
+            conn.commit()
+        except sqlite3.OperationalError:  # another connection added it first
+            pass
     return conn
 
 
@@ -810,6 +823,56 @@ def _balances(view: Mapping) -> dict[str, tuple[Decimal, float]]:
     return out
 
 
+def _ledger_units(ledger: Mapping) -> dict[str, Decimal]:
+    """The bot ledger's cash (under the quote token) and units per symbol."""
+    out: dict[str, Decimal] = {}
+    cash = _decimal(ledger.get("cash"))
+    quote = str(ledger.get("quote") or "").upper()
+    if cash is not None and quote:
+        out[quote] = cash
+    for symbol, position in (ledger.get("positions") or {}).items():
+        units = _decimal((position or {}).get("units")) if position else None
+        if units is not None:
+            out[str(symbol).upper()] = units
+    return out
+
+
+def _is_excluded(token: str, excluded: set[str]) -> bool:
+    return any(_tokens_match(token, name) for name in excluded)
+
+
+def _offsetting(priced: list[tuple[int, float]], tolerance: float) -> set[int]:
+    """Indexes of moves that are one conversion between the account's own holdings.
+
+    ``priced`` is ``[(index, usd)]``. A set of moves of both signs whose USD values
+    sum to within ``tolerance`` is a trade (cash for a token, a token for cash, one
+    currency for another), not money crossing the account boundary. The smallest
+    sets are taken first, each leg once, so a real deposit that happens beside a
+    trade is not swallowed by it.
+    """
+    pool = list(priced)
+    dropped: set[int] = set()
+    while len(pool) >= 2:
+        sizes = range(2, len(pool) + 1) if len(pool) <= MAX_NET_LEGS else (len(pool),)
+        best = None
+        for size in sizes:
+            for combo in itertools.combinations(pool, size):
+                values = [usd for _, usd in combo]
+                if not (any(v > 0 for v in values) and any(v < 0 for v in values)):
+                    continue
+                gap = abs(sum(values))
+                if gap <= tolerance and (best is None or gap < best[0]):
+                    best = (gap, combo)
+            if best is not None:
+                break
+        if best is None:
+            break
+        used = {index for index, _ in best[1]}
+        dropped |= used
+        pool = [leg for leg in pool if leg[0] not in used]
+    return dropped
+
+
 def detect(
     user_id: int,
     venue: str,
@@ -821,12 +884,21 @@ def detect(
     """Compare the account with the last reading and record unexplained moves as pending.
 
     A token's balance change since the last reading, minus what the bot's own orders
-    (``ledger['orders']``) and recorded flows explain, is a candidate when it is above
-    ``max(0.5 USD, 2% of the token's value at the last reading)``. Candidates that
-    offset each other (a conversion between two of the account's own currencies, such
-    as EUR to USD) are not flows and are dropped. The first reading only sets the
-    reference. Nothing is subtracted from PnL until the owner confirms a row.
-    Returns the rows it created.
+    (``ledger['orders']``), the bot ledger's own bookings and recorded flows explain,
+    is a candidate when it is above ``max(0.5 USD, 2% of the token's value at the last
+    reading)``. Then:
+
+    * moves that offset each other are dropped: a buy or sale of a token against the
+      venue's own cash (the bot's, or the owner's own manual trade) shows as a holding
+      that rose and cash that fell by about the same value, and a conversion between
+      two currencies of the account (EUR to USD) the same; no money crossed the
+      account's boundary, so none of these is a flow;
+    * a token on the venue's exclusion list (``excluded_tickers``: holdings the owner
+      keeps outside the bot) is never offered as a flow itself, but it still serves as
+      the other side of such a conversion (the owner's manual purchase of it with cash).
+
+    The first reading only sets the reference. Nothing is subtracted from PnL until
+    the owner confirms a row. Returns the rows it created.
     """
     _venue(venue)
     now = time.time() if now is None else now
@@ -836,14 +908,23 @@ def detect(
         return []
     current = _balances(view)
     stored = {t: [str(u), usd] for t, (u, usd) in current.items()}
+    excluded = {
+        str(name).upper() for name in (ledger.get("excluded_tickers") or []) if name
+    }
+    ledger_now = _ledger_units(ledger)
     created: list[dict] = []
 
     with closing(_connect(user_id)) as conn:
         conn.execute("BEGIN IMMEDIATE")
         mark = conn.execute("SELECT * FROM marks WHERE venue = ?", (venue,)).fetchone()
         conn.execute(
-            "INSERT OR REPLACE INTO marks (venue, ts, balances) VALUES (?,?,?)",
-            (venue, now, json.dumps(stored)),
+            "INSERT OR REPLACE INTO marks (venue, ts, balances, ledger) VALUES (?,?,?,?)",
+            (
+                venue,
+                now,
+                json.dumps(stored),
+                json.dumps({t: str(u) for t, u in ledger_now.items()}),
+            ),
         )
         if mark is None or now <= mark["ts"]:
             conn.commit()
@@ -852,6 +933,14 @@ def detect(
             t: (Decimal(v[0]), float(v[1]))
             for t, v in json.loads(mark["balances"]).items()
         }
+        ledger_before: dict[str, Decimal] | None = None
+        if mark["ledger"]:
+            try:
+                ledger_before = {
+                    t: Decimal(u) for t, u in json.loads(mark["ledger"]).items()
+                }
+            except (ValueError, InvalidOperation, AttributeError):
+                ledger_before = None
         since = float(mark["ts"])
         expected = expected_deltas(
             ledger.get("orders"), str(ledger.get("quote") or "USD"), since, now
@@ -865,15 +954,32 @@ def detect(
             explained[row["currency"]] = explained.get(
                 row["currency"], Decimal(0)
             ) + Decimal(row["amount"])
-        candidates = []
+        # (token, delta, usd or None, whether it is the owner's excluded holding)
+        candidates: list[tuple[str, Decimal, float | None, bool]] = []
         for token in sorted(set(current) | set(previous)):
             now_units, now_usd = current.get(token, (Decimal(0), 0.0))
             was_units, was_usd = previous.get(token, (Decimal(0), 0.0))
             expect = Decimal(0)
+            ordered = False
             for name, units in expected.items():
                 if _tokens_match(token, name):
                     expect += units
-            delta = now_units - was_units - expect - explained.get(token, Decimal(0))
+                    ordered = True
+            moved = now_units - was_units
+            if not ordered and ledger_before is not None:
+                # The bot ledger booked a fill (or a reconcile did) that no order row
+                # in the window shows, for example one booked from the account's own
+                # evidence after the balance had already moved. The ledger's move
+                # explains the account's, never more than it and never the other way.
+                booked = Decimal(0)
+                for name in set(ledger_now) | set(ledger_before):
+                    if _tokens_match(token, name):
+                        booked += ledger_now.get(name, Decimal(0)) - ledger_before.get(
+                            name, Decimal(0)
+                        )
+                if booked * moved > 0:
+                    expect += booked if abs(booked) <= abs(moved) else moved
+            delta = moved - expect - explained.get(token, Decimal(0))
             if delta == 0:
                 continue
             if now_units > 0 and now_usd > 0:
@@ -884,23 +990,20 @@ def detect(
                 price = None
             usd = float(delta) * price if price is not None else None
             threshold = max(DETECT_MIN_USD, DETECT_FRACTION * was_usd)
+            mine = _is_excluded(token, excluded)
             if usd is None:
                 # Unpriced and moved: still worth the owner's eye, never subtracted.
-                candidates.append((token, delta, None))
+                candidates.append((token, delta, None, mine))
             elif abs(usd) > threshold:
-                candidates.append((token, delta, usd))
-        priced = [c for c in candidates if c[2] is not None]
-        if (
-            len(priced) >= 2
-            and any(c[2] > 0 for c in priced)
-            and any(c[2] < 0 for c in priced)
-        ):
-            total_was = sum(u for _, u in previous.values())
-            if abs(sum(c[2] for c in priced)) <= max(
-                DETECT_MIN_USD, DETECT_FRACTION * total_was
-            ):
-                candidates = [c for c in candidates if c[2] is None]
-        for token, delta, usd in candidates:
+                candidates.append((token, delta, usd, mine))
+        priced = [(i, c[2]) for i, c in enumerate(candidates) if c[2] is not None]
+        total_was = sum(u for _, u in previous.values())
+        tolerance = max(DETECT_MIN_USD, DETECT_FRACTION * total_was)
+        conversions = _offsetting(priced, tolerance)
+        candidates = [
+            c for i, c in enumerate(candidates) if i not in conversions and not c[3]
+        ]
+        for token, delta, usd, _mine in candidates:
             word = "rose" if delta > 0 else "fell"
             flow_id = uuid.uuid4().hex
             conn.execute(

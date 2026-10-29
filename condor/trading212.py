@@ -64,6 +64,10 @@ API_PREFIX = "/api/v0"
 QUOTE = "EUR"
 #: The currency instruments are priced in, and the reference feed too.
 PRICE_CURRENCY = "USD"
+#: The account total may exceed the itemised cash + positions by this much (rounding,
+#: and the seconds between two reads) before the difference counts as money.
+UNITEMISED_MIN_EUR = Decimal("0.10")
+UNITEMISED_FRACTION = Decimal("0.002")
 SIDES = ("buy", "sell")
 ORDER_TYPES = ("limit", "market")
 #: Order lifecycle states of the documented enum that can no longer trade.
@@ -753,12 +757,15 @@ class Trading212Service:
             raise ValueError("Trading 212 reported no available cash")
         reserved = _decimal(cash.get("reservedForOrders"), Decimal(0))
         in_pies = _decimal(cash.get("inPies"), Decimal(0))
+        total_value = _decimal(data.get("totalValue"))
         return {
             "currency": str(data.get("currency") or "").upper(),
             "available": available,
             "reserved": reserved,
             "in_pies": in_pies,
             "cash_total": available + reserved + in_pies,
+            # The account's own total, only a cross-check (see ``_unitemised``).
+            "total_value": total_value if total_value and total_value > 0 else None,
         }
 
     @staticmethod
@@ -811,6 +818,33 @@ class Trading212Service:
         if position and position["value_eur"] is not None and position["quantity"]:
             return position["value_eur"] / position["quantity"]
         return None
+
+    @staticmethod
+    def _unitemised(summary, positions):
+        """Account money the summary's cash fields do not itemise, in EUR (never negative).
+
+        The whole account is free cash + cash reserved for orders + cash in pies +
+        the positions at market value. A pending order's reservation was seen live
+        missing from all of them (a 9.11 EUR market order queued before the US open),
+        so the owner's account first read 9.11 EUR lower than it was and the fill then
+        looked like a gain. ``totalValue`` is the account's own total: where it
+        exceeds the itemised sum by more than rounding and the minute between the
+        two reads, the difference is real money held in the account and is counted
+        as cash. If ``totalValue`` is only the investments' value (the spec's wording
+        is ambiguous) it is always below the sum and nothing is added, so this can
+        only ever add money Trading 212 itself reports. Needs every position priced.
+        """
+        total = summary.get("total_value")
+        if total is None:
+            return Decimal(0)
+        values = [row["value_eur"] for row in positions.values()]
+        if any(value is None for value in values):
+            return Decimal(0)
+        itemised = summary["cash_total"] + sum(values, Decimal(0))
+        gap = total - itemised
+        tolerance = max(UNITEMISED_MIN_EUR, total * UNITEMISED_FRACTION)
+        # Cents are what an account holds; the float noise of the reads is not money.
+        return gap.quantize(Decimal("0.0001")) if gap > tolerance else Decimal(0)
 
     async def accounts(self, user_id):
         summary = await self._summary(user_id)
@@ -882,15 +916,22 @@ class Trading212Service:
         except ValueError:
             by_ticker = {}
         balances, unpriced = [], []
-        if summary["cash_total"] > 0:
+        unitemised = self._unitemised(summary, positions)
+        cash_all = summary["cash_total"] + unitemised
+        if cash_all > 0:
             balances.append(
                 {
                     "token": QUOTE,
-                    "total": float(summary["cash_total"]),
+                    "total": float(cash_all),
                     "available": float(max(summary["available"], Decimal(0))),
-                    "usd_value": float(summary["cash_total"] * rate),
+                    "usd_value": float(cash_all * rate),
                 }
             )
+        excluded = {
+            str(name).upper()
+            for name in (_read_ledger(user_id).get("excluded_tickers") or [])
+        }
+        excluded_usd, excluded_tokens, positions_eur = Decimal(0), [], Decimal(0)
         for ticker, row in sorted(positions.items()):
             token = by_ticker.get(ticker) or ticker.split("_")[0]
             if row["price_usd"] and row["currency"] == PRICE_CURRENCY:
@@ -908,17 +949,46 @@ class Trading212Service:
                     "usd_value": float(usd),
                 }
             )
+            if row["value_eur"] is not None:
+                positions_eur += row["value_eur"]
+            if token.upper() in excluded:
+                excluded_usd += usd
+                excluded_tokens.append(token)
         note = (
             "Whole Trading 212 account at Trading 212's own current prices, euros "
-            "converted at Kraken's public EURUSD rate. Only the bot allocation may "
-            "be traded."
+            "converted at Kraken's public EURUSD rate: free cash, cash reserved for "
+            "pending orders, cash in pies and every position, so a pending order "
+            "never makes money vanish and reappear. Only the bot allocation may be "
+            "traded."
         )
+        if unitemised > 0:
+            note += (
+                f" {fmt(unitemised)} EUR that the account total includes but its "
+                "cash fields do not itemise is counted as cash."
+            )
+        if excluded_tokens:
+            note += (
+                " The owner's excluded holdings ("
+                + ", ".join(excluded_tokens)
+                + ") are in the total and are removed from the trading result."
+            )
         if unpriced:
             note += " No price for " + ", ".join(unpriced) + "."
         return {
             "connector": "Trading 212",
             "balances": balances,
             "total_usd": sum(row["usd_value"] for row in balances),
+            #: The owner's excluded holdings at market value: part of the whole
+            #: account, never the bot's profit or loss.
+            "excluded_value_usd": float(excluded_usd),
+            "excluded_tokens": excluded_tokens,
+            "composition_eur": {
+                "free_cash": fmt(summary["available"]),
+                "reserved_for_orders": fmt(summary["reserved"]),
+                "in_pies": fmt(summary["in_pies"]),
+                "not_itemised": fmt(unitemised),
+                "positions": fmt(positions_eur),
+            },
             "note": note,
         }
 

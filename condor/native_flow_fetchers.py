@@ -15,12 +15,16 @@ None of these shapes has been exercised against a live account yet:
   fetched as text. The status code meanings are the ones ccxt maps.
 * Kraken ``/0/private/Ledgers`` with ``type=deposit`` / ``type=withdrawal``: the
   endpoint is long established; the key needs only ``Data - Query ledger entries``.
-* Trading 212 ``GET /api/v0/equity/history/transactions``: the page lists the item
-  fields (``type`` DEPOSIT / WITHDRAW / FEE / TRANSFER / interest, ``amount``,
-  ``currency``, ``dateTime``, ``reference``) and cursor pagination (``nextPagePath``),
-  but not the SIGN of a withdrawal's amount, nor whether a card deposit's fee is a
-  separate row; both are handled defensively (the sign follows the type). Needs the
-  ``history:transactions`` scope; a 403 degrades to "unavailable".
+* Trading 212 ``GET /api/v0/equity/history/transactions``: the OpenAPI spec lists the
+  query parameters ``limit`` (max 50), ``cursor`` and ``time`` (``format: date-time``),
+  the item fields (``type`` DEPOSIT / WITHDRAW / FEE / TRANSFER / INTEREST_ON_FREE_CASH /
+  LENDING_INTEREST, ``amount``, ``currency``, ``dateTime``, ``reference``) and
+  ``nextPagePath``, but not the SIGN of a withdrawal's amount, nor whether a card
+  deposit's fee is a separate row; both are handled defensively (the sign follows the
+  type). The first live call sent ``time`` without milliseconds and got HTTP 400
+  ``invalid-request``; ``time`` now carries milliseconds (the form every published
+  example uses) and a 400 on the first page is retried once with ``limit`` only.
+  Needs the ``history:transactions`` scope; a 403 degrades to "unavailable".
 * Revolut X ``GET /1.0/transactions``: listed in the OpenAPI spec with types
   ``receive`` / ``send``, but the spec does not say whether a fiat top-up from the
   owner's Revolut account appears there. The ``revolut`` and ``external_bank_account``
@@ -30,6 +34,7 @@ None of these shapes has been exercised against a live account yet:
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -367,26 +372,85 @@ def parse_trading212_transactions(data: Any) -> list[RawFlow]:
     return found
 
 
+#: Trading 212 transaction pages: ``limit`` is documented as "Max items: 50" (default 20).
+TRADING212_PAGE = 50
+TRADING212_PATH = "/equity/history/transactions"
+TRADING212_PREFIX = "/api/v0" + TRADING212_PATH
+#: A ``nextPagePath`` that is only a query string (``limit=5&cursor=..&time=..``).
+TRADING212_QUERY_ONLY = re.compile(r"\??\w+=[^&#\s]*(?:&\w+=[^&#\s]*)*")
+
+
+def _trading212_time(epoch: float) -> str:
+    """The ``time`` filter in the form Trading 212's own community examples use.
+
+    The OpenAPI spec only says ``format: date-time``; every published example (the
+    community thread on the API update) writes it with milliseconds and a ``Z``,
+    ``2026-01-12T11:12:31.337Z``. The first live call sent ``...:59Z`` without the
+    milliseconds and got HTTP 400 ``invalid-request``.
+    """
+    moment = datetime.fromtimestamp(epoch, timezone.utc)
+    return moment.strftime("%Y-%m-%dT%H:%M:%S.") + f"{moment.microsecond // 1000:03d}Z"
+
+
+def _trading212_next(more: Any) -> tuple[str, dict | None]:
+    """``(path, query)`` for a ``nextPagePath``, refusing anything but this endpoint.
+
+    The spec gives no example; the community saw the full ``/api/v0/equity/history/
+    transactions?cursor=..`` path and, for some accounts, only the query string
+    (``limit=5&cursor=..&time=..``). Both are accepted; any other path is refused.
+    """
+    text = str(more).strip()
+    if text.startswith(TRADING212_PREFIX):
+        return text, None
+    if not TRADING212_QUERY_ONLY.fullmatch(text) or "//" in text:
+        raise FetchUnavailable("unexpected next page path")
+    return TRADING212_PREFIX + "?" + text.lstrip("?"), None
+
+
 async def fetch_trading212(service, user_id: int, since: float, now: float) -> Fetched:
+    """Read ``DEPOSIT``/``WITHDRAW`` rows since ``since``; any failure is a problem.
+
+    The first request filters with ``time`` (millisecond ISO form). If Trading 212
+    refuses that filter with a 400 the first page is read again with only ``limit``
+    (both are documented parameters) and the rows are cut to ``since`` here.
+    """
     out = Fetched([], [])
+    filtered = True
     try:
-        start = datetime.fromtimestamp(since, timezone.utc).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
-        path, query = "/equity/history/transactions", {"limit": 50, "time": start}
-        for _ in range(MAX_PAGES):
-            data = await service.private(user_id, "GET", path, query)
+        query: dict | None = {
+            "limit": TRADING212_PAGE,
+            "time": _trading212_time(since),
+        }
+        path = TRADING212_PATH
+        for page in range(MAX_PAGES):
+            try:
+                data = await service.private(user_id, "GET", path, query)
+            except Exception as error:  # noqa: BLE001
+                if page == 0 and filtered and getattr(error, "status", None) == 400:
+                    filtered = False
+                    query = {"limit": TRADING212_PAGE}
+                    data = await service.private(user_id, "GET", path, query)
+                else:
+                    raise
             out.flows += parse_trading212_transactions(data)
+            items = data.get("items") if isinstance(data, dict) else None
             more = data.get("nextPagePath") if isinstance(data, dict) else None
-            if not more or not data.get("items"):
+            if not more or not items:
+                if items and len(items) >= TRADING212_PAGE:
+                    # A full page and no way to ask for the next one: say so, do not
+                    # present a possibly truncated history as complete.
+                    out.problems.append(
+                        "transactions: a full page came back with no nextPagePath"
+                    )
                 break
-            if not str(more).startswith("/api/v0/equity/history/transactions"):
-                raise FetchUnavailable("unexpected next page path")
-            path, query = more, None
+            path, query = _trading212_next(more)
         else:
             out.problems.append("transactions: more pages than were read")
     except Exception as error:  # noqa: BLE001
         out.problems.append(f"transactions: {reason_of(error)}")
+    if not filtered:
+        # Without the ``time`` filter the endpoint returns the whole history: cut it.
+        out.flows = [flow for flow in out.flows if flow.ts >= since]
     return out
 
 
