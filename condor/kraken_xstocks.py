@@ -82,8 +82,9 @@ SPREAD_ALLOWANCE_PCT = 0.05
 MAX_BYTES = 4 * 1024 * 1024
 
 # An error Kraken raised BEFORE an order could exist. "EOrder:" covers validation,
-# funds and minimums; "EQuery:" unknown pair/asset; "EAPI:Invalid" key, signature,
-# nonce or arguments; "EGeneral:Permission denied"/"Invalid arguments"; and a rate
+# funds and minimums; "ETrade:" account-level trading refusals (seen live: "ETrade:User
+# Locked" answers AddOrder, even in validate mode, when the account may not trade);
+# "EQuery:" unknown pair/asset; "EAPI:Invalid" key, signature, nonce or arguments; "EGeneral:Permission denied"/"Invalid arguments"; and a rate
 # limit stops the request at the door. Anything else, EService: (busy, unavailable,
 # market modes), EGeneral:Internal error, EGeneral:Temporary lockout, an unknown
 # code, HTTP 5xx or a transport failure, may have created the order.
@@ -93,6 +94,7 @@ DEFINITE_PREFIXES = (
     "EGeneral:Permission denied",
     "EGeneral:Invalid",
     "EOrder:",
+    "ETrade:",
     "EQuery:",
 )
 

@@ -283,6 +283,7 @@ class KrakenTests(unittest.IsolatedAsyncioTestCase):
             "EGeneral:Invalid arguments",
             "EOrder:Insufficient funds",
             "EOrder:Order minimum not met",
+            "ETrade:User Locked",
             "EQuery:Unknown asset pair",
             "EAPI:Rate limit exceeded",
         ):
