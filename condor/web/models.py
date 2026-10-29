@@ -101,6 +101,46 @@ class PortfolioHistoryChange(BaseModel):
     flows_not_netted: list[str] = []
 
 
+class PortfolioChartPoint(BaseModel):
+    """One chart point; ``total_usd`` is ``None`` where a source had no reading."""
+
+    timestamp: float
+    total_usd: float | None = None
+    tokens: dict[str, float] = {}
+
+
+class PortfolioResultPoint(BaseModel):
+    """Cumulative trading result since the chart start, net of confirmed flows."""
+
+    timestamp: float
+    result_usd: float | None = None
+
+
+class PortfolioHistorySource(BaseModel):
+    source: str
+    #: First recorded reading (``None`` while pending).
+    first_ts: float | None = None
+    #: ``recording``, ``pending`` (connected, no reading yet) or ``disconnected``.
+    status: str
+
+
+class PortfolioHistoryGap(BaseModel):
+    source: str
+    from_ts: float
+    to_ts: float
+
+
+class PortfolioFlowMarker(BaseModel):
+    ts: float
+    venue: str
+    currency: str
+    #: Signed: deposits positive, withdrawals negative.
+    amount: str
+    usd_value_at_time: float | None = None
+    source: str
+    status: str = "confirmed"
+
+
 class PortfolioHistoryResponse(BaseModel):
     server: str
     points: list[PortfolioHistoryPoint]
@@ -108,6 +148,24 @@ class PortfolioHistoryResponse(BaseModel):
     top_tokens: list[str] = []
     #: Additive: the honest change over the window (never first-vs-last point).
     change: PortfolioHistoryChange | None = None
+    #: Additive (see ``condor/portfolio_chart.py``): the series the chart draws. It
+    #: starts at ``series_start_ts`` and has ``None`` totals where a source is missing.
+    #: ``None`` (absent) when it could not be worked out: draw ``points`` then.
+    chart_points: list[PortfolioChartPoint] | None = None
+    #: First moment every included source had a reading.
+    baseline_ts: float | None = None
+    series_start_ts: float | None = None
+    #: ``all_accounts_recording_from`` when the window began before ``baseline_ts``.
+    series_start_reason: str | None = None
+    sources: list[PortfolioHistorySource] = []
+    gaps: list[PortfolioHistoryGap] = []
+    flows: list[PortfolioFlowMarker] = []
+    pending_flows: int = 0
+    flows_note: str | None = None
+    result_points: list[PortfolioResultPoint] | None = None
+    result_reason: str | None = None
+    result_note: str | None = None
+    result_not_netted: list[str] = []
 
 
 # ── Bots ──
