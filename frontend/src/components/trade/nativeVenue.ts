@@ -99,6 +99,10 @@ export type NativeStatus = {
   connected: boolean;
   enabled: boolean;
   quote?: string;
+  /** Revolut X: whether the signing key exists (the API key is saved next). */
+  has_signing_key?: boolean;
+  /** Trading 212: the account currency read at the last sync; trading needs EUR. */
+  account_currency?: string | null;
   ledger: ExchangeLedger;
   market?: { open: boolean; new_york_time?: string; minutes_to_close?: number; note?: string };
 };
@@ -111,6 +115,21 @@ export function useNativeStatus(venue: NativeVenue) {
     refetchInterval: 10000,
     retry: false,
   });
+}
+
+/**
+ * Why trading cannot be enabled right now, or "" when it can. Pausing is always allowed. These are the
+ * rules the venue's Settings tab applies to the same button, so the two never disagree.
+ */
+export function toggleBlock(venue: NativeVenue, data: NativeStatus | undefined): string {
+  if (!data) return "waiting for the status to load";
+  if (!data.connected) return venue.key === "revolut-x" ? "generate a signing key and save the API key first" : "save an API key first";
+  if (data.enabled) return "";
+  const currency = data.account_currency ?? (data.ledger as { account_currency?: string | null } | undefined)?.account_currency ?? null;
+  if (venue.key === "trading212" && !!currency && currency.toUpperCase() !== "EUR") return "the account currency is not EUR";
+  if (data.ledger?.uncertain_order) return "reconcile the uncertain order first";
+  if (!data.ledger?.synced) return "sync the allocation first";
+  return "";
 }
 
 export type VenueRow = {
