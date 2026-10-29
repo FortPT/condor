@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from condor import native_accounts, portfolio_history
+from condor import native_accounts, portfolio_change, portfolio_history
 from condor.fetchers.portfolio import (
     PORTFOLIO_HISTORY_RANGES,
     UNIFIED_ACCOUNT_NOTE,
@@ -19,6 +19,7 @@ from condor.web.auth import get_current_user, require_server_access
 from condor.web.models import (
     BalanceItem,
     ConnectorBalance,
+    PortfolioHistoryChange,
     PortfolioHistoryPoint,
     PortfolioHistoryResponse,
     PortfolioResponse,
@@ -234,21 +235,45 @@ async def get_portfolio_history(
             for key in _extract_connector_totals(_snapshot_state(entries[-1][1], keyed))
         )
     )
+    now = time.time()
+    since = now - PORTFOLIO_HISTORY_RANGES[range][0]
+    interval_seconds = portfolio_history.INTERVAL_SECONDS.get(interval, 3600)
+    skip = (portfolio_history.KRAKEN,) if hummingbot_counts_kraken else ()
+    hummingbot_points = list(points)
+    native: dict = {}
     try:
-        native = portfolio_history.series(
-            user.id, since=time.time() - PORTFOLIO_HISTORY_RANGES[range][0]
-        )
-        points = portfolio_history.merge(
-            points,
-            native,
-            portfolio_history.INTERVAL_SECONDS.get(interval, 3600),
-            skip=(portfolio_history.KRAKEN,) if hummingbot_counts_kraken else (),
-        )
+        native = portfolio_history.series(user.id, since=since)
+        points = portfolio_history.merge(points, native, interval_seconds, skip=skip)
     except Exception as error:  # noqa: BLE001 - never lose the Hummingbot chart
         logger.warning("Native portfolio history skipped (%s)", type(error).__name__)
 
+    # The merged series starts when its youngest source does and holds deposits, so
+    # its first and last point are not a gain: state the change only when every
+    # source can be read at the window start and its flows are known.
+    try:
+        change = PortfolioHistoryChange(
+            **portfolio_change.compute(
+                user.id,
+                hummingbot_points,
+                native,
+                since,
+                interval_seconds,
+                skip=skip,
+                now=now,
+            )
+        )
+    except Exception as error:  # noqa: BLE001 - never lose the chart over a figure
+        logger.warning("Portfolio change skipped (%s)", type(error).__name__)
+        change = PortfolioHistoryChange(
+            **portfolio_change.unavailable("error")
+        )
+
     return PortfolioHistoryResponse(
-        server=name, points=points, interval=interval, top_tokens=top_tokens
+        server=name,
+        points=points,
+        interval=interval,
+        top_tokens=top_tokens,
+        change=change,
     )
 
 

@@ -30,7 +30,8 @@ import {
   type PortfolioHistoryResponse,
 } from "@/lib/api";
 import { formatCurrency, formatCurrencyPnl, formatCurrencyVolume, isExecutorActive } from "@/lib/formatters";
-import { realConnectors, realShare } from "@/lib/portfolio-paper";
+import { historyChange } from "@/lib/portfolio-change";
+import { realConnectors, realShare, realTokenCount } from "@/lib/portfolio-paper";
 import { agentsQuery, EXECUTORS_REFETCH_MS, executorsQuery } from "@/lib/queryClient";
 import { ACCOUNT_EQUITY } from "@/lib/strategy-unavailable";
 import { getThemeColors } from "@/lib/theme-colors";
@@ -84,6 +85,7 @@ function KpiCell({
   details,
   currencySymbol,
   pnlTitle,
+  pnlUnknownTitle,
 }: {
   label: string;
   mainValue: string | number;
@@ -91,6 +93,8 @@ function KpiCell({
   details: string;
   currencySymbol?: string;
   pnlTitle?: string;
+  /** When set and there is no `pnl`: show a dash with this hover instead of nothing. */
+  pnlUnknownTitle?: string;
 }) {
   return (
     <div className="flex-1 px-5 py-3 min-w-0">
@@ -105,6 +109,15 @@ function KpiCell({
             {formatCurrencyPnl(pnl, currencySymbol || "$")}
           </span>
         )}
+        {(pnl === undefined || pnl === null) && pnlUnknownTitle && (
+          <span
+            className="text-sm tabular-nums text-[var(--color-text-muted)]"
+            data-testid="portfolio-change-unknown"
+            title={pnlUnknownTitle}
+          >
+            —
+          </span>
+        )}
       </div>
       <div className="text-xs text-[var(--color-text-muted)] mt-1 truncate">{details}</div>
     </div>
@@ -116,6 +129,8 @@ function DashboardStrip({
   totalTokens,
   connectorCount,
   portfolioPnl,
+  portfolioPnlTitle,
+  portfolioPnlUnknownTitle,
   botCount,
   controllerCount,
   botPnl,
@@ -133,6 +148,8 @@ function DashboardStrip({
   totalTokens: number;
   connectorCount: number;
   portfolioPnl: number | null;
+  portfolioPnlTitle?: string;
+  portfolioPnlUnknownTitle?: string;
   botCount: number;
   controllerCount: number;
   botPnl: number;
@@ -159,6 +176,8 @@ function DashboardStrip({
           label="Portfolio"
           mainValue={formatCurrency(convertFromUsd(totalUsd), currencySymbol)}
           pnl={portfolioPnl != null ? convertFromUsd(portfolioPnl) : undefined}
+          pnlTitle={portfolioPnlTitle}
+          pnlUnknownTitle={portfolioPnlUnknownTitle}
           details={`${totalTokens} assets · ${connectorCount} connector${connectorCount !== 1 ? "s" : ""}`}
           currencySymbol={currencySymbol}
         />
@@ -963,15 +982,16 @@ export function Portfolio() {
   const realOnly = realConnectors(connectors);
   const hasExchange = connectors.some((connector) => connector.connector === "Crypto.com Exchange");
 
-  // Compute portfolio PnL from history (follows period selector)
-  const historyPoints = periodHistory?.points ?? [];
-  const portfolioPnl =
-    !hasExchange && historyPoints.length >= 2
-      ? historyPoints[historyPoints.length - 1].total_usd - historyPoints[0].total_usd
-      : null;
+  // The portfolio's change over the period (follows the period selector), as the
+  // server works it out: net of recorded deposits and withdrawals and only from sources
+  // that all have a value at the start. Never the first point against the last of the
+  // chart series, which mixes accounts that start at different times (and so once read
+  // +491%); when it cannot be stated honestly it is a dash with the reason.
+  const portfolioChange = historyChange(periodHistory);
+  const portfolioPnl = portfolioChange.known ? portfolioChange.abs : null;
 
   // Compute aggregate stats
-  const totalTokens = realOnly.reduce((s, c) => s + c.balances.length, 0);
+  const totalTokens = realTokenCount(connectors);
   const botsList = bots?.bots ?? [];
   const controllerCount = controllers.length;
   const activeExecutorCount = executorsList.filter((e) => isExecutorActive(e.status)).length;
@@ -1000,6 +1020,22 @@ export function Portfolio() {
         totalTokens={totalTokens}
         connectorCount={realOnly.length}
         portfolioPnl={portfolioPnl}
+        portfolioPnlTitle={
+          portfolioChange.known
+            ? [
+                `Change over ${period}, net of recorded deposits and withdrawals` +
+                  (portfolioChange.pct !== null
+                    ? ` (${portfolioChange.pct >= 0 ? "+" : ""}${portfolioChange.pct.toFixed(2)}%)`
+                    : ""),
+                portfolioChange.note,
+              ]
+                .filter(Boolean)
+                .join(". ")
+            : undefined
+        }
+        portfolioPnlUnknownTitle={
+          portfolioChange.known || !periodHistory ? undefined : portfolioChange.hint
+        }
         botCount={botsList.length}
         controllerCount={controllerCount}
         botPnl={botPnl}

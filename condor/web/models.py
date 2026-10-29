@@ -87,11 +87,29 @@ class PortfolioHistoryPoint(BaseModel):
     tokens: dict[str, float] = {}
 
 
+class PortfolioHistoryChange(BaseModel):
+    """The change over the window, or why it cannot be stated (see portfolio_change)."""
+
+    available: bool
+    reason: str | None = None
+    note: str | None = None
+    from_ts: float | None = None
+    start_usd: float | None = None
+    end_usd: float | None = None
+    net_flows_usd: float | None = None
+    change_usd: float | None = None
+    change_pct: float | None = None
+    sources: list[str] = []
+    flows_not_netted: list[str] = []
+
+
 class PortfolioHistoryResponse(BaseModel):
     server: str
     points: list[PortfolioHistoryPoint]
     interval: str
     top_tokens: list[str] = []
+    #: Additive: the honest change over the window (never first-vs-last point).
+    change: PortfolioHistoryChange | None = None
 
 
 # ── Bots ──

@@ -73,6 +73,9 @@ describe("/portfolio", () => {
     qc.setQueryData(["portfolio-history", SRV, "1W"], {
       server: SRV,
       interval: "1h",
+      // The server's figure: the points below start 120k -> 125.4k, but the change is
+      // what it says, not the difference of the first and last point.
+      change: { available: true, change_usd: 5_430.5, change_pct: 4.53 },
       points: [
         { timestamp: 1, total_usd: 120_000, tokens: { SOL: 84_000, USDC: 30_000, ETH: 6_000 } },
         { timestamp: 2, total_usd: 125_430.5, tokens: { SOL: 87_000, USDC: 30_000, ETH: 8_430.5 } },
@@ -111,6 +114,50 @@ describe("/portfolio", () => {
     expect(line).toContain("assets 4");
     expect(line).toContain("open positions 3");
     expect(line).toContain("tab assets");
+  });
+
+  it("leaves the change out when the server cannot state it honestly, never first-vs-last", () => {
+    qc.setQueryData(["portfolio-history", SRV, "1W"], {
+      server: SRV,
+      interval: "1h",
+      change: { available: false, reason: "different_start" },
+      points: [
+        { timestamp: 1, total_usd: 9_000 },
+        { timestamp: 2, total_usd: 125_430.5 },
+      ],
+    });
+    expect(onScreenLine("/portfolio")).not.toContain("change (1W)");
+  });
+
+  it("keeps a simulated (paper) account out of the total, assets, venues and shares", () => {
+    qc.setQueryData(["portfolio", SRV], {
+      server: SRV,
+      total_usd: 61.87,
+      connectors: [
+        {
+          connector: "Crypto.com Exchange",
+          total_usd: 46.93,
+          balances: [{ token: "USD", total: 46.93, available: 46.93, usd_value: 46.93 }],
+        },
+        {
+          connector: "kraken",
+          total_usd: 14.94,
+          balances: [{ token: "EUR", total: 12.8, available: 12.8, usd_value: 14.94 }],
+        },
+        {
+          connector: "Kraken xStocks (paper)",
+          total_usd: 100,
+          paper: true,
+          balances: [{ token: "USD", total: 100, available: 100, usd_value: 100 }],
+        },
+      ],
+    });
+    const line = onScreenLine("/portfolio");
+    expect(line).toContain("assets 2");
+    expect(line).not.toContain("paper");
+    expect(line).toContain("venues Crypto.com Exchange $46.93, kraken $14.94");
+    // 46.93 of the real 61.87 is 76%; with the 100 of paper money it would be 32%.
+    expect(line).toContain("USD $46.93 (76%)");
   });
 
   it("names the venues and the biggest holdings, summed across venues (R4)", () => {
