@@ -1,6 +1,6 @@
 """The venues Condor trades itself, outside Hummingbot, in one small registry.
 
-A native venue has a service module (per-user ledger, ``status`` and, for a real
+A native venue has a service module (per-user ledger, ``status`` and, for an
 account, an async ``portfolio``), a crew of agents that trade it, and a value
 history. Everything that has to know "which venues are there" reads this table:
 the dashboard portfolio, the value recorder, the loop cards' PnL and the chat
@@ -28,9 +28,14 @@ class NativeVenue:
     module: str
     #: Slugs of the agents whose loops trade this venue.
     agents: tuple[str, ...] = ()
-    #: A real account Condor can value in USD. ``False`` for a paper-only venue,
-    #: which has no ledger, no balance and therefore no equity.
+    #: An account Condor can value in USD (a ledger with an equity). ``False`` for
+    #: a venue that has none.
     account: bool = True
+    #: The account is simulated: its money is not real. A paper venue is valued,
+    #: recorded and given a PnL like any other, but it never enters a real total
+    #: (:func:`account_venues` leaves it out; :func:`ledger_venues` includes it) and
+    #: has no deposits or withdrawals, because nothing crosses its boundary.
+    paper: bool = False
     #: Shown on the dashboard when the account could not be valued.
     unvalued_note: str = ""
 
@@ -72,10 +77,14 @@ VENUES: tuple[NativeVenue, ...] = (
     ),
     NativeVenue(
         key="xstocks_paper",
-        label="xStocks paper",
-        module="condor.xstocks_paper",
+        label="Kraken xStocks (paper)",
+        module="condor.xstocks_paper_ledger",
         agents=("xstocks_paper_trader",),
-        account=False,
+        paper=True,
+        unvalued_note=(
+            "The Kraken xStocks paper account could not be valued; it is a "
+            "simulation and is not part of any real total."
+        ),
     ),
 )
 
@@ -88,8 +97,18 @@ def get(key: str) -> NativeVenue:
 
 
 def account_venues() -> tuple[NativeVenue, ...]:
-    """The venues that hold real money Condor can value."""
+    """The venues that hold real money Condor can value (never a paper venue)."""
+    return tuple(v for v in VENUES if v.account and not v.paper)
+
+
+def ledger_venues() -> tuple[NativeVenue, ...]:
+    """Every venue with an equity: the real accounts and the simulated ones."""
     return tuple(v for v in VENUES if v.account)
+
+
+def paper_labels() -> frozenset[str]:
+    """The value-history sources of the simulated accounts, never summed with real ones."""
+    return frozenset(v.label for v in VENUES if v.paper)
 
 
 def for_agent(agent_slug: str) -> NativeVenue | None:

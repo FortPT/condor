@@ -127,6 +127,28 @@ def test_crypto_com_exchange_schema_exposes_no_credential_or_enable_arguments():
     assert not {"api_key", "api_secret", "enabled", "user_id"} & properties.keys()
 
 
+def test_xstocks_paper_schema_has_the_simulated_order_actions_and_no_reset():
+    tool = live_surface(condor_server)["xstocks_paper"]
+    properties = tool["inputSchema"]["properties"]
+    assert set(properties["action"]["enum"]) == {
+        "status",
+        "valuation",
+        "history",
+        "coins",
+        "candles",
+        "preview",
+        "order",
+        "predict",
+        "scorecard",
+    }
+    # Resetting the paper account is an owner REST action, never a tool action.
+    assert "reset" not in properties["action"]["enum"]
+    assert not {"api_key", "api_secret", "enabled", "user_id", "reset"} & (
+        properties.keys()
+    )
+    assert "SIMULATED" in tool["description"]
+
+
 def test_kraken_xstocks_schema_exposes_no_credential_or_enable_arguments():
     tool = live_surface(condor_server)["kraken_xstocks"]
     properties = tool["inputSchema"]["properties"]

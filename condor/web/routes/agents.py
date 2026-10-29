@@ -207,7 +207,7 @@ class RunningInstance(BaseModel):
 #: A native crew (Crypto.com Exchange, Kraken xStocks) has no Hummingbot server;
 #: its money is the venue's account equity. ``no_history`` — no equity has been
 #: recorded for that venue yet, so a change cannot be stated; ``no_ledger`` — the
-#: crew is paper-only and holds no account.
+#: crew's venue holds no account (the paper crew's simulated account counts).
 Unavailable = Literal[
     "", "no_server", "no_access", "unreachable", "no_history", "no_ledger"
 ]

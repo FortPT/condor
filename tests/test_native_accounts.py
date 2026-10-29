@@ -172,9 +172,10 @@ def test_no_history_is_unavailable_not_a_made_up_zero():
     assert out.sessions == []
 
 
-def test_the_paper_crew_has_no_ledger_to_read():
+def test_the_paper_crew_has_an_equity_but_no_history_yet():
     out = perf(PAPER, [na.SessionSpan(1, T0, live=True)], FakeService(), now=T0)
-    assert out.unavailable == "no_ledger"
+    assert out.unavailable == "no_history"
+    assert "Paper test only" in out.note
 
 
 def test_venues_read_their_own_history_only():
@@ -317,8 +318,9 @@ def test_overview_reports_each_account_with_cash_positions_ledger_and_equity_cha
     }
     out = run(na.overview(1, services=services, now=T0))
     assert out["total_usd"] == 48.0
-    exchange, kraken, revolut = out["venues"]
+    exchange, kraken, revolut, paper = out["venues"]
     assert revolut["connected"] is False and revolut["connector"] == "Revolut X"
+    assert paper["paper"] is True and paper["connected"] is False
     assert exchange["connected"] is True
     assert exchange["account"]["total_usd"] == 48.0
     assert exchange["account"]["cash_usd"] == 20.0
@@ -347,7 +349,7 @@ def test_overview_says_so_when_a_venue_cannot_be_valued_and_leaves_it_out_of_the
         "revolut_x": FakeService(connected=False),
     }
     out = run(na.overview(1, services=services, now=T0))
-    exchange, kraken, _revolut = out["venues"]
+    exchange, kraken, _revolut, _paper = out["venues"]
     assert "Could not be valued" in exchange["error"]
     assert "account" not in exchange
     assert out["total_usd"] == 9.0

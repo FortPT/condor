@@ -19,7 +19,7 @@ export function Trade() {
   const workspace = params.get("workspace") === "app" ? "crypto-exchange" : params.get("workspace");
   const explicitExchange = workspace === "hummingbot" || workspace === "exchange" ||
     params.has("type") || params.has("connector") || params.has("pair");
-  // Kraken xStocks and Revolut X are only ever opened explicitly: they never become the default.
+  // Kraken xStocks (live and paper) and Revolut X are only ever opened explicitly: they never become the default.
   const nativeWorkspace = isNativeVenueKey(workspace) ? workspace : null;
   const cryptoWorkspace = !nativeWorkspace && (workspace === "crypto-exchange" ||
     (!explicitExchange && !!status.data?.connected && credentials.length === 0));
@@ -53,7 +53,8 @@ export function Trade() {
     {loading ? <p role="status" className="p-6 text-sm">Loading trading accounts…</p> :
       nativeWorkspace ? <div className="min-h-0 flex-1 space-y-4 overflow-auto p-6">
         <NativeVenueTrade venue={NATIVE_VENUES[nativeWorkspace]} />
-        <NativeFlowsPanel venue={flowVenueKey(nativeWorkspace)} title={NATIVE_VENUES[nativeWorkspace].title} defaultCurrency={NATIVE_VENUES[nativeWorkspace].quote} />
+        {/* A simulated account has no deposits or withdrawals, so it has no flows panel. */}
+        {!NATIVE_VENUES[nativeWorkspace].paper && <NativeFlowsPanel venue={flowVenueKey(nativeWorkspace)} title={NATIVE_VENUES[nativeWorkspace].title} defaultCurrency={NATIVE_VENUES[nativeWorkspace].quote} />}
       </div> :
       cryptoWorkspace ? <div className="min-h-0 flex-1 space-y-4 overflow-auto p-6">
         <ExchangeTrade />
