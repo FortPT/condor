@@ -131,29 +131,28 @@ describe("toggleBlock (the same rules as each venue's Settings tab)", () => {
     connected: true, enabled: false, ledger: { quote: "EUR", cash: "1", positions: {}, uncertain_order: null, synced: true, ...ledger }, ...over,
   } as NativeStatus);
   const revolut = NATIVE_VENUES["revolut-x"];
-  const kraken = NATIVE_VENUES["kraken-xstocks"];
   const t212 = NATIVE_VENUES.trading212;
 
   it("waits for the status and for a connection", () => {
-    expect(toggleBlock(kraken, undefined)).toBe("waiting for the status to load");
-    expect(toggleBlock(kraken, status({ connected: false }))).toBe("save an API key first");
+    expect(toggleBlock(t212, undefined)).toBe("waiting for the status to load");
+    expect(toggleBlock(t212, status({ connected: false }))).toBe("save an API key first");
     expect(toggleBlock(revolut, status({ connected: false }))).toBe("generate a signing key and save the API key first");
   });
 
   it("needs a synced allocation and no uncertain order to enable, in that order of reasons", () => {
-    expect(toggleBlock(kraken, status())).toBe("");
-    expect(toggleBlock(kraken, status({}, { synced: false }))).toBe("sync the allocation first");
-    expect(toggleBlock(kraken, status({}, { uncertain_order: { client_oid: "x" }, synced: false }))).toBe("reconcile the uncertain order first");
+    expect(toggleBlock(t212, status())).toBe("");
+    expect(toggleBlock(t212, status({}, { synced: false }))).toBe("sync the allocation first");
+    expect(toggleBlock(t212, status({}, { uncertain_order: { client_oid: "x" }, synced: false }))).toBe("reconcile the uncertain order first");
   });
 
   it("always allows a pause once connected", () => {
-    expect(toggleBlock(kraken, status({ enabled: true }, { synced: false, uncertain_order: { client_oid: "x" } }))).toBe("");
+    expect(toggleBlock(t212, status({ enabled: true }, { synced: false, uncertain_order: { client_oid: "x" } }))).toBe("");
     expect(toggleBlock(t212, status({ enabled: true, account_currency: "USD" }))).toBe("");
   });
 
   it("needs a EUR account for Trading 212", () => {
     expect(toggleBlock(t212, status({ account_currency: "USD" }))).toBe("the account currency is not EUR");
     expect(toggleBlock(t212, status({ account_currency: "EUR" }))).toBe("");
-    expect(toggleBlock(kraken, status({ account_currency: "USD" }))).toBe("");
+    expect(toggleBlock(revolut, status({ account_currency: "USD" }))).toBe("");
   });
 });

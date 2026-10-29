@@ -18,7 +18,6 @@ ROOT = Path(__file__).resolve().parents[1]
 CADENCE = {
     ("crypto_com_exchange_trader", "daily_spot"): (120, 600),
     ("revolut_x_trader", "intraday"): (120, 600),
-    ("kraken_xstocks_trader", "intraday"): (300, 600),
 }
 
 
@@ -72,7 +71,6 @@ def test_tool_descriptions_name_the_venue_crypto_com_and_do_not_call_the_scoreca
     described, short = _surface()
     for name in (
         "crypto_com_exchange",
-        "kraken_xstocks",
         "revolut_x",
         "trading212",
         "native_portfolio",
@@ -80,7 +78,7 @@ def test_tool_descriptions_name_the_venue_crypto_com_and_do_not_call_the_scoreca
         text = described[name]
         assert "Crypto.com Exchange" not in text, name
         assert "paper" not in text.lower(), name
-    for name in ("crypto_com_exchange", "kraken_xstocks", "revolut_x", "trading212"):
+    for name in ("crypto_com_exchange", "revolut_x", "trading212"):
         assert "scores the calls, not the trades actually placed" in described[name]
     assert "Crypto.com" in short["crypto_com_exchange"]
     assert "Exchange" not in short["crypto_com_exchange"]

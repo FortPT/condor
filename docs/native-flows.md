@@ -1,6 +1,6 @@
 # Deposits and withdrawals of the native venues
 
-The loop card PnL of a native crew (Crypto.com, Kraken xStocks, Revolut X) is
+The loop card PnL of a native crew (Crypto.com, Revolut X, Trading 212) is
 the change in whole-account equity between two readings. Money the owner moves in or
 out of the account is not trading, but used to read as profit or loss (a 4.27 EUR top-up
 showed as +4.74 USD on Revolut X). `condor/native_flows.py` keeps a small per-venue
@@ -29,7 +29,7 @@ trading result = equity at the end reading
   stretch) is still subtracted, because the live reading includes it. A flow before the
   first recorded sample is not, because that sample already includes it.
 * The USD value is stored when the row is written (`usd_value_at_time`): EUR through the
-  venue's own EUR/USD path (Revolut X's `eur_usd`, Kraken's EURUSD; Crypto.com falls back
+  venue's own EUR/USD path (Revolut X's `eur_usd`; Crypto.com falls back
   to Kraken's public EURUSD), USD/USDT/USDC at 1, any other coin from the account's own
   price at that moment. History is never re-priced later. A flow that cannot be priced
   is kept without a value, is not subtracted, and the figure's note says so; the owner
@@ -81,16 +81,6 @@ documentation or, where marked, a third-party client; tests use fabricated fixtu
   200 rows per request. **Key permission:** these are account-history reads; the
   existing trading key is expected to be enough, but that is not verified. If the call
   is refused, the panel shows the venue's error text.
-* **Kraken**: `/0/private/Ledgers` with `type=deposit` and `type=withdrawal` (paged with
-  `ofs`, 50 per page, up to 20 pages). Chosen over `DepositStatus`/`WithdrawStatus`,
-  which need *Funds permissions: Query* (a funds permission, and `DepositStatus` is
-  deprecated in favour of the Funding API) for one read-only permission:
-  **`Data - Query ledger entries`**. Add it to the owner's key (no funds or withdrawal
-  permission is needed). The net move is `amount - fee`; asset codes are mapped
-  (`ZEUR` to `EUR`, `XXBT` to `BTC`). Tokenised-asset (xStock) transfers use another
-  asset class and are not read; enter them by hand. The ledger endpoint's
-  parameters are from Kraken's documentation as remembered plus the page fetched for
-  `QueryLedgers`; the exact `Ledgers` page was not fetched.
 * **Revolut X**: `GET /1.0/transactions` is in the OpenAPI spec
   (`revolut-x-crypto-exchange.yml`): `start_date`/`end_date` in ms (range at most 30
   days, so the reader walks 29-day windows), `types` filter including `receive` and
@@ -187,15 +177,6 @@ flows inside the window between the two equity readings, so an old flow is harml
   (A bare date is noon UTC. If the exact time matters for a session that started that
   day, enter the real time through the API with `ts`.) Priced at today's EUR/USD, not
   the rate of that day: enter the USD value if you know it.
-* **Kraken xStocks**: each EUR deposit as a deposit in EUR with its date. If the
-  Ledgers read works with the new key permission they appear on their own.
-* **Kraken EUR to USD conversion**: a conversion is not a flow, so detection ignores
-  it, but its cost (spread and fee) is a real loss that is not trading either. To take
-  it out of the trading result, add one manual **withdrawal** in USD for the cost
-  amount (not the converted amount) with the note "EUR to USD conversion cost". The
-  figure stays honest: equity fell by the cost, and the cost is recorded as not
-  trading.
-
 ## The Portfolio Evolution chart
 
 `GET /servers/{name}/portfolio/history` keeps `points`, `interval`, `top_tokens` and
@@ -210,13 +191,7 @@ starts being recorded or money is deposited). It adds the fields the chart draws
   the window begins before the baseline the response carries `series_start_reason:
   "all_accounts_recording_from"`, and `sources` lists every account with its
   `first_ts` and a `status`: `recording`, `pending` (connected, no reading yet: reported,
-  never waited for) or `disconnected` (left out). **Kraken is one account in
-  two places, and the chart prefers Condor's own readings:** when Kraken xStocks has
-  readings (and is still recording), Hummingbot's `kraken` connector is taken out of the
-  Hummingbot rows (other connectors stay as reported), because Hummingbot's history of it
-  has had real gaps and a bad row. The legacy `points` series does the same from the
-  first native reading on. Without native readings, Hummingbot's kraken is used and the
-  native source is left out, as before. The page's *current total* rule is unchanged.
+  never waited for) or `disconnected` (left out). The page's *current total* rule is unchanged.
 * **Gaps.** A source with no reading within two sampling intervals of a point (10 minutes
   for Condor's 5-minute recorder, two intervals of the range for Hummingbot, at least 15
   minutes; a Hummingbot reading of 0 counts as no reading) makes that point's total
@@ -304,7 +279,7 @@ excluded value is removed only when both ends recorded it, so the two never over
 * No venue endpoint was exercised live; see the verification notes above.
 * Revolut X and Crypto.com deposits of coins use the account's current price for the USD
   value; a coin the account does not hold cannot be priced and needs a manual USD value.
-* Withdrawal fees on Crypto.com may not be included; Kraken's are (amount minus fee).
+* Withdrawal fees on Crypto.com may not be included.
 * Detection works on balances, so a deposit smaller than the threshold (0.5 USD or 2% of
   the token) is not noticed; enter it by hand if it matters.
 * A deposit that is spent on a manual purchase within one reading shows as the holding

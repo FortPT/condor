@@ -579,9 +579,9 @@ async def usd_rate(service, currency: str, view: Mapping | None = None, user_id=
     if code == "EUR":
         sources = [service]
         try:
-            from condor.kraken_xstocks import service as kraken
+            from condor import xstocks_market
 
-            sources.append(kraken)
+            sources.append(xstocks_market.service)
         except Exception:  # noqa: BLE001
             pass
         for source in sources:
@@ -761,9 +761,7 @@ async def sync(
 
 
 def _tokens_match(token: str, symbol: str) -> bool:
-    token, symbol = token.upper(), str(symbol).upper()
-    # Kraken's xStock tokens are the symbol plus a trailing ``x``.
-    return token == symbol or token == symbol + "X"
+    return token.upper() == str(symbol).upper()
 
 
 def expected_deltas(
@@ -792,13 +790,8 @@ def expected_deltas(
             continue
         fee_in_quote = fee_currency == quote.upper()
         fee_units = Decimal(0)
-        if fee_currency and not fee_in_quote and _tokens_match(fee_currency, symbol):
-            # Kraken states the fee in USD even when it is taken from the units.
-            fee_units = (
-                fee
-                if fee_currency == symbol
-                else fee * quantity / value if value else Decimal(0)
-            )
+        if fee_currency and not fee_in_quote and fee_currency == symbol:
+            fee_units = fee
         if side == "buy":
             add(quote.upper(), -(value + (fee if fee_in_quote else 0)))
             add(symbol, quantity - fee_units)

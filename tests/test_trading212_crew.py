@@ -69,7 +69,6 @@ def test_profiles_discoverable_with_enforced_exact_tool_boundaries(registry, slu
     assert "manage_agent_controllers" in allowlist_mutes(slug)
     # No other venue's tool is reachable from this crew.
     assert "crypto_com_exchange" in allowlist_mutes(slug)
-    assert "kraken_xstocks" in allowlist_mutes(slug)
     assert "revolut_x" in allowlist_mutes(slug)
 
 
@@ -82,7 +81,6 @@ def test_only_the_analyst_and_reviewer_have_no_market_or_account_tool(registry):
 def test_no_other_crew_can_reach_the_trading212_tool(registry):
     for slug in (
         "crypto_com_exchange_trader",
-        "kraken_xstocks_trader",
         "revolut_x_trader",
     ):
         assert "trading212" in allowlist_mutes(slug), slug
@@ -367,11 +365,10 @@ def test_nothing_in_the_crew_names_another_venues_tool(registry):
     for slug in TOOLS:
         text = registry.get(slug).instructions
         assert not re.search(r"\bcrypto_com_exchange\b", text), slug
-        assert not re.search(r"\bkraken_xstocks\b", text), slug
         assert not re.search(r"\brevolut_x\b", text), slug
         assert not re.search(r"\b(?:get_prices|get_market_data|run_code)\b", text), slug
     loop = StrategyStore().get(COORDINATOR, "intraday").instructions
-    assert not re.search(r"\b(?:crypto_com_exchange|kraken_xstocks|revolut_x)\b", loop)
+    assert not re.search(r"\b(?:crypto_com_exchange|revolut_x)\b", loop)
 
 
 def test_the_crew_never_touches_keys_or_credentials(registry):

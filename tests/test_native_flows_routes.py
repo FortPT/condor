@@ -110,7 +110,7 @@ def test_an_unknown_venue_is_a_404(client):
 def test_confirm_dismiss_delete(client):
     detected, _ = nf.add_flow(
         11,
-        "kraken_xstocks",
+        "revolut_x",
         amount="12",
         currency="EUR",
         ts=time.time() - 60,
@@ -119,10 +119,8 @@ def test_confirm_dismiss_delete(client):
         status="pending",
     )
     listing = client.get("/native-flows").json()
-    kraken = next(v for v in listing["venues"] if v["venue"] == "kraken_xstocks")
-    assert (
-        kraken["pending_count"] == 1 and "Unconfirmed cash movement" in kraken["note"]
-    )
+    other = next(v for v in listing["venues"] if v["venue"] == "revolut_x")
+    assert other["pending_count"] == 1 and "Unconfirmed cash movement" in other["note"]
 
     assert (
         client.post(f"/native-flows/{detected['id']}/confirm").json()["status"]
@@ -223,13 +221,9 @@ def test_sync_reads_the_history_and_runs_detection(client, monkeypatch):
 def test_sync_without_a_body_covers_every_account_venue(client, monkeypatch):
     for service in (exchange_service, revolut_service):
         monkeypatch.setattr(service, "status", lambda uid: {"connected": False})
-    from condor.kraken_xstocks import service as kraken_service
-
-    monkeypatch.setattr(kraken_service, "status", lambda uid: {"connected": False})
     res = client.post("/native-flows/sync")
     assert {r["venue"] for r in res.json()["results"]} == {
         "crypto_com_exchange",
-        "kraken_xstocks",
         "revolut_x",
         "trading212",
     }

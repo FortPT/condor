@@ -59,7 +59,7 @@ const PORTFOLIO: PortfolioResponse = {
   server: "FortPT VM-08",
   total_usd: 1592.93,
   connectors: [
-    { connector: "Kraken xStocks", total_usd: 1540, balances: [bal("USD", 40), bal("TSLA", 1500)] },
+    { connector: "Trading 212", total_usd: 1540, balances: [bal("USD", 40), bal("TSLA", 1500)] },
     { connector: "Crypto.com", total_usd: 52.93, balances: [bal("USD", 36), bal("HYPE", 16.93)] },
   ],
 };
@@ -108,7 +108,7 @@ const topHoldingsBlock = () =>
     .parentElement!;
 
 describe("Portfolio Top Holdings", () => {
-  it("lists USD once although Kraken and Crypto.com each hold it", () => {
+  it("lists USD once although Trading 212 and Crypto.com each hold it", () => {
     const labels = Array.from(topHoldingsBlock().querySelectorAll("span.font-medium")).map((el) => el.textContent);
     expect(labels.filter((label) => label === "USD")).toHaveLength(1);
     expect(labels).toEqual(["TSLA", "USD", "HYPE"]);

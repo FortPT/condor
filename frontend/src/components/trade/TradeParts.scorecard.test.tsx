@@ -32,11 +32,11 @@ afterEach(async () => {
   host.remove();
 });
 
-async function panelText(cost: number, venue: string, noun = "coins") {
+async function panelText(cost: number, venue: string, noun = "coins", prices?: string) {
   mocks.fetch.mockResolvedValue(card(cost));
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   await act(async () => root.render(
-    <QueryClientProvider client={qc}><ScorecardPanel base="/api/v1/x" queryKey={`k-${venue}`} venue={venue} noun={noun} /></QueryClientProvider>,
+    <QueryClientProvider client={qc}><ScorecardPanel base="/api/v1/x" queryKey={`k-${venue}`} venue={venue} noun={noun} prices={prices} /></QueryClientProvider>,
   ));
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
   return host.querySelector('section[aria-label="Scorecard"]')!.textContent!;
@@ -50,8 +50,14 @@ it("is a call scorecard that says it scores calls, not placed trades, with no pa
   expect(text).not.toMatch(/(^|[^a-z])(paper|test)([^a-z]|$)|Trader scorecard/i);
 });
 
+it("names the real price source when the venue has no quotes of its own", async () => {
+  const text = await panelText(0.4, "Trading 212", "stocks", "Kraken xStocks reference prices, not Trading 212's own quotes");
+  expect(text).toContain("scored later against Kraken xStocks reference prices, not Trading 212's own quotes after a 0.4% round-trip cost.");
+  expect(text).not.toContain("real Trading 212 prices");
+});
+
 it("never prints float noise in the round-trip cost", async () => {
-  const text = await panelText(0.1 + 0.11, "Kraken xStocks", "stocks");
+  const text = await panelText(0.1 + 0.11, "Trading 212", "stocks");
   expect(0.1 + 0.11).not.toBe(0.21);
   expect(text).toContain("after a 0.21% round-trip cost");
   expect(text).not.toContain("0.21000000000000002");

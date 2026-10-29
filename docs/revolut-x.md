@@ -1,8 +1,7 @@
 # Revolut X (live trading, EUR)
 
 Live trading of crypto on the Revolut X exchange through its REST API, in euros, within an
-allocation the owner syncs from the Revolut X account. It mirrors the Kraken xStocks service
-(`condor/kraken_xstocks.py`) and the Crypto.com service
+allocation the owner syncs from the Revolut X account. It mirrors the Crypto.com service
 (`condor/crypto_com_exchange.py`); it changes neither. The ledger quote currency is EUR: the
 owner's money is euros, so nothing is converted and only `<COIN>-EUR` pairs are traded
 (USD, USDC and GBP pairs exist on Revolut X and are refused).

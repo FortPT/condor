@@ -1,13 +1,13 @@
 # Trade performance: what each venue earns and loses
 
-Every venue tab on the Trade page (Crypto.com, Kraken xStocks, Revolut X, Trading 212) shows
+Every venue tab on the Trade page (Crypto.com, Revolut X, Trading 212) shows
 the same row of cards under its header, a **P/L** column and a totals row in *Bot holdings*, and
 a **Result** column in the recent-orders tables. Everything comes from data Condor already
 records; nothing is simulated or estimated in the browser, and nothing here places an order or
 contacts an exchange beyond the valuation the tab already reads.
 
 The server side is `condor/native_performance.py`, exposed read-only as
-`GET /api/v1/<venue>/performance` for `crypto-exchange`, `kraken-xstocks`, `revolut-x` and
+`GET /api/v1/<venue>/performance` for `crypto-exchange`, `revolut-x` and
 `trading212` (cached for a few seconds). The page asks once a minute.
 
 ## The six cards
@@ -27,8 +27,8 @@ one-line explanation.
 ### Two currencies, on purpose
 
 The value history is recorded in **USD** for the whole account, so *Today* and *Since start* are
-USD. The ledger is in the venue's own currency (EUR for Revolut X and Trading 212, USD for
-Kraken xStocks, the chosen quote for Crypto.com), so *Realized*, *Unrealized* and *Fees* are in
+USD. The ledger is in the venue's own currency (EUR for Revolut X and Trading 212, the chosen
+quote for Crypto.com), so *Realized*, *Unrealized* and *Fees* are in
 that currency. Each card names its currency; no figure is converted at a guessed rate.
 
 *Today* and *Since start* measure the whole account, not only the bot allocation, with the
@@ -59,7 +59,7 @@ asset by asset, with **average cost**:
 * a buy adds its units and its cost; a fee paid in the quote currency is part of the cost, and a fee
   paid in the coin reduces the units received (the same money);
 * a sell realizes `proceeds - average cost x units sold`, where the proceeds are net of a fee paid
-  in the quote currency (Revolut X and Kraken also take a coin-denominated fee out of the units);
+  in the quote currency (Revolut X also takes a coin-denominated fee out of the units);
 * a partial sell realizes only its share of the cost and leaves the rest at the same average;
 * a balance correction the ledger booked (Revolut X) removes units without changing cost, exactly
   as the ledger did.
@@ -112,7 +112,7 @@ The latter sets `partial_history: true`, and the card says "partial: order histo
 
 ## Pause and resume
 
-The Kraken xStocks, Revolut X and Trading 212 headers carry the same button as Crypto.com:
+The Revolut X and Trading 212 headers carry the same button as Crypto.com:
 **Pause trading** while enabled, **Enable trading within allocation** while paused. It calls the
 existing `PUT /<venue>/enabled` route. Enabling follows the venue's own rules (connected, no
 uncertain order, allocation synced; Trading 212 also needs a EUR account) and says why when it is

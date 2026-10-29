@@ -1,4 +1,4 @@
-"""Value history for the Exchange and Kraken accounts, and its merge into the chart."""
+"""Value history for the Exchange, Revolut X and Trading 212 accounts, and its merge into the chart."""
 
 import os
 import tempfile
@@ -6,7 +6,10 @@ import unittest
 from dataclasses import dataclass, field
 from unittest.mock import patch
 
+from condor import native_venues
 from condor import portfolio_history as ph
+
+TRADING212 = native_venues.get("trading212").label
 
 
 @dataclass
@@ -32,7 +35,7 @@ class StoreTests(unittest.TestCase):
     def test_samples_are_throttled_per_source(self):
         self.assertTrue(ph.record(1, ph.EXCHANGE, 48.0, now=T0))
         self.assertFalse(ph.record(1, ph.EXCHANGE, 48.5, now=T0 + 60))
-        self.assertTrue(ph.record(1, ph.KRAKEN, 9.0, now=T0 + 60))
+        self.assertTrue(ph.record(1, TRADING212, 9.0, now=T0 + 60))
         self.assertTrue(ph.record(1, ph.EXCHANGE, 49.0, now=T0 + ph.MIN_GAP_SEC + 1))
 
     def test_bad_values_are_ignored(self):
@@ -72,7 +75,7 @@ class NeighbourTests(unittest.TestCase):
     def test_nearest_gives_the_sample_at_or_before_and_the_first_after(self):
         ph.record(1, ph.EXCHANGE, 10, now=T0)
         ph.record(1, ph.EXCHANGE, 11, now=T0 + 600)
-        ph.record(1, ph.KRAKEN, 99, now=T0 + 300)
+        ph.record(1, TRADING212, 99, now=T0 + 300)
         before_both, mid, after_all = ph.nearest(
             1, ph.EXCHANGE, [T0 - 1, T0 + 300, T0 + 700]
         )
@@ -86,7 +89,7 @@ class NeighbourTests(unittest.TestCase):
         ph.record(1, ph.EXCHANGE, 10, now=T0)
         ph.record(1, ph.EXCHANGE, 11, now=T0 + 600)
         self.assertEqual(ph.bounds(1, ph.EXCHANGE), ((T0, 10.0), (T0 + 600, 11.0)))
-        self.assertEqual(ph.bounds(1, ph.KRAKEN), (None, None))
+        self.assertEqual(ph.bounds(1, TRADING212), (None, None))
 
     def test_reading_a_user_without_history_creates_nothing(self):
         self.assertEqual(ph.nearest(5, ph.EXCHANGE, [T0]), [(None, None)])
@@ -136,8 +139,8 @@ class MergeTests(unittest.TestCase):
 
     def test_a_source_the_hummingbot_history_already_counts_is_skipped(self):
         points = [Point(T0, 9.0)]
-        native = {ph.KRAKEN: [(T0, 9.4)], ph.EXCHANGE: [(T0, 48.0)]}
-        result = self.merged(points, native, skip=(ph.KRAKEN,))
+        native = {TRADING212: [(T0, 9.4)], ph.EXCHANGE: [(T0, 48.0)]}
+        result = self.merged(points, native, skip=(TRADING212,))
         self.assertEqual(result[0].total_usd, 57.0)
 
     def test_without_native_history_the_points_pass_through(self):
@@ -171,7 +174,7 @@ class RecorderTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_only_connected_accounts_are_sampled_and_failures_are_swallowed(self):
         await ph.sample_user(
-            1, exchange=FakeService(True, 48.2), kraken=FakeService(True, None)
+            1, exchange=FakeService(True, 48.2), trading212=FakeService(True, None)
         )
         rows = ph.series(1, since=0)
         self.assertEqual(list(rows), [ph.EXCHANGE])
@@ -181,11 +184,11 @@ class RecorderTests(unittest.IsolatedAsyncioTestCase):
         await ph.sample_user(
             1,
             exchange=FakeService(False, 48.2),
-            kraken=FakeService(True, 9.0),
+            trading212=FakeService(True, 9.0),
             revolut_x=FakeService(True, 61.5),
         )
         rows = ph.series(1, since=0)
-        self.assertEqual(set(rows), {ph.KRAKEN, ph.REVOLUT})
+        self.assertEqual(set(rows), {TRADING212, ph.REVOLUT})
         self.assertEqual(ph.REVOLUT, "Revolut X")
         self.assertIn(ph.REVOLUT, ph.SOURCES)
         self.assertEqual(rows[ph.REVOLUT][0][1], 61.5)
@@ -194,7 +197,7 @@ class RecorderTests(unittest.IsolatedAsyncioTestCase):
         await ph.sample_user(
             1,
             exchange=FakeService(True, 48.2),
-            kraken=FakeService(False, 0),
+            trading212=FakeService(False, 0),
             revolut_x=FakeService(True, None),
         )
         self.assertEqual(list(ph.series(1, since=0)), [ph.EXCHANGE])
@@ -206,7 +209,7 @@ class RecorderTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_disconnected_account_records_nothing(self):
         await ph.sample_user(
-            1, exchange=FakeService(False, 48.2), kraken=FakeService(False, 9.0)
+            1, exchange=FakeService(False, 48.2), trading212=FakeService(False, 9.0)
         )
         self.assertEqual(ph.series(1, since=0), {})
 
@@ -243,7 +246,7 @@ class StoredNameTests(unittest.TestCase):
         import sqlite3
         from contextlib import closing
 
-        ph.record(1, ph.KRAKEN, 9.0, now=T0)  # creates the file and schema
+        ph.record(1, TRADING212, 9.0, now=T0)  # creates the file and schema
         with closing(sqlite3.connect(ph._db(1))) as conn:
             conn.execute(
                 "INSERT INTO samples VALUES (?, 'Crypto.com Exchange', 40.0)",
@@ -266,7 +269,7 @@ class StoredNameTests(unittest.TestCase):
         import sqlite3
         from contextlib import closing
 
-        ph.record(1, ph.KRAKEN, 9.0, now=T0)
+        ph.record(1, TRADING212, 9.0, now=T0)
         with closing(sqlite3.connect(ph._db(1))) as conn:
             conn.execute(
                 "INSERT INTO samples VALUES (?, 'Crypto.com Exchange', 40.0)", (T0,)
@@ -274,7 +277,7 @@ class StoredNameTests(unittest.TestCase):
             conn.commit()
         self.assertTrue(ph.record(1, ph.EXCHANGE, 41.0, now=T0 + 600))
         # Stored under the old key, so history and a rollback both keep one series.
-        self.assertEqual(self._stored_sources(), {"Crypto.com Exchange", ph.KRAKEN})
+        self.assertEqual(self._stored_sources(), {"Crypto.com Exchange", TRADING212})
         rows = ph.series(1, since=T0 - 1, until=T0 + 1000)
         self.assertEqual(rows[ph.EXCHANGE], [(T0, 40.0), (T0 + 600, 41.0)])
         # The throttle sees the old rows too.

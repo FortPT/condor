@@ -57,26 +57,6 @@ export type CryptoExchangeStatus = {
   limits?: CryptoExchangeLimits;
 };
 
-export type KrakenXStocksStatus = {
-  connected: boolean;
-  venue: string;
-  quote: string;
-  enabled: boolean;
-  ledger: ExchangeLedger;
-  market: { open: boolean; new_york_time: string; minutes_to_close: number; note?: string };
-  limits?: {
-    floor?: string;
-    reserve_fraction?: string;
-    position_fraction?: string;
-    max_positions?: number;
-    guards_apply_from?: string;
-    max_asset_fraction_below_threshold?: string;
-    default_slippage_pct?: string;
-    pairs?: string;
-    session?: string;
-  };
-};
-
 export type RevolutXStatus = {
   connected: boolean;
   has_signing_key: boolean;
@@ -149,15 +129,6 @@ export function useRevolutXStatus() {
   return useQuery({
     queryKey: ["revolut-x-status"],
     queryFn: () => apiFetch<RevolutXStatus>("/api/v1/revolut-x/status"),
-    refetchInterval: 10000,
-    retry: false,
-  });
-}
-
-export function useKrakenXStocksStatus() {
-  return useQuery({
-    queryKey: ["kraken-xstocks-status"],
-    queryFn: () => apiFetch<KrakenXStocksStatus>("/api/v1/kraken-xstocks/status"),
     refetchInterval: 10000,
     retry: false,
   });

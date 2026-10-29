@@ -53,12 +53,14 @@ export function CandleChart({ rows }: { rows: CandleData[] }) {
 }
 
 /** The trader's logged calls, scored against real prices after costs (calls, not placed orders). */
-export function ScorecardPanel({ base, queryKey, venue = "Crypto.com", noun = "coins" }: {
+export function ScorecardPanel({ base, queryKey, venue = "Crypto.com", noun = "coins", prices }: {
   /** The venue's API prefix, for example `/api/v1/crypto-exchange`. */
   base: string;
   queryKey: string;
   venue?: string;
   noun?: string;
+  /** Where the scored prices come from, when it is not the venue's own (default: real venue prices). */
+  prices?: string;
 }) {
   const score = useQuery({
     queryKey: [queryKey],
@@ -78,7 +80,7 @@ export function ScorecardPanel({ base, queryKey, venue = "Crypto.com", noun = "c
   return <section className={card} aria-label="Scorecard">
     <h2 className="mb-1 font-semibold">Call scorecard</h2>
     <p className="text-sm">
-      Each call the trader logs ({noun === "coins" ? "coin" : "stock"}, target, stop, time window) is scored later against real {venue} prices after a {pct(data.assumptions.round_trip_cost_pct)}% round-trip cost. It scores the calls, not the trades that were actually placed; no money moves.
+      Each call the trader logs ({noun === "coins" ? "coin" : "stock"}, target, stop, time window) is scored later against {prices ?? `real ${venue} prices`} after a {pct(data.assumptions.round_trip_cost_pct)}% round-trip cost. It scores the calls, not the trades that were actually placed; no money moves.
     </p>
     <p className="mt-1 text-xs text-[var(--color-text-muted)]">
       Tracking {data.prices.coins} {noun} · {data.prices.snapshots} price snapshots over {data.prices.days} days · {resolved} of 30 resolved calls needed before trusting the result{data.enough_data ? " (reached)" : ""}.

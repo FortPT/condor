@@ -13,8 +13,6 @@ None of these shapes has been exercised against a live account yet:
   ``result.deposit_list`` / ``withdrawal_list``, numeric status codes) come from a
   third-party client (ccxt) because the official reference page could not be
   fetched as text. The status code meanings are the ones ccxt maps.
-* Kraken ``/0/private/Ledgers`` with ``type=deposit`` / ``type=withdrawal``: the
-  endpoint is long established; the key needs only ``Data - Query ledger entries``.
 * Trading 212 ``GET /api/v0/equity/history/transactions``: the OpenAPI spec lists the
   query parameters ``limit`` (max 50), ``cursor`` and ``time`` (``format: date-time``),
   the item fields (``type`` DEPOSIT / WITHDRAW / FEE / TRANSFER / INTEREST_ON_FREE_CASH /
@@ -167,82 +165,6 @@ async def fetch_crypto_com(service, user_id: int, since: float, now: float) -> F
             out.flows += parse_crypto_com(result, deposit)
         except Exception as error:  # noqa: BLE001 - one part never hides the other
             out.problems.append(f"{part}: {reason_of(error)}")
-    return out
-
-
-# ── Kraken ──
-
-_KRAKEN_ASSETS = {"ZUSD": "USD", "ZEUR": "EUR", "XXBT": "BTC", "XBT": "BTC"}
-
-
-def kraken_asset(asset: str) -> str:
-    """Kraken's ledger asset code as a plain ticker (``ZEUR`` -> ``EUR``)."""
-    asset = str(asset or "").upper()
-    if asset in _KRAKEN_ASSETS:
-        return _KRAKEN_ASSETS[asset]
-    if len(asset) == 4 and asset[0] in "XZ":
-        return _KRAKEN_ASSETS.get(asset[1:], asset[1:])
-    return asset
-
-
-def parse_kraken_ledger(result: Any) -> list[RawFlow]:
-    """Deposit and withdrawal entries of a ``Ledgers`` answer; the net move is amount - fee."""
-    ledger = result.get("ledger") if isinstance(result, dict) else None
-    if not isinstance(ledger, dict):
-        raise FetchUnavailable("unexpected response (no ledger)")
-    found = []
-    for ident, row in ledger.items():
-        if not isinstance(row, dict) or row.get("type") not in (
-            "deposit",
-            "withdrawal",
-        ):
-            continue
-        amount = _decimal(row.get("amount"))
-        fee = _decimal(row.get("fee")) or Decimal(0)
-        ts = _decimal(row.get("time"))
-        currency = kraken_asset(row.get("asset"))
-        if amount is None or ts is None or ts <= 0 or not currency:
-            continue
-        net = amount - fee
-        if net == 0:
-            continue
-        found.append(
-            RawFlow(
-                external_id=f"ledger:{ident}",
-                ts=float(ts),
-                currency=currency,
-                amount=net,
-                status="confirmed",
-                note=f"Kraken ledger {row['type']}",
-            )
-        )
-    return found
-
-
-async def fetch_kraken(service, user_id: int, since: float, now: float) -> Fetched:
-    out = Fetched([], [])
-    for kind in ("deposit", "withdrawal"):
-        try:
-            seen, offset = 0, 0
-            for _ in range(MAX_PAGES):
-                result = await service.private(
-                    user_id,
-                    "Ledgers",
-                    {"type": kind, "start": int(since), "ofs": offset},
-                )
-                out.flows += parse_kraken_ledger(result)
-                page = (
-                    len(result.get("ledger") or {}) if isinstance(result, dict) else 0
-                )
-                seen += page
-                total = (
-                    _decimal(result.get("count")) if isinstance(result, dict) else None
-                )
-                offset += page
-                if not page or total is None or seen >= total:
-                    break
-        except Exception as error:  # noqa: BLE001
-            out.problems.append(f"{kind}s: {reason_of(error)}")
     return out
 
 
@@ -456,7 +378,6 @@ async def fetch_trading212(service, user_id: int, since: float, now: float) -> F
 
 FETCHERS = {
     "crypto_com_exchange": fetch_crypto_com,
-    "kraken_xstocks": fetch_kraken,
     "revolut_x": fetch_revolut,
     "trading212": fetch_trading212,
 }

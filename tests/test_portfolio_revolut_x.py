@@ -7,7 +7,6 @@ import pytest
 
 from condor import portfolio_history
 from condor.crypto_com_exchange import service as exchange_service
-from condor.kraken_xstocks import service as kraken_service
 from condor.revolut_x import service as revolut_service
 from condor.web.models import WebUser
 from condor.web.routes import portfolio
@@ -15,7 +14,6 @@ from condor.web.routes import portfolio
 
 def no_other_native_accounts(monkeypatch):
     monkeypatch.setattr(exchange_service, "status", lambda uid: {"connected": False})
-    monkeypatch.setattr(kraken_service, "status", lambda uid: {"connected": False})
 
 
 @pytest.mark.asyncio

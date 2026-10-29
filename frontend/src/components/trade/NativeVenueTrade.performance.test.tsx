@@ -20,7 +20,6 @@ vi.mock("lightweight-charts", () => ({
 /** What each venue needs to show one SUI/TSLA holding at a known price. */
 const CASES = {
   "revolut-x": { quote: "EUR", symbol: "SUI", positions: { SUI: { units: "5", cost: "12" } }, cash: "40", equity: /55[.,]00 EUR equity/, pnl: /\+3[.,]00 EUR/, losing: { SUI: { units: "5", cost: "20" } }, loss: /-5[.,]00 EUR/ },
-  "kraken-xstocks": { quote: "USD", symbol: "TSLA", positions: { TSLA: { units: "5", cost: "1400" } }, cash: "40", equity: /1,?540[.,]00 USD equity/, pnl: /\+100[.,]00 USD/, losing: { TSLA: { units: "5", cost: "1600" } }, loss: /-100[.,]00 USD/ },
   trading212: { quote: "EUR", symbol: "TSLA", positions: { TSLA: { units: "0.05", cost: "10" } }, cash: "30", equity: /41[.,]60 EUR equity/, pnl: /\+1[.,]60 EUR/, losing: { TSLA: { units: "0.05", cost: "20" } }, loss: /-8[.,]40 EUR/ },
 } as const;
 
@@ -54,7 +53,6 @@ function setup(key: NativeVenueKey, opts: {
   put = (body) => Promise.resolve({ ...status, enabled: body.enabled });
   history = [];
   const row = { symbol: c.symbol, bid: "3", ask: "3.1", price: "3", spread_pct: "0.1", change_24h_pct: "1", change_since_open_pct: "1", volume_24h_eur: 1, volume_24h_usd: 1 };
-  if (key === "kraken-xstocks") row.bid = "300";
   mocks.fetch.mockReset().mockImplementation((path: string, init?: { method?: string; body?: string }) => {
     if (init?.method === "PUT" && path.endsWith("/enabled")) return put!(JSON.parse(init.body!));
     if (path.endsWith("/status")) return Promise.resolve(status);
@@ -95,7 +93,7 @@ afterEach(async () => {
   host.remove();
 });
 
-describe.each(["revolut-x", "kraken-xstocks", "trading212"] as const)("%s earnings overview", (key) => {
+describe.each(["revolut-x", "trading212"] as const)("%s earnings overview", (key) => {
   const c = CASES[key];
 
   it("shows the six performance cards directly under the header line", async () => {
@@ -203,7 +201,7 @@ describe.each(["revolut-x", "kraken-xstocks", "trading212"] as const)("%s earnin
   });
 });
 
-describe.each(["revolut-x", "kraken-xstocks", "trading212"] as const)("%s pause and enable", (key) => {
+describe.each(["revolut-x", "trading212"] as const)("%s pause and enable", (key) => {
   const base = NATIVE_VENUES[key].base;
   const puts = () => calls().filter(([, init]) => init?.method === "PUT");
 

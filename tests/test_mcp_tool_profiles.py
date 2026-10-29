@@ -65,7 +65,6 @@ HB_PROFILES = {
 
 CONDOR_COMMON = {
     "crypto_com_exchange",
-    "kraken_xstocks",
     "revolut_x",
     "trading212",
     "native_portfolio",

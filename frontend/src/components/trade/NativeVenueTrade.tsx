@@ -27,7 +27,7 @@ const volume = (value: string | number | null) => {
 };
 
 /**
- * A read-only look at a native venue (Kraken xStocks, Revolut X, Trading 212): the bot allocation and
+ * A read-only look at a native venue (Revolut X, Trading 212): the bot allocation and
  * what it holds, the whole account's balances, the most traded markets, a chart, recent
  * orders and the call scorecard. There is no order ticket: the agent loop trades, and
  * connecting, syncing and enabling live in Settings.
@@ -142,7 +142,7 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
   const equity = own ? equityFromValuation(ledger, ownValuation.data, holdings) : equityOf(ledger, holdings);
   const valuing = own ? ownValuation.isFetching : valuation.isPending;
   const accountRows = accountsOf(accounts.data);
-  const historyRows = withRealFigures(venue, historyOf(venue, history.data), ledger?.orders);
+  const historyRows = withRealFigures(venue, historyOf(history.data), ledger?.orders);
   const botOrders = [...(ledger?.orders ?? [])].reverse().slice(0, 5);
   const totals = totalsOf(cash, holdings);
   const error = status.error || top.error || found.error || accounts.error || history.error || valuation.error || ownValuation.error || toggle.error;
@@ -280,6 +280,6 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
       </>}
     </section>
 
-    <ScorecardPanel base={base} queryKey={`${key}-scorecard`} venue={title} noun={venue.noun} />
+    <ScorecardPanel base={base} queryKey={`${key}-scorecard`} venue={title} noun={venue.noun} prices={venue.referenceLabel ? `${venue.referenceLabel} prices, not ${title}'s own quotes` : undefined} />
   </div>;
 }

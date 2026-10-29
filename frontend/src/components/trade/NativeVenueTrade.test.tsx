@@ -54,24 +54,6 @@ const fixtures = {
     equityText: /Equity 55[.,]00 EUR/,
     accountValue: /15[.,]00 EUR/,
   },
-  "kraken-xstocks": {
-    quote: "USD",
-    market: { open: true, new_york_time: "2026-10-28 10:00", minutes_to_close: 360 },
-    coinsPayload: (rows: unknown[]) => ({ quote: "USD", market: { open: true }, stocks: rows }),
-    rows: [
-      { symbol: "AAPL", pair: "AAPLxUSD", price: "270", bid: "269.9", ask: "270.1", spread_pct: "0.074", volume_24h_usd: 9_000_000, range_24h_pct: "2", change_since_open_pct: "0.8" },
-      { symbol: "TSLA", pair: "TSLAxUSD", price: "300", bid: "300", ask: "300.4", spread_pct: "0.133", volume_24h_usd: 5_000_000, range_24h_pct: "3", change_since_open_pct: "-1.2" },
-    ],
-    accounts: [{ currency: "ZUSD", balance: "40", available: "40" }, { currency: "TSLAx", balance: "5", available: "5" }],
-    history: [{ order_id: "h1", pair: "AAPLxUSD", side: "buy", status: "closed", vol_exec: "0.1", avg_price: "270", cost: "27", fee: "0.04", closetm: "1793219991.5" }],
-    historyPair: "AAPLxUSD",
-    changes: ["+0.80%", "-1.20%"],
-    held: "TSLA",
-    heldValue: /1,?500[.,]00 USD/,
-    cashText: /Cash 40[.,]00 USD/,
-    equityText: /Equity 1,?540[.,]00 USD/,
-    accountValue: /1,?500[.,]00 USD/,
-  },
 } as const;
 type Key = keyof typeof fixtures;
 
@@ -86,7 +68,7 @@ const paths = () => calls().map(([path]) => path);
 
 function build(key: Key, overrides: Partial<{ connected: boolean; positions: Record<string, { units: string; cost: string }>; uncertain: unknown }> = {}) {
   const f = fixtures[key];
-  const positions = overrides.positions ?? (key === "revolut-x" ? { SUI: { units: "5", cost: "12" } } : { TSLA: { units: "5", cost: "1400" } });
+  const positions = overrides.positions ?? { SUI: { units: "5", cost: "12" } };
   status = {
     connected: overrides.connected ?? true, venue: NATIVE_VENUES[key].title, quote: f.quote, enabled: true,
     ledger: {
@@ -132,7 +114,7 @@ afterEach(async () => {
   host.remove();
 });
 
-describe.each(["revolut-x", "kraken-xstocks"] as const)("%s panel", (key) => {
+describe.each(["revolut-x"] as const)("%s panel", (key) => {
   const f = fixtures[key];
   const venue = NATIVE_VENUES[key];
 
@@ -166,7 +148,6 @@ describe.each(["revolut-x", "kraken-xstocks"] as const)("%s panel", (key) => {
     expect(recent).toContain("Bot ledger");
     // the scorecard route is used
     expect(host.querySelector('section[aria-label="Scorecard"]')!.textContent).toContain(`real ${venue.title} prices`);
-    if (key === "kraken-xstocks") expect(text).toContain("US market open");
     expect(host.querySelector("[data-state='not-connected']")).toBeNull();
   });
 
@@ -293,30 +274,6 @@ describe.each(["revolut-x", "kraken-xstocks"] as const)("%s panel", (key) => {
   });
 });
 
-describe("an empty chart", () => {
-  const empty = async (market: { open: boolean } | undefined) => {
-    build("kraken-xstocks");
-    if (market) status.market = market;
-    const before = mocks.fetch.getMockImplementation()!;
-    mocks.fetch.mockImplementation((path: string) => path.includes("/candles")
-      ? Promise.resolve({ pair: "AAPLxUSD", timeframe: "1h", candles: [] }) : before(path));
-    await mount("kraken-xstocks");
-    return host.querySelector('section[aria-label="Chart"]')!.textContent!;
-  };
-
-  it("says the US market is closed instead of reporting a failure", async () => {
-    const text = await empty({ open: false });
-    expect(text).toContain("No recent candles: the US market is closed.");
-    expect(text).not.toContain("unavailable");
-  });
-
-  it("names the stock when the market is open and there is still nothing", async () => {
-    const text = await empty({ open: true });
-    expect(text).toContain("No recent candles for TSLA.");
-    expect(host.querySelector('[data-testid="exchange-chart"]')).toBeNull();
-  });
-});
-
 describe("Revolut X recent orders", () => {
   it("shows the fills-derived price and the fee for a new order, and flags an older rounded one", async () => {
     build("revolut-x");
@@ -384,6 +341,30 @@ describe("trading212 panel (EUR ledger, USD reference market rows)", () => {
     await wait();
     await wait();
   }
+
+  describe("an empty chart", () => {
+    const empty = async (market: { open: boolean }) => {
+      setup();
+      status.market = market;
+      const before = mocks.fetch.getMockImplementation()!;
+      mocks.fetch.mockImplementation((path: string) => path.includes("/candles")
+        ? Promise.resolve({ pair: "TSLA_US_EQ", timeframe: "1h", candles: [] }) : before(path));
+      await open();
+      return host.querySelector('section[aria-label="Chart"]')!.textContent!;
+    };
+
+    it("says the US market is closed instead of reporting a failure", async () => {
+      const text = await empty({ open: false });
+      expect(text).toContain("No recent candles: the US market is closed.");
+      expect(text).not.toContain("unavailable");
+    });
+
+    it("names the stock when the market is open and there is still nothing", async () => {
+      const text = await empty({ open: true });
+      expect(text).toContain("No recent candles for TSLA.");
+      expect(host.querySelector('[data-testid="exchange-chart"]')).toBeNull();
+    });
+  });
 
   it("labels the markets as reference prices and uses the stocks route, never the coins route", async () => {
     setup();

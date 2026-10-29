@@ -710,9 +710,9 @@ class RevolutXService:
         except ValueError:
             pass
         try:
-            from condor.kraken_xstocks import service as kraken
+            from condor import xstocks_market
 
-            return await kraken.eur_usd()
+            return await xstocks_market.service.eur_usd()
         except (
             Exception
         ):  # noqa: BLE001 - a missing rate only drops the dashboard value

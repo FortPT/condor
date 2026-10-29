@@ -104,7 +104,7 @@ it("keeps the retired workspace=app link working", async () => {
   await render("/trade?workspace=app");
   expect(host.textContent).toContain("Preview order");
 });
-it.each([["revolut-x", "Revolut X"], ["kraken-xstocks", "Kraken xStocks"], ["trading212", "Trading 212"]])("opens the read-only %s panel from its URL without Hummingbot keys", async (key, title) => {
+it.each([["revolut-x", "Revolut X"], ["trading212", "Trading 212"]])("opens the read-only %s panel from its URL without Hummingbot keys", async (key, title) => {
   await render(`/trade?workspace=${key}`);
   expect(host.querySelector("h1")?.textContent).toBe(title);
   expect(host.querySelector(`[data-venue="${key}"]`)).not.toBeNull();
@@ -120,7 +120,6 @@ it.each([["revolut-x", "Revolut X"], ["kraken-xstocks", "Kraken xStocks"], ["tra
 });
 it.each([
   ["/trade?workspace=revolut-x", "revolut_x"],
-  ["/trade?workspace=kraken-xstocks", "kraken_xstocks"],
   ["/trade?workspace=trading212", "trading212"],
   ["/trade?workspace=crypto-exchange", "crypto_com_exchange"],
 ])("shows the deposits and withdrawals record under %s for its own venue", async (url, venue) => {
@@ -132,14 +131,12 @@ it("shows no deposits panel on the Hummingbot tab", async () => {
   await render("/trade?workspace=hummingbot");
   expect(host.querySelector("[data-native-flows]")).toBeNull();
 });
-it("switches between the Crypto.com, Kraken xStocks, Revolut X, Trading 212 and Hummingbot tabs", async () => {
+it("switches between the Crypto.com, Revolut X, Trading 212 and Hummingbot tabs", async () => {
   await render();
   expect(host.textContent).toContain("Preview order");
   await choose("Revolut X");
   expect(host.querySelector("h1")?.textContent).toBe("Revolut X");
   expect(host.textContent).not.toContain("Preview order");
-  await choose("Kraken xStocks");
-  expect(host.querySelector("h1")?.textContent).toBe("Kraken xStocks");
   await choose("Trading 212");
   expect(host.querySelector("h1")?.textContent).toBe("Trading 212");
   await choose("Hummingbot");
@@ -149,7 +146,7 @@ it("switches between the Crypto.com, Kraken xStocks, Revolut X, Trading 212 and 
   expect(host.textContent).toContain("Preview order");
   expect(host.querySelector("[data-venue]")).toBeNull();
 });
-it("never makes Kraken xStocks, Revolut X or Trading 212 the default account", async () => {
+it("never makes Revolut X or Trading 212 the default account", async () => {
   await render("/trade");
   expect(host.querySelector("[data-venue]")).toBeNull();
   expect(host.textContent).toContain("Preview order");

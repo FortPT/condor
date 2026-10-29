@@ -6,6 +6,7 @@ import tempfile
 import time
 import unittest
 from datetime import datetime, timezone
+from decimal import Decimal
 from unittest.mock import patch
 
 from condor import xstocks_market as xs
@@ -244,30 +245,37 @@ class PublicReadTests(unittest.IsolatedAsyncioTestCase):
                 await xs.XStocksMarket()._get("Ticker", {"pair": "AAPLxUSD"})
 
 
-class SessionClockRouteTests(unittest.IsolatedAsyncioTestCase):
-    """The stock scheduler reads ``market.open`` from the old path and the new one."""
+class _EurUsdFake(xs.XStocksMarket):
+    def __init__(self, answer):
+        super().__init__()
+        self.answer = answer
+        self.calls = []
 
-    async def test_both_paths_answer_the_session_clock_without_any_account(self):
-        from condor.web.models import WebUser
-        from condor.web.routes import kraken_xstocks as route
+    async def _get(self, path, params, *, asset_class=True):
+        self.calls.append((path, dict(params), asset_class))
+        if isinstance(self.answer, Exception):
+            raise self.answer
+        return self.answer
 
-        user = WebUser(id=1, role="admin")
-        new = await route.market(user)
-        old = await route.legacy_status(user)
-        for body in (new, old):
-            self.assertIn("open", body["market"])
-            self.assertIn("minutes_to_close", body["market"])
-            self.assertEqual(body["quote"], "USD")
-        self.assertEqual(new["market"]["open"], old["market"]["open"])
 
-    def test_the_old_path_is_still_registered_next_to_the_new_one(self):
-        from condor.web.routes import kraken_xstocks as route
+class EurUsdTests(unittest.IsolatedAsyncioTestCase):
+    """USD per euro from Kraken's plain EURUSD pair: Revolut X and Trading 212 value in USD with it."""
 
-        paths = {r.path for r in route.router.routes} | {
-            r.path for r in route.legacy_router.routes
-        }
-        self.assertIn("/kraken-xstocks/market", paths)
-        self.assertIn("/xstocks-paper/status", paths)
+    async def test_the_rate_comes_from_the_plain_pair_and_is_cached_a_minute(self):
+        svc = _EurUsdFake({"ZEURZUSD": {"c": ["1.0850", "1"]}})
+        self.assertEqual(await svc.eur_usd(), Decimal("1.0850"))
+        self.assertEqual(await svc.eur_usd(), Decimal("1.0850"))
+        self.assertEqual(svc.calls, [("Ticker", {"pair": "EURUSD"}, False)])
+
+    async def test_an_unreadable_or_nonsense_answer_is_no_rate_never_a_guess(self):
+        for answer in (
+            ValueError("Kraken public data unavailable"),
+            {},
+            {"ZEURZUSD": {"c": []}},
+            {"ZEURZUSD": {"c": ["0", "1"]}},
+            {"ZEURZUSD": {"c": ["nan", "1"]}},
+        ):
+            self.assertIsNone(await _EurUsdFake(answer).eur_usd(), answer)
 
 
 if __name__ == "__main__":

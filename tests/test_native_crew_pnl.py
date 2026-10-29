@@ -1,6 +1,6 @@
 """A native crew's loop shows its venue's account-equity change, not executor PnL.
 
-Crypto.com and Kraken xStocks crews trade outside Hummingbot, so the
+Crypto.com, Revolut X and Trading 212 crews trade outside Hummingbot, so the
 executor aggregate used to answer ``no_server`` (a dash) or, with a server
 configured, a meaningless ``$0.00``. These pin the replacement on the agents
 routes: the right figure per session, the labelled limits, the new unavailable

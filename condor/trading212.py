@@ -885,9 +885,7 @@ class Trading212Service:
         if cached and time.monotonic() - stamp < 60:
             return cached
         try:
-            from condor.kraken_xstocks import service as kraken
-
-            rate = await kraken.eur_usd()
+            rate = await xstocks_market.service.eur_usd()
         except (
             Exception
         ):  # noqa: BLE001 - a missing rate only drops the dashboard value
