@@ -247,8 +247,9 @@ price are listed with zero value and named in a note. With no EUR/USD rate at al
 is not valued (a note says so) rather than recorded as zero. The bot ledger stays in EUR;
 every account value, chart sample and equity change is in USD. A value sample is recorded for
 the Portfolio chart (`condor/portfolio_history.py`, source "Revolut X"), the Revolut X loop
-card's PnL is the change in that USD account equity (deposits and withdrawals are not
-tracked), and the chat tool `native_portfolio` includes the account. The whole-account balance
+card's PnL is the change in that USD account equity, net of the deposits and withdrawals
+recorded in `condor/native_flows.py` (see `docs/native-flows.md`; with none recorded and no
+history read it is the plain equity change and says so), and the chat tool `native_portfolio` includes the account. The whole-account balance
 does not increase the bot's allocation.
 
 ## Known limits

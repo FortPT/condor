@@ -20,7 +20,7 @@ import time
 from contextlib import closing
 from pathlib import Path
 
-from condor import native_venues
+from condor import native_flows, native_venues
 from condor.paths import data_dir
 
 log = logging.getLogger(__name__)
@@ -213,6 +213,8 @@ async def sample_user(user_id: int, exchange=None, kraken=None, **services) -> N
                 continue
             data = await service.portfolio(user_id)
             record(user_id, venue.label, data["total_usd"])
+            # Deposit/withdrawal upkeep rides the same reading; it never raises.
+            await native_flows.observe(user_id, venue.key, service, data)
         except Exception as error:  # noqa: BLE001 - history must never break a read
             log.debug(
                 "Portfolio sample for %s skipped (%s)",

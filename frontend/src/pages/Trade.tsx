@@ -2,7 +2,9 @@ import { Navigate, useSearchParams } from "react-router-dom";
 
 import { ConnectKeysOverlay } from "@/components/ConnectKeysOverlay";
 import { ExchangeTrade } from "@/components/trade/ExchangeTrade";
+import { NativeFlowsPanel } from "@/components/trade/NativeFlowsPanel";
 import { NativeVenueTrade } from "@/components/trade/NativeVenueTrade";
+import { flowVenueKey } from "@/components/trade/nativeFlows";
 import { NATIVE_VENUES, isNativeVenueKey, type NativeVenueKey } from "@/components/trade/nativeVenue";
 import { useCredentials, useCryptoExchangeStatus } from "@/hooks/useCredentials";
 import { useServer } from "@/hooks/useServer";
@@ -49,8 +51,14 @@ export function Trade() {
       <button className="rounded border border-[var(--color-border)] px-3 py-2 text-sm aria-pressed:bg-[var(--color-surface-hover)]" aria-pressed={!loading && !cryptoWorkspace && !nativeWorkspace} onClick={() => selectWorkspace("hummingbot")}>Hummingbot</button>
     </div>
     {loading ? <p role="status" className="p-6 text-sm">Loading trading accounts…</p> :
-      nativeWorkspace ? <div className="min-h-0 flex-1 overflow-auto p-6"><NativeVenueTrade venue={NATIVE_VENUES[nativeWorkspace]} /></div> :
-      cryptoWorkspace ? <div className="min-h-0 flex-1 overflow-auto p-6"><ExchangeTrade /></div> :
+      nativeWorkspace ? <div className="min-h-0 flex-1 space-y-4 overflow-auto p-6">
+        <NativeVenueTrade venue={NATIVE_VENUES[nativeWorkspace]} />
+        <NativeFlowsPanel venue={flowVenueKey(nativeWorkspace)} title={NATIVE_VENUES[nativeWorkspace].title} defaultCurrency={NATIVE_VENUES[nativeWorkspace].quote} />
+      </div> :
+      cryptoWorkspace ? <div className="min-h-0 flex-1 space-y-4 overflow-auto p-6">
+        <ExchangeTrade />
+        <NativeFlowsPanel venue="crypto_com_exchange" title="the Crypto.com Exchange" defaultCurrency="USD" />
+      </div> :
         <div className="relative min-h-0 flex-1 p-6">
           <CreateExecutor />
           {server && !keysLoading && !hasKeys && <ConnectKeysOverlay />}

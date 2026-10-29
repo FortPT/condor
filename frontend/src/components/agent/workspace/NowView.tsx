@@ -14,7 +14,7 @@ import type { WorkspaceAlert } from "@/components/agent/workspace/views";
 import { ReportViewer } from "@/components/routines/ReportViewer";
 import { api, type AgentPerformance, type StrategyUnavailable } from "@/lib/api";
 import type { Decision, ParsedJournal } from "@/lib/parse-agent";
-import { ACCOUNT_EQUITY, unavailableLabel } from "@/lib/strategy-unavailable";
+import { ACCOUNT_EQUITY, unavailableLabel, unconfirmedLine } from "@/lib/strategy-unavailable";
 
 /**
  * What this run is and what it did, with nothing to click first (FEAT-119).
@@ -134,9 +134,13 @@ export function NowView({
           data-now-equity-basis
           className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-xs text-[var(--color-text-muted)]"
         >
-          Native crew: these figures are the change in the venue account&apos;s equity,
-          not executor PnL. Deposits and withdrawals are not tracked.
+          {perf.pnl_flows_tracked
+            ? "Native crew: these figures are the change in the venue account's equity net of the deposits and withdrawals recorded for it, not executor PnL."
+            : "Native crew: these figures are the change in the venue account's equity, not executor PnL. Deposits and withdrawals are not tracked."}
           {perf.pnl_note ? ` ${perf.pnl_note}` : ""}
+          {perf.pnl_unconfirmed_count
+            ? ` ${unconfirmedLine({ unconfirmedCount: perf.pnl_unconfirmed_count, unconfirmedUsd: perf.pnl_unconfirmed_usd })} is not subtracted until you confirm it on the Trade page.`
+            : ""}
         </p>
       )}
       {priced || hasChart ? (

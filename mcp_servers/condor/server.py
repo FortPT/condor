@@ -1886,10 +1886,15 @@ async def native_portfolio() -> dict:
     USD split into cash and positions (each with its USD value); the bot
     allocation's ledger (cash, positions at cost, whether it is synced, whether
     trading is enabled, whether an order is uncertain); and the change in account
-    equity since the value history began and over the last 24 hours. The change is
-    only the difference between two account readings: deposits and withdrawals are
-    not tracked, so a deposit reads as a gain. Revolut X's ledger is in EUR (its
-    `quote`), while every account value and change here is in USD.
+    equity since the value history began and over the last 24 hours. When a venue's
+    deposits and withdrawals are tracked (its `basis` says "Trading result"), the
+    change is net of the recorded ones; otherwise it is the plain difference between
+    two readings and a deposit reads as a gain. Each venue also carries a `flows`
+    block: `recorded_net_flows_usd`, `confirmed_count`, `pending_count` (cash
+    movements detected but not yet confirmed by the owner, which are NOT subtracted;
+    tell the owner) and whether the venue's history could be read. Revolut X's
+    ledger is in EUR (its `quote`), while every account value and change here is in
+    USD.
 
     Report these figures next to the Hummingbot ones, not instead of them. Kraken
     xStocks is the same Kraken account Hummingbot's `kraken` connector may also

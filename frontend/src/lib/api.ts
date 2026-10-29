@@ -1234,7 +1234,8 @@ export interface StrategySummary {
   unavailable?: StrategyUnavailable;
   /**
    * What the PnL figures measure. `"account_equity"` = a native crew's change in
-   * its venue's whole-account value (deposits and withdrawals are not tracked);
+   * its venue's whole-account value, net of the deposits and withdrawals recorded
+   * for it when `pnl_flows_tracked` (otherwise they are not tracked);
    * `""`/absent = Hummingbot executor PnL.
    */
   pnl_basis?: string;
@@ -1244,6 +1245,13 @@ export interface StrategySummary {
   pnl_note?: string;
   /** When `total_pnl`'s window starts (unix seconds); 0 = unknown. */
   pnl_since?: number;
+  /** The venue's deposits/withdrawals are recorded: the figure is a trading result. */
+  pnl_flows_tracked?: boolean;
+  /** Net flow (USD) already taken out of the latest session's figure. */
+  pnl_flows_usd?: number;
+  /** Detected cash movements awaiting the owner's confirmation; not subtracted. */
+  pnl_unconfirmed_count?: number;
+  pnl_unconfirmed_usd?: number;
   instances: RunningInstance[];
 }
 
@@ -1394,6 +1402,8 @@ export interface AgentSummary {
   server_name?: string;
   /** `"account_equity"` when the PnL above is a native crew's equity change. */
   pnl_basis?: string;
+  pnl_flows_tracked?: boolean;
+  pnl_unconfirmed_count?: number;
   instances: RunningInstance[];
 }
 
@@ -1434,6 +1444,11 @@ export interface AgentPerformance {
   pnl_basis?: string;
   pnl_estimated?: boolean;
   pnl_note?: string;
+  /** Net of recorded deposits/withdrawals (`pnl_flows_usd`) when tracked. */
+  pnl_flows_tracked?: boolean;
+  pnl_flows_usd?: number;
+  pnl_unconfirmed_count?: number;
+  pnl_unconfirmed_usd?: number;
   realized_pnl: number;
   unrealized_pnl: number;
   total_pnl: number;

@@ -29,6 +29,7 @@ from condor.web.routes import (
     kraken_xstocks,
     market,
     meta,
+    native_flows,
     notifications,
     portfolio,
     positions,
@@ -148,6 +149,7 @@ def create_app() -> FastAPI:
     app.include_router(xstocks_paper.router, prefix="/api/v1")
     app.include_router(kraken_xstocks.router, prefix="/api/v1")
     app.include_router(revolut_x.router, prefix="/api/v1")
+    app.include_router(native_flows.router, prefix="/api/v1")
     app.include_router(bots.router, prefix="/api/v1")
     app.include_router(controller_performance.router, prefix="/api/v1")
     app.include_router(archived.router, prefix="/api/v1")

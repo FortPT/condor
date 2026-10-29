@@ -246,6 +246,15 @@ class StrategySummary(BaseModel):
     pnl_estimated: bool = False
     pnl_note: str = ""
     pnl_since: float = 0.0
+    #: Native crews only. ``pnl_flows_tracked``: the venue's deposits/withdrawals are
+    #: recorded (its history was read, or a flow is confirmed), so the figure is a
+    #: trading result; ``pnl_flows_usd`` is the net flow already taken out of it;
+    #: ``pnl_unconfirmed_*`` are detected movements awaiting the owner (not
+    #: subtracted). See ``condor.native_flows``.
+    pnl_flows_tracked: bool = False
+    pnl_flows_usd: float = 0.0
+    pnl_unconfirmed_count: int = 0
+    pnl_unconfirmed_usd: float = 0.0
     instances: list[RunningInstance] = []
 
 
@@ -278,6 +287,8 @@ class AgentSummary(BaseModel):
     server_name: str = ""
     #: ``account_equity`` when the figures above are a native crew's equity change.
     pnl_basis: str = ""
+    pnl_flows_tracked: bool = False
+    pnl_unconfirmed_count: int = 0
     instances: list[RunningInstance] = []
 
 
@@ -359,13 +370,22 @@ class AgentPerformanceModel(BaseModel):
     # three cases and only this says which of them is "flat" ([[FEAT-137]]).
     reading: str = "ok"
     #: What ``total_pnl`` measures: ``""`` = Hummingbot executors, ``account_equity``
-    #: = the change in a native venue's whole-account value (deposits and
-    #: withdrawals are not tracked). ``pnl_estimated`` says a boundary equity was
-    #: taken from the nearest sample rather than one at that moment; ``pnl_note``
-    #: says which.
+    #: = the change in a native venue's whole-account value, net of the deposits
+    #: and withdrawals recorded for it when ``pnl_flows_tracked``. ``pnl_estimated``
+    #: says a boundary equity was taken from the nearest sample rather than one at
+    #: that moment; ``pnl_note`` says which.
     pnl_basis: str = ""
     pnl_estimated: bool = False
     pnl_note: str = ""
+    #: Native crews only. ``pnl_flows_tracked``: the venue's deposits/withdrawals are
+    #: recorded (its history was read, or a flow is confirmed), so the figure is a
+    #: trading result; ``pnl_flows_usd`` is the net flow already taken out of it;
+    #: ``pnl_unconfirmed_*`` are detected movements awaiting the owner (not
+    #: subtracted). See ``condor.native_flows``.
+    pnl_flows_tracked: bool = False
+    pnl_flows_usd: float = 0.0
+    pnl_unconfirmed_count: int = 0
+    pnl_unconfirmed_usd: float = 0.0
 
     @classmethod
     def from_perf(cls, perf: AgentPerformance, **overrides) -> AgentPerformanceModel:
@@ -1446,6 +1466,10 @@ async def _native_session_rows(
                 pnl_basis=PNL_BASIS_EQUITY,
                 pnl_estimated=bool(figure and figure.estimated),
                 pnl_note=figure.note if figure else "",
+                pnl_flows_tracked=result.flows_tracked,
+                pnl_flows_usd=figure.flows_usd if figure else 0.0,
+                pnl_unconfirmed_count=result.pending_count,
+                pnl_unconfirmed_usd=result.pending_usd,
             )
         )
     return rows, result
@@ -1659,6 +1683,10 @@ async def _compute_strategy_performance(
         totals["total_pnl"] = native_perf.total_pnl
         totals["open_positions"] = float(native_perf.open_positions)
         totals["pnl_since"] = native_perf.since
+        totals["pnl_flows_tracked"] = float(native_perf.flows_tracked)
+        totals["pnl_flows_usd"] = native_perf.flows_usd
+        totals["pnl_unconfirmed_count"] = float(native_perf.pending_count)
+        totals["pnl_unconfirmed_usd"] = native_perf.pending_usd
 
     # A client came back, but it could not price this render: a connection
     # `get_client` still holds (it re-checks only every ~60s) to a backend that
@@ -1851,6 +1879,10 @@ async def _build_strategy_summary(strategy, user: WebUser) -> StrategySummary:
         pnl_estimated=bool(latest and latest.pnl_estimated),
         pnl_note=latest.pnl_note if latest else "",
         pnl_since=float(totals.get("pnl_since", 0.0)),
+        pnl_flows_tracked=bool(totals.get("pnl_flows_tracked", 0.0)),
+        pnl_flows_usd=latest.pnl_flows_usd if latest else 0.0,
+        pnl_unconfirmed_count=int(totals.get("pnl_unconfirmed_count", 0.0)),
+        pnl_unconfirmed_usd=float(totals.get("pnl_unconfirmed_usd", 0.0)),
         instances=instances,
     )
 
@@ -1907,17 +1939,17 @@ def _aggregate_strategy_perf(strategies: list[StrategySummary]) -> dict[str, Any
     # longest window) and add the rest of the strategies as usual.
     equity = [s for s in strategies if s.pnl_basis == PNL_BASIS_EQUITY]
     counted = [s for s in strategies if s.pnl_basis != PNL_BASIS_EQUITY]
+    chosen = None
     if equity:
-        counted.append(
-            min(
-                equity,
-                key=lambda s: (
-                    bool(s.unavailable),
-                    s.status != "running",
-                    s.pnl_since or float("inf"),
-                ),
-            )
+        chosen = min(
+            equity,
+            key=lambda s: (
+                bool(s.unavailable),
+                s.status != "running",
+                s.pnl_since or float("inf"),
+            ),
         )
+        counted.append(chosen)
     return {
         "status": (
             "running" if any(s.status == "running" for s in strategies) else "idle"
@@ -1930,6 +1962,8 @@ def _aggregate_strategy_perf(strategies: list[StrategySummary]) -> dict[str, Any
         "total_volume": sum(s.total_volume for s in strategies),
         "open_positions": sum(s.open_positions for s in counted),
         "pnl_basis": PNL_BASIS_EQUITY if equity else "",
+        "pnl_flows_tracked": bool(chosen and chosen.pnl_flows_tracked),
+        "pnl_unconfirmed_count": chosen.pnl_unconfirmed_count if chosen else 0,
         "instances": [inst for s in strategies for inst in s.instances],
     }
 

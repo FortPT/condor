@@ -14,10 +14,14 @@ recorder in :mod:`condor.portfolio_history` samples every five minutes. Nothing
 here moves money.
 
 **What "PnL" means here.** It is the change in account equity between two
-readings, nothing more. Deposits and withdrawals are not tracked anywhere (the
-venue ledgers keep cash, positions and orders, not external transfers), so a
-deposit shows as a gain and a withdrawal as a loss; the whole account is
-measured, not only the bot allocation; and prices of held assets move it too.
+readings, net of the deposits and withdrawals recorded in
+:mod:`condor.native_flows` (confirmed rows only, in the window between the two
+readings). The venue ledgers keep cash, positions and orders, not external
+transfers, so those come from the venue's transfer history, from detection that
+the owner confirms, or from manual entry. For a venue with no flow recorded and
+no history that could be read, the figure is still the plain equity change and the
+label says deposits are not tracked. Either way the whole account is measured, not
+only the bot allocation, and prices of held assets move it too.
 """
 
 from __future__ import annotations
@@ -27,7 +31,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Mapping, NamedTuple
 
-from condor import native_venues, portfolio_history
+from condor import native_flows, native_venues, portfolio_history
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +45,15 @@ CASH_TOKENS = frozenset({"USD", "USDT", "USDC", "EUR"})
 
 BASIS = "account_equity"
 BASIS_LABEL = "Change in account equity (deposits and withdrawals are not tracked)"
+BASIS_LABEL_NET = (
+    "Trading result: equity change net of recorded deposits and withdrawals"
+)
+
+
+def basis_label(tracked: bool) -> str:
+    """The honest wording: net of flows only when the venue's flows are tracked."""
+    return BASIS_LABEL_NET if tracked else BASIS_LABEL
+
 
 _live: dict[tuple[str, int], tuple[float, Any]] = {}
 
@@ -121,6 +134,8 @@ async def collect_views(
             # Credentials belong to the user, never the shared server cache.
             view = await value_account(venue, user_id, services=services, max_age=0)
             portfolio_history.record(user_id, venue.label, view["total_usd"])
+            # Detection only: the dashboard read makes no private history call.
+            await native_flows.observe(user_id, venue.key, service, view, fetch=False)
             result.views.append(view)
         except Exception as error:  # noqa: BLE001 - one venue never hides another
             log.warning(
@@ -204,6 +219,8 @@ class SessionPnl:
     pnl: float | None
     estimated: bool = False
     note: str = ""
+    #: Net confirmed deposits/withdrawals (USD) already taken out of ``pnl``.
+    flows_usd: float = 0.0
 
 
 @dataclass
@@ -218,6 +235,42 @@ class NativePerformance:
     open_positions: int = 0
     #: ``""`` when priced; ``no_history``, ``unreachable`` or ``no_ledger``.
     unavailable: str = ""
+    #: Net confirmed flows (USD) taken out of ``total_pnl``.
+    flows_usd: float = 0.0
+    #: The venue's flows are tracked (history read or any flow confirmed), so the
+    #: figures are a trading result; ``False`` keeps the "not tracked" wording.
+    flows_tracked: bool = False
+    #: Unconfirmed (pending) movements: not subtracted, but never hidden.
+    pending_count: int = 0
+    pending_usd: float = 0.0
+
+
+def _flow_state(user_id: int, venue_key: str) -> dict:
+    """The venue's flow summary, or an untracked, empty one when the store cannot be read."""
+    try:
+        return native_flows.summary(user_id, venue_key)
+    except Exception as error:  # noqa: BLE001 - flows never break the PnL
+        log.warning("%s flows unreadable (%s)", venue_key, type(error).__name__)
+        return {"tracked": False, "pending_count": 0, "pending_net_usd": 0.0}
+
+
+def _flows_between(
+    user_id: int, venue_key: str, start: float, end: float
+) -> native_flows.FlowWindow:
+    try:
+        return native_flows.window_net(user_id, venue_key, start, end)
+    except Exception as error:  # noqa: BLE001
+        log.warning("%s flows unreadable (%s)", venue_key, type(error).__name__)
+        return native_flows.FlowWindow(failed=True)
+
+
+def _unpriced_note(window: native_flows.FlowWindow) -> str:
+    if not window.unpriced:
+        return ""
+    return (
+        f"{window.unpriced} recorded flow{'s' if window.unpriced != 1 else ''} "
+        "without a USD value is not subtracted."
+    )
 
 
 def _ledger_positions(service: Any, user_id: int) -> int:
@@ -251,6 +304,10 @@ async def performance(
         return out
     service = _service(venue, services)
     out.open_positions = _ledger_positions(service, user_id)
+    state = _flow_state(user_id, venue.key)
+    out.flows_tracked = bool(state.get("tracked"))
+    out.pending_count = int(state.get("pending_count") or 0)
+    out.pending_usd = float(state.get("pending_net_usd") or 0.0)
     first, last = portfolio_history.bounds(user_id, venue.label)
     if first is None or last is None:
         out.unavailable = "no_history"
@@ -317,12 +374,17 @@ async def performance(
                 SessionPnl(span.num, None, True, "The session's end is not recorded.")
             )
             continue
+        # The equity change is between the two readings actually compared, so the
+        # flows taken out are those stamped in (begin.ts, finish.ts].
+        window = _flows_between(user_id, venue.key, begin.ts, finish.ts)
+        notes.append(_unpriced_note(window))
         out.sessions.append(
             SessionPnl(
                 span.num,
-                finish.total - begin.total,
+                finish.total - begin.total - window.net_usd,
                 estimated,
                 " ".join(n for n in notes if n),
+                window.net_usd,
             )
         )
 
@@ -338,9 +400,13 @@ async def performance(
         out.since = float(first[0])
         origin = Reading(float(first[1]), float(first[0]), 0.0)
         total_note = "Since the first recorded equity sample."
-    out.total_pnl = live.total - origin.total
+    total_flows = _flows_between(user_id, venue.key, origin.ts, live.ts)
+    out.flows_usd = total_flows.net_usd
+    out.total_pnl = live.total - origin.total - total_flows.net_usd
     out.estimated = not origin.exact or stale_now
-    out.note = " ".join(n for n in (total_note, now_note) if n)
+    out.note = " ".join(
+        n for n in (total_note, now_note, _unpriced_note(total_flows)) if n
+    )
     return out
 
 
@@ -351,27 +417,53 @@ def _round(value: float) -> float:
     return round(float(value), 2)
 
 
-def _equity_change(user_id: int, label: str, total_now: float, now: float) -> dict:
+def _equity_change(
+    user_id: int, label: str, total_now: float, now: float, venue_key: str = ""
+) -> dict:
+    """Equity change per window, net of confirmed flows when the venue's are tracked.
+
+    ``change_usd`` is the trading result; ``equity_change_usd`` the raw difference
+    and ``net_flows_usd`` what was taken out of it (the window is
+    ``(sample time, now]``).
+    """
+    tracked = bool(venue_key) and bool(_flow_state(user_id, venue_key).get("tracked"))
     first, last = portfolio_history.bounds(user_id, label)
     if first is None:
-        return {"available": False, "reason": "no_history", "basis": BASIS_LABEL}
+        return {
+            "available": False,
+            "reason": "no_history",
+            "basis": basis_label(tracked),
+        }
     day_ago = pick(
         *portfolio_history.nearest(user_id, label, [now - 86400])[0], now - 86400
     )
+
+    def window(from_ts: float, from_total: float) -> dict:
+        flows = (
+            _flows_between(user_id, venue_key, from_ts, now)
+            if venue_key
+            else native_flows.FlowWindow()
+        )
+        part = {
+            "from_usd": _round(from_total),
+            "change_usd": _round(total_now - from_total - flows.net_usd),
+            "equity_change_usd": _round(total_now - from_total),
+            "net_flows_usd": _round(flows.net_usd),
+        }
+        if flows.unpriced:
+            part["unpriced_flows"] = flows.unpriced
+        return part
+
     change = {
         "available": True,
-        "basis": BASIS_LABEL,
+        "basis": basis_label(tracked),
         "since_first_sample": {
             "recorded_at": int(first[0]),
-            "from_usd": _round(first[1]),
-            "change_usd": _round(total_now - first[1]),
+            **window(float(first[0]), float(first[1])),
         },
     }
     if day_ago is not None and day_ago.exact:
-        change["last_24h"] = {
-            "from_usd": _round(day_ago.total),
-            "change_usd": _round(total_now - day_ago.total),
-        }
+        change["last_24h"] = window(float(day_ago.ts), day_ago.total)
     return change
 
 
@@ -449,12 +541,25 @@ async def overview(
             "note": view.get("note", ""),
         }
         try:
-            entry["equity_change"] = _equity_change(user_id, venue.label, value, now)
+            entry["equity_change"] = _equity_change(
+                user_id, venue.label, value, now, venue.key
+            )
         except Exception as error:  # noqa: BLE001 - history never blocks the balances
             entry["equity_change"] = {
                 "available": False,
                 "reason": type(error).__name__,
             }
+        info = _flow_state(user_id, venue.key)
+        entry["flows"] = {
+            "recorded_net_flows_usd": info.get("recorded_net_flows_usd", 0.0),
+            "confirmed_count": info.get("confirmed_count", 0),
+            "pending_count": info.get("pending_count", 0),
+            "pending_net_usd": info.get("pending_net_usd", 0.0),
+            "tracked": bool(info.get("tracked")),
+            "history_read": info.get("fetch"),
+        }
+        if info.get("pending_count"):
+            entry["flows"]["note"] = native_flows.pending_note(info)
         venues.append(entry)
     return {
         "venues": venues,
@@ -463,6 +568,6 @@ async def overview(
             "Whole accounts at the last traded price, in USD. Only the bot allocation (ledger) may be traded.",
             "Hummingbot-connected accounts are not included; get_portfolio_overview covers those.",
             "Kraken xStocks is the same Kraken account that Hummingbot's `kraken` connector may also report; do not add both.",
-            "Equity change is the change in account value between readings; deposits and withdrawals are not tracked.",
+            "Equity change is the change in account value between readings, net of the confirmed deposits and withdrawals recorded for that venue (see its flows block). When a venue's basis says deposits are not tracked, a deposit still reads as a gain. Pending (unconfirmed) movements are not subtracted; mention them to the owner, who confirms or dismisses them in the Trade page.",
         ],
     }

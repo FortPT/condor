@@ -73,6 +73,11 @@ export interface LoopCardStats {
   pnlBasis: string;
   /** Which session boundary was estimated from the nearest sample, if any. */
   pnlNote: string;
+  /** The venue's deposits/withdrawals are recorded, so the PnL is a trading result. */
+  pnlFlowsTracked: boolean;
+  /** Detected cash movements not yet confirmed (not subtracted), and their USD sum. */
+  pnlUnconfirmedCount: number;
+  pnlUnconfirmedUsd: number;
   sessionCount: number;
   experimentCount: number;
 }
@@ -91,6 +96,9 @@ export function loopStats(
         unavailable: strategy.unavailable ?? "",
         pnlBasis: strategy.pnl_basis ?? "",
         pnlNote: strategy.pnl_note ?? "",
+        pnlFlowsTracked: strategy.pnl_flows_tracked ?? false,
+        pnlUnconfirmedCount: strategy.pnl_unconfirmed_count ?? 0,
+        pnlUnconfirmedUsd: strategy.pnl_unconfirmed_usd ?? 0,
         sessionCount: strategy.session_count,
         experimentCount: strategy.experiment_count,
       }
