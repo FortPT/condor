@@ -121,9 +121,24 @@ unexplained = units now - units before
 It becomes a `pending` row when `|unexplained x price| > max(0.5 USD, 2% of that
 token's value at the last reading)`. Then:
 
-* Candidates that offset each other (positive and negative, net below the same
-  threshold) are an internal conversion, for example EUR to USD, or a trade placed by
-  hand on the venue app: not flows, nothing recorded.
+* Candidates that offset each other are an internal conversion, not a flow, nothing
+  recorded: a set of moves of both signs whose USD values sum to within the same threshold
+  (`max(0.5 USD, 2% of the account at the last reading)`). That covers EUR to USD, **and a
+  buy or sale of a token or stock against the venue's own cash**, the bot's or one the owner
+  made by hand: a holding that rose while cash fell by about the same value is a trade. The
+  smallest sets are matched first, each move once, so a real deposit made in the same
+  reading as a trade still shows (before, a deposit next to a trade stopped the whole set
+  from netting and every move was flagged). One-sided moves are never matched: a deposit,
+  a withdrawal or a cash change with no holding behind it is still detected.
+* A token on the venue's exclusion list (`excluded_tickers`, Trading 212) is never offered
+  as a flow itself (the owner holds it outside the bot), but it still counts as the other
+  side of a conversion, so the owner's manual purchase of it with cash nets out. Its value
+  is removed from the trading result instead (`docs/trading212.md`).
+* The bot ledger's own bookings are matched too. Besides the filled orders in the window,
+  the detector keeps the ledger's cash and units at each reading and credits the ledger's
+  change since then to a token no order row mentions (a fill the module booked from the
+  account's evidence, or whose order record an older reconcile bug cleared), but never more
+  than the account moved and never in the opposite direction.
 * The first reading only sets the reference; a reading while an order is uncertain is
   skipped and does not move the reference.
 * A history (API) or manual row of about the same money (same venue, currency and sign,
@@ -136,7 +151,9 @@ token's value at the last reading)`. Then:
 * Staking rewards, interest and trades made by hand on the venue also look unexplained.
   Confirm a real transfer; dismiss anything else.
 * An order recorded in the ledger a moment after the reading that already contains its
-  fill can look unexplained once; dismiss it.
+  fill can look unexplained once; dismiss it. (A trade also shows its cash leg, which now
+  nets it out; this remains for a fill whose cash leg is invisible, such as one paid from
+  cash a pending order had reserved.)
 
 Pending rows are never subtracted. They are shown on the panel, in the API (`pending_count`,
 `pending_net_usd`), on the loop card ("Unconfirmed cash movement of +$4.74", visible, not
@@ -228,6 +245,60 @@ reason when `result_points` is `null`), a note "Showing from ..., when all N acc
 recording", and an empty state instead of a line for a single point or when no common
 reading exists yet.
 
+## Trading 212: correcting the first sample (one time, on the VM)
+
+Trading 212's first history sample (33.42 USD = 30.00 EUR) left out the 9.11 EUR that the
+owner's then-pending MRNA market order had reserved; the fill at 13:30 UTC then made the
+account read about 39 EUR and the venue's "trading result since the first sample" +10.2
+USD, with nothing earned. The code now counts all account money (see
+`docs/trading212.md`), but history is never rewritten, so that sample stays what it was.
+The correction is one confirmed manual flow, recording the 9.11 EUR as the owner's own
+money that entered the account's value after the first sample:
+
+```
+venue    trading212
+amount   +9.11        currency EUR      (a deposit)
+usd      10.15        (9.11 EUR at the first sample's own rate, 33.42 / 30.00 = 1.114)
+ts       one second AFTER the first sample (see below)
+note     cash reserved for pending MRNA order, owner deposit
+```
+
+**The date matters.** A flow is subtracted only when it is stamped after the first sample
+(`start < ts <= end`); a flow stamped at or before it is read as already in that sample
+and changes nothing. The MRNA order was created at 11:35:59Z, and the first sample was
+taken at or after that, so do not use 11:35:59Z blindly. Read the sample's time and use
+one second later:
+
+```
+sqlite3 $CONDOR_DATA_DIR/portfolio_history/<user id>.db \
+  "select ts, datetime(ts,'unixepoch'), total_usd from samples
+   where source='Trading 212' order by ts limit 1"
+```
+
+Enter it in the Trade page ("Add deposit/withdrawal", Trading 212: deposit, 9.11, EUR,
+that date and time, USD value 10.15, the note above) or with `POST /api/v1/native-flows`
+`{"venue":"trading212","amount":9.11,"currency":"EUR","ts":"<first sample ts + 1, ISO>",
+"usd_value":10.15,"note":"cash reserved for pending MRNA order, owner deposit"}`.
+
+How it nets out (tested in `tests/test_native_flows.py`): the trading result is
+`value now - value at the first sample - confirmed flows after it - the excluded holdings'
+change`. With the first sample 33.42 and the account now 43.61 USD (the bot's 29.95 EUR plus
+MRNA at 9.20 EUR):
+
+| | trading result |
+|---|---|
+| no correction | 43.61 - 33.42 = **+10.19** (the phantom gain) |
+| the manual flow, dated after the sample | 43.61 - 33.42 - 10.15 = **+0.04** |
+| the flow dated at or before the sample | +10.19 (ignored) |
+
++0.04 is the bot's -0.06 (29.95 against 30.00 EUR) plus MRNA's
++0.09 EUR price move since the fill: the first sample did not record the excluded value, so
+that comparison cannot remove MRNA, and its price moves leak into this one figure. They
+do not leak into any comparison that starts at a sample recorded after the fix is
+deployed (the loop cards' session results, whose start samples are later, are already
+right and stay right). Do **not** also treat the 9.11 EUR as excluded by hand: the
+excluded value is removed only when both ends recorded it, so the two never overlap.
+
 ## Not done / limits
 
 * No venue endpoint was exercised live; see the verification notes above.
@@ -236,5 +307,7 @@ reading exists yet.
 * Withdrawal fees on Crypto.com may not be included; Kraken's are (amount minus fee).
 * Detection works on balances, so a deposit smaller than the threshold (0.5 USD or 2% of
   the token) is not noticed; enter it by hand if it matters.
+* A deposit that is spent on a manual purchase within one reading shows as the holding
+  that rose (its cash never moved), not as cash; the history reader covers Trading 212.
 * The 30 s loop-card cache means a confirmation shows on the cards within about 30
   seconds.

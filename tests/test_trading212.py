@@ -182,6 +182,7 @@ class FakeService(t212.Trading212Service):
         self.currency = "EUR"
         self.cash = Decimal("40")
         self.reserved = Decimal("0")
+        self.total_value = Decimal("0")  # the summary's own account total
         self.held = {
             "MSFT_US_EQ": position("MSFT_US_EQ", "0.05", "400", "17.5"),
             "SAP_DE_EQ": position("SAP_DE_EQ", "1", "100", "90", currency="EUR"),
@@ -263,7 +264,7 @@ class FakeService(t212.Trading212Service):
             return {
                 "id": 1,
                 "currency": self.currency,
-                "totalValue": 0,
+                "totalValue": float(self.total_value),
                 "cash": {
                     "availableToTrade": float(self.cash),
                     "inPies": 0,
@@ -2052,6 +2053,92 @@ class ExclusionTests(Base):
         self.assertEqual(status["excluded_tickers"], [])
 
 
+class WholeAccountTests(Base):
+    """The dashboard/history valuation counts ALL account money, never the bot's slice."""
+
+    MRNA = instrument("MRNA_US_EQ", "MRNA", isin="US60770K1079")
+
+    def positions_eur(self):
+        return sum(
+            (p["quantity"] * p["price_usd"] / FX for p in self.svc.held.values()),
+            Decimal(0),
+        )
+
+    def eur_row(self, view):
+        return {b["token"]: b for b in view["balances"]}["EUR"]
+
+    async def test_cash_reserved_for_a_pending_order_is_part_of_the_account(self):
+        self.svc.reserved = Decimal("9.11")
+        view = await self.svc.portfolio(1)
+        row = self.eur_row(view)
+        self.assertAlmostEqual(row["total"], 49.11, places=6)
+        self.assertAlmostEqual(row["usd_value"], 49.11 * 1.10, places=6)
+        # Only the free cash can be traded.
+        self.assertAlmostEqual(row["available"], 40.0, places=6)
+        self.assertEqual(view["composition_eur"]["reserved_for_orders"], "9.11")
+        self.assertIn("reserved", view["note"])
+
+    async def test_a_pending_order_does_not_make_value_vanish_and_reappear(self):
+        # Before the fill: 9.11 EUR reserved. After it: the cash is a position.
+        self.svc.reserved = Decimal("9.11")
+        before = (await self.svc.portfolio(1))["total_usd"]
+        self.svc.reserved = Decimal("0")
+        self.svc.held["MRNA_US_EQ"] = position(
+            "MRNA_US_EQ",
+            "0.0467626",
+            str(Decimal("9.11") * FX / Decimal("0.0467626")),
+            "9.11",
+        )
+        after = (await self.svc.portfolio(1))["total_usd"]
+        self.assertAlmostEqual(before, after, places=4)
+
+    async def test_cash_the_summary_does_not_itemise_is_counted_from_the_account_total(
+        self,
+    ):
+        # Seen live: the pending MRNA order's 9.11 EUR was in no cash field. The
+        # account's own total still held it.
+        self.svc.total_value = self.svc.cash + self.positions_eur() + Decimal("9.11")
+        view = await self.svc.portfolio(1)
+        self.assertAlmostEqual(self.eur_row(view)["total"], 49.11, places=4)
+        self.assertEqual(view["composition_eur"]["not_itemised"], "9.11")
+        self.assertIn("not itemise", view["note"])
+
+    async def test_a_total_that_is_only_the_investments_or_rounding_adds_nothing(self):
+        for total in (
+            self.positions_eur(),  # the spec's wording: the investments' value
+            self.svc.cash + self.positions_eur() + Decimal("0.04"),  # rounding
+            Decimal("0"),  # not reported
+        ):
+            self.svc.total_value = total
+            view = await self.svc.portfolio(1)
+            self.assertAlmostEqual(self.eur_row(view)["total"], 40.0, places=6)
+            self.assertEqual(view["composition_eur"]["not_itemised"], "0")
+            self.svc._cache.clear()
+
+    async def test_the_owners_excluded_holdings_stay_in_the_total_and_are_reported(
+        self,
+    ):
+        self.svc.instruments_raw = INSTRUMENTS + [self.MRNA]
+        self.svc.held["MRNA_US_EQ"] = position(
+            "MRNA_US_EQ", "0.0467626", "216.5", "9.1"
+        )
+        await self.svc.set_excluded(1, ["MRNA"])
+        view = await self.svc.portfolio(1)
+        by_token = {b["token"]: b for b in view["balances"]}
+        mrna_usd = 0.0467626 * 216.5
+        self.assertAlmostEqual(by_token["MRNA"]["usd_value"], mrna_usd, places=6)
+        self.assertAlmostEqual(view["excluded_value_usd"], mrna_usd, places=6)
+        self.assertEqual(view["excluded_tokens"], ["MRNA"])
+        self.assertAlmostEqual(
+            view["total_usd"], 40 * 1.10 + 20 + 100 + mrna_usd, places=6
+        )
+
+    async def test_without_an_exclusion_list_nothing_is_excluded(self):
+        view = await self.svc.portfolio(1)
+        self.assertEqual(view["excluded_value_usd"], 0.0)
+        self.assertEqual(view["excluded_tokens"], [])
+
+
 class FlowsTests(unittest.IsolatedAsyncioTestCase):
     def test_deposits_and_withdrawals_are_signed_by_their_type(self):
         data = {
@@ -2190,7 +2277,10 @@ class FlowsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_foreign_next_page_path_is_never_followed(self):
         class Service:
+            calls = 0
+
             async def private(self, *args, **kwargs):
+                self.calls += 1
                 return {
                     "items": [
                         {
@@ -2204,8 +2294,193 @@ class FlowsTests(unittest.IsolatedAsyncioTestCase):
                     "nextPagePath": "https://evil.example/x",
                 }
 
-        out = await fetchers.fetch("trading212", Service(), 1, NOW - 86400, NOW)
+        service = Service()
+        out = await fetchers.fetch("trading212", service, 1, NOW - 86400, NOW)
         self.assertTrue(out.problems)
+        self.assertEqual(service.calls, 1)
+
+    async def test_the_time_filter_carries_milliseconds_and_the_page_is_the_documented_max(
+        self,
+    ):
+        # The first live call sent "...:59Z" and got HTTP 400 invalid-request; the
+        # published examples write 2026-01-12T11:12:31.337Z.
+        class Service:
+            def __init__(self):
+                self.calls = []
+
+            async def private(self, user_id, method, path, query=None, body=None):
+                self.calls.append((method, path, query))
+                return {"items": [], "nextPagePath": None}
+
+        service = Service()
+        await fetchers.fetch("trading212", service, 1, 1_793_113_200.25, 1_793_200_000)
+        method, path, query = service.calls[0]
+        self.assertEqual((method, path), ("GET", "/equity/history/transactions"))
+        self.assertEqual(query, {"limit": 50, "time": "2026-10-27T15:00:00.250Z"})
+
+    async def test_a_400_on_the_time_filter_is_retried_once_with_only_the_limit(self):
+        since = NOW - 5 * 86400
+
+        class Service:
+            def __init__(self):
+                self.calls = []
+
+            async def private(self, user_id, method, path, query=None, body=None):
+                self.calls.append(query)
+                if query and "time" in query:
+                    raise t212.Trading212Error(400, "/api-errors/invalid-request")
+                return {
+                    "items": [
+                        {
+                            "type": "DEPOSIT",
+                            "amount": 10,
+                            "currency": "EUR",
+                            "dateTime": "2026-10-20T10:00:00Z",  # older than since
+                            "reference": "old",
+                        },
+                        {
+                            "type": "DEPOSIT",
+                            "amount": 9.11,
+                            "currency": "EUR",
+                            "dateTime": "2026-10-26T10:00:00Z",
+                            "reference": "new",
+                        },
+                    ],
+                }
+
+        service = Service()
+        out = await fetchers.fetch("trading212", service, 1, since, NOW)
+        self.assertEqual(
+            service.calls,
+            [{"limit": 50, "time": fetchers._trading212_time(since)}, {"limit": 50}],
+        )
+        self.assertEqual([f.external_id for f in out.flows], ["transaction:new"])
+        self.assertEqual(out.problems, [])
+
+    async def test_a_400_that_persists_stays_unavailable(self):
+        class Service:
+            def __init__(self):
+                self.calls = 0
+
+            async def private(self, *args, **kwargs):
+                self.calls += 1
+                raise t212.Trading212Error(400, "/api-errors/invalid-request")
+
+        service = Service()
+        out = await fetchers.fetch("trading212", service, 1, NOW - 86400, NOW)
+        self.assertEqual(service.calls, 2)
+        self.assertEqual(out.flows, [])
+        self.assertEqual(len(out.problems), 1)
+        self.assertIn("HTTP 400", out.problems[0])
+
+    async def test_a_later_page_failing_keeps_the_rows_already_read_and_says_so(self):
+        class Service:
+            def __init__(self):
+                self.calls = 0
+
+            async def private(self, *args, **kwargs):
+                self.calls += 1
+                if self.calls > 1:
+                    raise t212.Trading212Error(404, "not found")
+                return {
+                    "items": [
+                        {
+                            "type": "DEPOSIT",
+                            "amount": 5,
+                            "currency": "EUR",
+                            "dateTime": "2026-10-28T10:00:00Z",
+                            "reference": "a",
+                        }
+                    ],
+                    "nextPagePath": "/api/v0/equity/history/transactions?cursor=x",
+                }
+
+        out = await fetchers.fetch("trading212", Service(), 1, NOW - 5 * 86400, NOW)
+        self.assertEqual([f.external_id for f in out.flows], ["transaction:a"])
+        self.assertTrue(out.problems[0].startswith("transactions:"))
+
+    async def test_a_query_only_next_page_path_is_followed_on_this_endpoint(self):
+        class Service:
+            def __init__(self):
+                self.calls = []
+
+            async def private(self, user_id, method, path, query=None, body=None):
+                self.calls.append(path)
+                if len(self.calls) == 1:
+                    return {
+                        "items": [
+                            {
+                                "type": "DEPOSIT",
+                                "amount": 5,
+                                "currency": "EUR",
+                                "dateTime": "2026-10-28T10:00:00Z",
+                                "reference": "a",
+                            }
+                        ],
+                        "nextPagePath": "limit=50&cursor=abc&time=2026-10-20T00:00:00.000Z",
+                    }
+                return {"items": [], "nextPagePath": None}
+
+        service = Service()
+        out = await fetchers.fetch("trading212", service, 1, NOW - 5 * 86400, NOW)
+        self.assertEqual(
+            service.calls[1],
+            "/api/v0/equity/history/transactions?limit=50&cursor=abc&time=2026-10-20T00:00:00.000Z",
+        )
+        self.assertEqual(out.problems, [])
+
+    async def test_a_full_page_with_no_next_page_is_not_presented_as_complete(self):
+        row = {
+            "type": "DEPOSIT",
+            "amount": 1,
+            "currency": "EUR",
+            "dateTime": "2026-10-28T10:00:00Z",
+        }
+
+        class Service:
+            async def private(self, *args, **kwargs):
+                return {
+                    "items": [dict(row, reference=f"r{i}") for i in range(50)],
+                    "nextPagePath": None,
+                }
+
+        out = await fetchers.fetch("trading212", Service(), 1, NOW - 5 * 86400, NOW)
+        self.assertEqual(len(out.flows), 50)
+        self.assertTrue(any("no nextPagePath" in p for p in out.problems))
+
+    async def test_only_deposits_and_withdrawals_count_whatever_the_documented_type(
+        self,
+    ):
+        types = [
+            "DEPOSIT",
+            "WITHDRAW",
+            "TRANSFER",
+            "FEE",
+            "INTEREST_ON_FREE_CASH",
+            "LENDING_INTEREST",
+        ]
+
+        class Service:
+            async def private(self, *args, **kwargs):
+                return {
+                    "items": [
+                        {
+                            "type": kind,
+                            "amount": 3 + i,
+                            "currency": "EUR",
+                            "dateTime": "2026-10-28T10:00:00Z",
+                            "reference": f"r{i}",
+                        }
+                        for i, kind in enumerate(types)
+                    ],
+                    "nextPagePath": None,
+                }
+
+        out = await fetchers.fetch("trading212", Service(), 1, NOW - 86400, NOW)
+        self.assertEqual(
+            [(f.external_id, f.amount) for f in out.flows],
+            [("transaction:r0", Decimal(3)), ("transaction:r1", Decimal(-4))],
+        )
 
 
 class HistoryTests(Base):

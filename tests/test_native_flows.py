@@ -819,9 +819,10 @@ def test_observe_swallows_every_failure():
 
 
 class FakeVenue:
-    def __init__(self, total, quote="USD"):
+    def __init__(self, total, quote="USD", excluded=None):
         self.total = total
         self.quote = quote
+        self.excluded = excluded
 
     def status(self, user_id):
         return {
@@ -836,7 +837,7 @@ class FakeVenue:
         }
 
     async def portfolio(self, user_id):
-        return {
+        view = {
             "connector": "x",
             "total_usd": self.total,
             "balances": [
@@ -844,16 +845,23 @@ class FakeVenue:
             ],
             "note": "",
         }
+        if self.excluded is not None:
+            view["excluded_value_usd"] = self.excluded
+        return view
 
 
 def sample(venue, ts, total):
     assert ph.record(USER, venue.label, total, now=ts)
 
 
-def perf(spans, total, now, venue=EXCHANGE):
+def perf(spans, total, now, venue=EXCHANGE, excluded=None):
     return run(
         na.performance(
-            venue, USER, spans, services={venue.key: FakeVenue(total)}, now=now
+            venue,
+            USER,
+            spans,
+            services={venue.key: FakeVenue(total, excluded=excluded)},
+            now=now,
         )
     )
 
@@ -1195,3 +1203,321 @@ def test_superseding_is_idempotent():
     )
     assert again["note"] == note and again["status"] == "dismissed"
     assert nf.summary(USER, "kraken_xstocks")["confirmed_count"] == 1
+
+
+# ── detection: trades against the venue's own cash, excluded holdings, the ledger ──
+
+
+def ledger_212(excluded=("MRNA",), orders=(), cash="30", positions=None):
+    return {
+        "quote": "EUR",
+        "orders": list(orders),
+        "uncertain_order": None,
+        "excluded_tickers": list(excluded),
+        "cash": cash,
+        "positions": positions or {},
+    }
+
+
+def detect_212(view, ledger=None, now=T0):
+    return nf.detect(USER, "trading212", view, ledger or ledger_212(), now=now)
+
+
+def test_the_live_false_detections_are_gone_a_swap_and_an_excluded_holding():
+    # Trading 212, 2026-10-29: the owner bought MRNA by hand (a holding on the venue's
+    # exclusion list; its 9.11 EUR was reserved, so no cash leg was visible) and the
+    # bot's first AAPL order filled while its record was gone. Three "unconfirmed cash
+    # movements" were offered; none was a deposit or a withdrawal.
+    detect_212(view_of(EUR=(30.0, 33.0), AAPL=(0, 0), MRNA=(0, 0)), now=T0)
+    created = detect_212(
+        view_of(EUR=(24.05, 26.455), AAPL=(0.0188, 6.5), MRNA=(0.0467626, 10.0)),
+        now=T0 + 300,
+    )
+    assert created == []
+    assert nf.pending(USER, "trading212") == []
+
+
+def test_a_manual_buy_of_an_excluded_ticker_is_neither_flagged_nor_a_flow():
+    detect_212(view_of(EUR=(40.0, 44.0), MRNA=(0, 0)), now=T0)
+    # 9.11 EUR of cash became MRNA: value moved inside the account.
+    created = detect_212(
+        view_of(EUR=(30.89, 33.98), MRNA=(0.0467626, 10.1)), now=T0 + 300
+    )
+    assert created == []
+    assert nf.pending(USER, "trading212") == []
+
+
+def test_an_excluded_ticker_moving_alone_is_never_offered_as_a_flow():
+    detect_212(view_of(EUR=(30.0, 33.0), MRNA=(0, 0)), now=T0)
+    assert detect_212(view_of(EUR=(30.0, 33.0), MRNA=(0.05, 10.0)), now=T0 + 300) == []
+    # Also when the owner sells some of it and the proceeds are not in the reading yet.
+    assert detect_212(view_of(EUR=(30.0, 33.0), MRNA=(0.02, 4.0)), now=T0 + 600) == []
+    assert nf.pending(USER, "trading212") == []
+
+
+def test_the_exclusion_list_only_covers_what_it_names():
+    detect_212(view_of(EUR=(30.0, 33.0), TSLA=(0, 0)), now=T0)
+    created = detect_212(view_of(EUR=(30.0, 33.0), TSLA=(0.05, 12.0)), now=T0 + 300)
+    assert [(r["currency"], r["amount"]) for r in created] == [("TSLA", "0.05")]
+
+
+@pytest.mark.parametrize(
+    "venue,before,after",
+    [
+        # A stock bought by hand with the venue's own cash.
+        (
+            "kraken_xstocks",
+            view_of(USD=(100, 100), AAPLx=(0, 0)),
+            view_of(USD=(90, 90), AAPLx=(0.04, 10.05)),
+        ),
+        # A coin sold by hand for cash.
+        (
+            "crypto_com_exchange",
+            view_of(USD=(20, 20), BTC=(0.01, 1000)),
+            view_of(USD=(1018, 1018), BTC=(0, 0)),
+        ),
+        # A coin bought by hand with cash.
+        (
+            "revolut_x",
+            view_of(USD=(500, 500), ETH=(0, 0)),
+            view_of(USD=(380, 380), ETH=(0.04, 119.5)),
+        ),
+    ],
+)
+def test_a_manual_trade_against_the_venues_own_cash_is_not_a_flow(venue, before, after):
+    detect(before, now=T0, venue=venue)
+    assert detect(after, now=T0 + 300, venue=venue) == []
+    assert nf.pending(USER, venue) == []
+
+
+def test_a_deposit_beside_a_trade_is_not_swallowed_by_it():
+    detect(
+        view_of(USD=(100, 100), AAPLx=(0, 0), EUR=(0, 0)),
+        now=T0,
+        venue="kraken_xstocks",
+    )
+    created = detect(
+        view_of(USD=(89.8, 89.8), AAPLx=(0.04, 10.0), EUR=(50, 55)),
+        now=T0 + 300,
+        venue="kraken_xstocks",
+    )
+    # The buy (-10.2 against +10.0) is one conversion; the 50 EUR is a deposit.
+    assert [(r["currency"], r["amount"]) for r in created] == [("EUR", "50")]
+
+
+def test_a_real_deposit_is_still_detected_with_an_excluded_holding_untouched():
+    detect_212(view_of(EUR=(30.0, 33.0), MRNA=(0.0467626, 10.0)), now=T0)
+    created = detect_212(
+        view_of(EUR=(80.0, 88.0), MRNA=(0.0467626, 10.0)), now=T0 + 300
+    )
+    assert [(r["currency"], r["amount"], r["status"]) for r in created] == [
+        ("EUR", "50", "pending")
+    ]
+
+
+def test_a_real_deposit_is_still_detected_beside_an_excluded_move():
+    detect_212(view_of(EUR=(30.0, 33.0), MRNA=(0, 0)), now=T0)
+    created = detect_212(
+        view_of(EUR=(80.0, 88.0), MRNA=(0.0467626, 10.0)), now=T0 + 300
+    )
+    assert [(r["currency"], r["amount"]) for r in created] == [("EUR", "50")]
+
+
+def test_a_real_withdrawal_is_still_detected():
+    detect_212(view_of(EUR=(60.0, 66.0), AAPL=(0.02, 7.0)), now=T0)
+    created = detect_212(view_of(EUR=(20.0, 22.0), AAPL=(0.02, 7.0)), now=T0 + 300)
+    assert [(r["currency"], r["amount"], r["usd_value_at_time"]) for r in created] == [
+        ("EUR", "-40", pytest.approx(-44.0))
+    ]
+
+
+def test_a_one_sided_cash_change_is_still_detected_not_paired_with_nothing():
+    detect_212(view_of(EUR=(30.0, 33.0), MRNA=(0.0467626, 10.0)), now=T0)
+    created = detect_212(
+        view_of(EUR=(24.0, 26.4), MRNA=(0.0467626, 10.0)), now=T0 + 300
+    )
+    assert [(r["currency"], r["amount"]) for r in created] == [("EUR", "-6")]
+
+
+def test_two_moves_of_very_different_value_are_not_one_conversion():
+    detect(view_of(USD=(100, 100), AAPLx=(0, 0)), now=T0, venue="kraken_xstocks")
+    created = detect(
+        view_of(USD=(70, 70), AAPLx=(0.04, 10.0)), now=T0 + 300, venue="kraken_xstocks"
+    )
+    assert sorted(r["currency"] for r in created) == ["AAPLX", "USD"]
+
+
+def test_a_fill_the_ledger_booked_without_an_order_row_explains_the_account_move():
+    # The order record was cleared (an older reconcile bug) but the module's own ledger
+    # holds the position it booked: the account's rise is the bot's, not a flow.
+    detect_212(view_of(EUR=(30.0, 33.0), AAPL=(0, 0)), ledger_212(), now=T0)
+    booked = ledger_212(positions={"AAPL": {"units": "0.0188", "cost": "5.95"}})
+    assert (
+        detect_212(view_of(EUR=(30.0, 33.0), AAPL=(0.0188, 6.6)), booked, T0 + 300)
+        == []
+    )
+
+
+def test_a_ledger_booking_never_explains_more_than_the_account_moved():
+    detect_212(view_of(EUR=(30.0, 33.0), AAPL=(0, 0)), ledger_212(), now=T0)
+    booked = ledger_212(positions={"AAPL": {"units": "0.0188", "cost": "5.95"}})
+    created = detect_212(view_of(EUR=(30.0, 33.0), AAPL=(0.05, 17.5)), booked, T0 + 300)
+    # 0.0188 is the bot's; the other 0.0312 is not.
+    assert [(r["currency"], r["amount"]) for r in created] == [("AAPL", "0.0312")]
+
+
+def test_a_ledger_booking_in_the_other_direction_explains_nothing():
+    detect_212(
+        view_of(EUR=(30.0, 33.0), AAPL=(0.05, 17.5)),
+        ledger_212(positions={"AAPL": {"units": "0.05", "cost": "15"}}),
+        now=T0,
+    )
+    # The ledger sold 0.02, yet the account's units ROSE: that rise is not explained.
+    created = detect_212(
+        view_of(EUR=(30.0, 33.0), AAPL=(0.07, 24.5)),
+        ledger_212(positions={"AAPL": {"units": "0.03", "cost": "9"}}),
+        T0 + 300,
+    )
+    assert [(r["currency"], r["amount"]) for r in created] == [("AAPL", "0.02")]
+
+
+def test_a_flow_store_from_before_the_ledger_snapshot_is_upgraded_in_place():
+    path = nf._db(USER)
+    path.parent.mkdir(parents=True)
+    conn = sqlite3.connect(path)
+    conn.executescript("""
+        CREATE TABLE marks (venue TEXT PRIMARY KEY, ts REAL NOT NULL,
+                            balances TEXT NOT NULL);
+        INSERT INTO marks VALUES ('trading212', %d, '{"EUR": ["30", 33.0]}');
+        """ % T0)
+    conn.commit()
+    conn.close()
+    created = detect_212(view_of(EUR=(80.0, 88.0)), now=T0 + 300)
+    assert [(r["currency"], r["amount"]) for r in created] == [("EUR", "50")]
+    check = sqlite3.connect(path)
+    try:
+        columns = {row[1] for row in check.execute("PRAGMA table_info(marks)")}
+    finally:
+        check.close()
+    assert "ledger" in columns
+
+
+# ── the trading result: whole account, owner's own holdings, a wrong first sample ──
+
+EUR_USD = 1.114
+
+
+def test_the_recorder_stores_the_excluded_value_beside_the_sample():
+    assert ph.record(USER, "Trading 212", 43.61, now=T0, excluded_usd=10.25)
+    assert ph.record(USER, "Trading 212", 43.7, now=T0 + 300)  # value not given
+    assert ph.excluded_at(USER, "Trading 212", T0) == pytest.approx(10.25)
+    # Not recorded is not zero.
+    assert ph.excluded_at(USER, "Trading 212", T0 + 300) is None
+    assert ph.excluded_at(USER, "Trading 212", T0 + 5) is None
+    assert ph.excluded_at(99, "Trading 212", T0) is None
+    # The history chart still reads the whole account.
+    rows = ph.series(USER, T0 - 1, T0 + 600)["Trading 212"]
+    assert [round(v, 2) for _, v in rows] == [43.61, 43.7]
+
+
+T212 = native_venues.get("trading212")
+
+
+def result_212(total_now, excluded_now, now=T0 + 7200):
+    return perf([], total_now, now, venue=T212, excluded=excluded_now)
+
+
+def test_the_wrong_first_sample_shows_the_phantom_gain_without_a_correction():
+    # First sample 30.00 EUR = 33.42 USD: the 9.11 EUR that a pending MRNA order had
+    # reserved was in no field. After the fill the account is 29.95 EUR (the bot's:
+    # -0.05 EUR) + MRNA worth 9.20 EUR = 39.15 EUR = 43.61 USD.
+    ph.record(USER, "Trading 212", 33.42, now=T0)  # recorded before excluded was stored
+    out = result_212(43.61, 10.25)
+    assert out.total_pnl == pytest.approx(10.19)
+    # The start sample has no excluded value, so none is removed, and it says so.
+    assert out.excluded_usd == 0.0
+    assert "did not record" in out.note
+
+
+def test_a_manual_flow_of_the_reserved_cash_nets_the_wrong_first_sample_out():
+    ph.record(USER, "Trading 212", 33.42, now=T0)
+    # The 9.11 EUR the owner's own money held in the pending order, priced at the
+    # first sample's own rate, dated just AFTER that sample (a flow stamped exactly at
+    # the sample is "already in it").
+    add("trading212", amount="9.11", currency="EUR", usd="10.15", ts=T0 + 1)
+    out = result_212(43.61, 10.25)
+    assert out.flows_usd == pytest.approx(10.15)
+    # 43.61 - 33.42 - 10.15: the bot's -0.06 plus MRNA's 0.09 EUR price move (+0.10).
+    assert out.total_pnl == pytest.approx(0.04, abs=0.005)
+
+
+def test_a_flow_dated_exactly_on_the_first_sample_does_not_count():
+    ph.record(USER, "Trading 212", 33.42, now=T0)
+    add("trading212", amount="9.11", currency="EUR", usd="10.15", ts=T0)
+    assert result_212(43.61, 10.25).total_pnl == pytest.approx(10.19)
+
+
+def test_samples_that_recorded_the_excluded_value_need_no_correction_at_all():
+    # From a sample recorded with the excluded value the owner's shares never move
+    # the result, whatever they do.
+    ph.record(USER, "Trading 212", 43.50, now=T0, excluded_usd=10.20)
+    out = result_212(43.61, 10.25)
+    # Bot side: 33.30 then 33.36.
+    assert out.total_pnl == pytest.approx(0.06)
+    assert out.excluded_usd == pytest.approx(0.05)
+    # And when the owner's holding rallies 40%, the result does not move.
+    na.forget()  # the live reading is reused for a short while
+    out = result_212(43.50 + 4.08, 10.20 + 4.08)
+    assert out.total_pnl == pytest.approx(0.0)
+
+
+def test_a_manual_purchase_of_an_excluded_holding_reads_as_a_loss_until_recorded():
+    # Known limit, kept visible: cash that becomes the owner's own share leaves the
+    # bot's side. Record it as a withdrawal to keep the result honest.
+    ph.record(USER, "Trading 212", 43.50, now=T0, excluded_usd=0.0)
+    assert result_212(43.50, 10.0).total_pnl == pytest.approx(-10.0)
+    na.forget()
+    add("trading212", amount="-10", currency="USD", usd="-10", ts=T0 + 60)
+    assert result_212(43.50, 10.0).total_pnl == pytest.approx(0.0)
+
+
+def test_session_results_leave_the_owners_holdings_out_too():
+    ph.record(USER, "Trading 212", 43.50, now=T0, excluded_usd=10.20)
+    out = perf([span(1, T0)], 43.61, T0 + 7200, venue=T212, excluded=10.25)
+    assert out.sessions[0].pnl == pytest.approx(0.06)
+    assert out.sessions[0].excluded_usd == pytest.approx(0.05)
+
+
+def test_a_venue_without_an_exclusion_list_is_unchanged():
+    ph.record(USER, EXCHANGE.label, 100.0, now=T0, excluded_usd=0.0)
+    assert perf([span()], 110.0, T0 + 3600).sessions[0].pnl == pytest.approx(10.0)
+    # An older sample with nothing stored behaves the same.
+    ph.record(USER, KRAKEN.label, 100.0, now=T0)
+    assert perf([span()], 110.0, T0 + 3600, venue=KRAKEN).sessions[
+        0
+    ].pnl == pytest.approx(10.0)
+
+
+def test_the_overview_reports_the_excluded_value_and_takes_it_out_of_the_change():
+    ph.record(USER, "Trading 212", 43.50, now=T0, excluded_usd=10.20)
+    add("trading212", amount="5", currency="USD", usd="5", ts=T0 + 100)
+    service = FakeVenue(43.61, excluded=10.25)
+    out = run(
+        na.overview(
+            USER,
+            services={
+                "crypto_com_exchange": FakeVenue(0.0),
+                "kraken_xstocks": FakeVenue(0.0),
+                "revolut_x": FakeVenue(0.0),
+                "trading212": service,
+            },
+            now=T0 + 3600,
+        )
+    )
+    entry = next(v for v in out["venues"] if v["venue"] == "trading212")
+    assert entry["account"]["total_usd"] == 43.61
+    assert entry["account"]["excluded_value_usd"] == 10.25
+    since = entry["equity_change"]["since_first_sample"]
+    assert since["equity_change_usd"] == 0.11
+    assert since["excluded_change_usd"] == 0.05
+    assert since["change_usd"] == pytest.approx(0.11 - 5.0 - 0.05, abs=0.006)

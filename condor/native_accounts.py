@@ -22,6 +22,14 @@ the owner confirms, or from manual entry. For a venue with no flow recorded and
 no history that could be read, the figure is still the plain equity change and the
 label says deposits are not tracked. Either way the whole account is measured, not
 only the bot allocation, and prices of held assets move it too.
+
+**Holdings the owner keeps outside the bot.** A venue with an exclusion list
+(Trading 212) reports their USD value as ``excluded_value_usd``; it stays in the
+whole-account total (the portfolio page, the chart) but is taken out of the
+trading result, so the owner's own shares are never the bot's profit or loss.
+That needs the value at BOTH ends of a comparison: a sample recorded before
+the value was stored has none, and its comparison stays the plain equity
+change (named in the note) rather than guessing the missing figure as zero.
 """
 
 from __future__ import annotations
@@ -133,7 +141,12 @@ async def collect_views(
         try:
             # Credentials belong to the user, never the shared server cache.
             view = await value_account(venue, user_id, services=services, max_age=0)
-            portfolio_history.record(user_id, venue.label, view["total_usd"])
+            portfolio_history.record(
+                user_id,
+                venue.label,
+                view["total_usd"],
+                excluded_usd=view.get("excluded_value_usd") or 0.0,
+            )
             # Detection only: the dashboard read makes no private history call.
             await native_flows.observe(user_id, venue.key, service, view, fetch=False)
             result.views.append(view)
@@ -155,6 +168,9 @@ class Reading(NamedTuple):
     ts: float
     #: ``ts`` minus the time asked for: negative = sampled before it.
     gap: float
+    #: USD value of the owner's excluded holdings inside ``total``; ``None`` when the
+    #: sample did not record it (taken before it was stored), never assumed zero.
+    excluded: float | None = None
 
     @property
     def exact(self) -> bool:
@@ -202,6 +218,35 @@ def _boundary_note(reading: Reading, what: str) -> str:
     )
 
 
+def _with_excluded(user_id: int, label: str, reading: Reading | None):
+    """``reading`` with the excluded value stored beside its sample (``None`` if none)."""
+    if reading is None:
+        return None
+    try:
+        known = portfolio_history.excluded_at(user_id, label, reading.ts)
+    except Exception as error:  # noqa: BLE001 - the figure is optional
+        log.warning("%s excluded value unreadable (%s)", label, type(error).__name__)
+        known = None
+    return reading._replace(excluded=known)
+
+
+def _excluded_change(begin: Reading, finish: Reading) -> tuple[float, str]:
+    """``(USD to take out of the equity change, note)`` for the owner's own holdings.
+
+    Their value at the end minus at the start, when both ends recorded it. When the
+    start did not (an older sample) nothing is removed and the note says so, if the
+    owner has any such holdings now.
+    """
+    if begin.excluded is None or finish.excluded is None:
+        if finish.excluded:
+            return 0.0, (
+                "The starting sample did not record the owner's excluded holdings, "
+                "so they are not taken out of this change."
+            )
+        return 0.0, ""
+    return finish.excluded - begin.excluded, ""
+
+
 @dataclass
 class SessionSpan:
     """One session's time window. ``live`` means it has no end yet."""
@@ -221,6 +266,8 @@ class SessionPnl:
     note: str = ""
     #: Net confirmed deposits/withdrawals (USD) already taken out of ``pnl``.
     flows_usd: float = 0.0
+    #: Change in the owner's excluded holdings (USD) already taken out of ``pnl``.
+    excluded_usd: float = 0.0
 
 
 @dataclass
@@ -237,6 +284,8 @@ class NativePerformance:
     unavailable: str = ""
     #: Net confirmed flows (USD) taken out of ``total_pnl``.
     flows_usd: float = 0.0
+    #: Change in the owner's excluded holdings (USD) taken out of ``total_pnl``.
+    excluded_usd: float = 0.0
     #: The venue's flows are tracked (history read or any flow confirmed), so the
     #: figures are a trading result; ``False`` keeps the "not tracked" wording.
     flows_tracked: bool = False
@@ -315,11 +364,20 @@ async def performance(
     if _connected(service, user_id):
         try:
             view = await value_account(venue, user_id, services=services)
-            live = Reading(float(view["total_usd"]), now, 0.0)
+            live = Reading(
+                float(view["total_usd"]),
+                now,
+                0.0,
+                float(view.get("excluded_value_usd") or 0.0),
+            )
         except Exception as error:  # noqa: BLE001 - fall back to the recorded sample
             log.warning("%s live value skipped (%s)", venue.label, type(error).__name__)
     if live is None:
-        live = Reading(float(last[1]), float(last[0]), float(last[0]) - now)
+        live = _with_excluded(
+            user_id,
+            venue.label,
+            Reading(float(last[1]), float(last[0]), float(last[0]) - now),
+        )
         now_note = (
             f"Account not read live; latest value is {_span_text(now - last[0])} old."
         )
@@ -332,9 +390,18 @@ async def performance(
         venue.label,
         [s.start for s in valid] + ends,
     )
-    starts = {s.num: pick(*pairs[i], s.start) for i, s in enumerate(valid)}
+    starts = {
+        s.num: _with_excluded(user_id, venue.label, pick(*pairs[i], s.start))
+        for i, s in enumerate(valid)
+    }
     end_readings = dict(
-        zip(ends, (pick(*p, e) for p, e in zip(pairs[len(valid) :], ends)))
+        zip(
+            ends,
+            (
+                _with_excluded(user_id, venue.label, pick(*p, e))
+                for p, e in zip(pairs[len(valid) :], ends)
+            ),
+        )
     )
 
     for span in sorted(spans, key=lambda s: s.num):
@@ -374,13 +441,16 @@ async def performance(
         # flows taken out are those stamped in (begin.ts, finish.ts].
         window = _flows_between(user_id, venue.key, begin.ts, finish.ts)
         notes.append(_unpriced_note(window))
+        removed, removed_note = _excluded_change(begin, finish)
+        notes.append(removed_note)
         out.sessions.append(
             SessionPnl(
                 span.num,
-                finish.total - begin.total - window.net_usd,
+                finish.total - begin.total - window.net_usd - removed,
                 estimated,
                 " ".join(n for n in notes if n),
                 window.net_usd,
+                removed,
             )
         )
 
@@ -388,20 +458,30 @@ async def performance(
     # no session start is on disk) to the account's value now.
     if valid:
         out.since = min(s.start for s in valid)
-        origin = starts[min(valid, key=lambda s: s.start).num] or Reading(
-            float(first[1]), float(first[0]), float(first[0]) - out.since
+        origin = starts[min(valid, key=lambda s: s.start).num] or _with_excluded(
+            user_id,
+            venue.label,
+            Reading(float(first[1]), float(first[0]), float(first[0]) - out.since),
         )
         total_note = _boundary_note(origin, "Start of the first session")
     else:
         out.since = float(first[0])
-        origin = Reading(float(first[1]), float(first[0]), 0.0)
+        origin = _with_excluded(
+            user_id,
+            venue.label,
+            Reading(float(first[1]), float(first[0]), 0.0),
+        )
         total_note = "Since the first recorded equity sample."
     total_flows = _flows_between(user_id, venue.key, origin.ts, live.ts)
     out.flows_usd = total_flows.net_usd
-    out.total_pnl = live.total - origin.total - total_flows.net_usd
+    removed, removed_note = _excluded_change(origin, live)
+    out.excluded_usd = removed
+    out.total_pnl = live.total - origin.total - total_flows.net_usd - removed
     out.estimated = not origin.exact or stale_now
     out.note = " ".join(
-        n for n in (total_note, now_note, _unpriced_note(total_flows)) if n
+        n
+        for n in (total_note, now_note, _unpriced_note(total_flows), removed_note)
+        if n
     )
     return out
 
@@ -414,13 +494,19 @@ def _round(value: float) -> float:
 
 
 def _equity_change(
-    user_id: int, label: str, total_now: float, now: float, venue_key: str = ""
+    user_id: int,
+    label: str,
+    total_now: float,
+    now: float,
+    venue_key: str = "",
+    excluded_now: float = 0.0,
 ) -> dict:
     """Equity change per window, net of confirmed flows when the venue's are tracked.
 
     ``change_usd`` is the trading result; ``equity_change_usd`` the raw difference
     and ``net_flows_usd`` what was taken out of it (the window is
-    ``(sample time, now]``).
+    ``(sample time, now]``). ``excluded_change_usd`` is the change in the owner's own
+    excluded holdings, also taken out when the starting sample recorded their value.
     """
     tracked = bool(venue_key) and bool(_flow_state(user_id, venue_key).get("tracked"))
     first, last = portfolio_history.bounds(user_id, label)
@@ -440,12 +526,19 @@ def _equity_change(
             if venue_key
             else native_flows.FlowWindow()
         )
+        start = _with_excluded(user_id, label, Reading(from_total, from_ts, 0.0))
+        removed, removed_note = _excluded_change(
+            start, Reading(total_now, now, 0.0, excluded_now)
+        )
         part = {
             "from_usd": _round(from_total),
-            "change_usd": _round(total_now - from_total - flows.net_usd),
+            "change_usd": _round(total_now - from_total - flows.net_usd - removed),
             "equity_change_usd": _round(total_now - from_total),
             "net_flows_usd": _round(flows.net_usd),
+            "excluded_change_usd": _round(removed),
         }
+        if removed_note:
+            part["excluded_note"] = removed_note
         if flows.unpriced:
             part["unpriced_flows"] = flows.unpriced
         return part
@@ -534,11 +627,17 @@ async def overview(
                 for b in sorted(held, key=lambda b: -b["usd_value"])
                 if b["usd_value"] >= 0.01
             ],
+            "excluded_value_usd": _round(view.get("excluded_value_usd") or 0.0),
             "note": view.get("note", ""),
         }
         try:
             entry["equity_change"] = _equity_change(
-                user_id, venue.label, value, now, venue.key
+                user_id,
+                venue.label,
+                value,
+                now,
+                venue.key,
+                float(view.get("excluded_value_usd") or 0.0),
             )
         except Exception as error:  # noqa: BLE001 - history never blocks the balances
             entry["equity_change"] = {
