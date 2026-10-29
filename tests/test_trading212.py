@@ -221,6 +221,9 @@ class FakeService(t212.Trading212Service):
         self.history_extra = {}
         self.summary_error = None
         self.positions_after_cancel = None
+        self.history_hides = False  # the history omits API orders (seen live)
+        self.after_place = None  # a callable run right after an order was placed
+        self.object_final = None  # (status, filled) the by-id read answers with
 
     async def eur_usd(self):
         return FX
@@ -233,6 +236,8 @@ class FakeService(t212.Trading212Service):
 
     def _record(self):
         out = []
+        if self.history_hides:
+            return out
         for oid, ticker, side, qty, filled, price, created, extra in self.records:
             if filled == 0 and not self.lists_unfilled:
                 continue
@@ -305,6 +310,20 @@ class FakeService(t212.Trading212Service):
         if path in ("/equity/orders/limit", "/equity/orders/market"):
             return self._place(path, body)
         if path == f"/equity/orders/{OID}" and method == "GET":
+            if self.object_final:
+                status, filled = self.object_final
+                record = self.records[-1]
+                return {
+                    "id": OID,
+                    "ticker": record[1],
+                    "side": record[2].upper(),
+                    "status": status,
+                    "type": "LIMIT",
+                    "quantity": float(record[3]),
+                    "filledQuantity": float(filled),
+                    "initiatedFrom": "API",
+                    "createdAt": iso(NOW),
+                }
             if self.stuck and not self.cancelled:
                 return self._pending_order()
             if self.pending_polls > 0:
@@ -371,6 +390,8 @@ class FakeService(t212.Trading212Service):
                     self.held[ticker] = position(ticker, left, price, old["cost_eur"])
         extra = dict(fill.get("extra", {}))
         self.records.append((OID, ticker, side, quantity, filled, price, NOW, extra))
+        if self.after_place:
+            self.after_place()
         return {"id": OID, "ticker": ticker, "status": "NEW", "type": "LIMIT"}
 
 
@@ -1279,6 +1300,10 @@ class OrderTests(Base):
         self.assertEqual(pending["side"], "buy")
         self.assertEqual(pending["quantity"], "0.0435")
         self.assertNotIn("order_id", pending)
+        # The account snapshot is written with it, before anything is sent.
+        self.assertEqual(pending["evidence_before"]["cash"], "40")
+        self.assertEqual(pending["evidence_before"]["quantity"], "0")
+        self.assertGreater(Decimal(pending["expected_eur"]), Decimal("7"))
 
     async def test_a_definite_refusal_clears_the_pending_entry_and_keeps_trading_on(
         self,
@@ -1334,6 +1359,7 @@ class OrderTests(Base):
     async def test_an_unreadable_fill_after_a_real_order_is_uncertain_not_ignored(self):
         await self.synced()
         self.svc.history_extra = {}
+        self.svc.fill = {"quantity": "0", "price": "200.10"}  # nothing moves
         original = self.svc._history_detail
 
         async def none(*args, **kwargs):
@@ -1428,6 +1454,8 @@ class ReconcileTests(Base):
 
         original = self.svc._history_detail
         self.svc._history_detail = none
+        # The positions read lags behind the fill (only the cash moved yet).
+        self.svc.after_place = lambda: self.svc.held.pop("AAPL_US_EQ")
         with self.assertRaises(ValueError):
             await self.svc.order(1, "buy", "AAPL", "8")
         self.svc._history_detail = original
@@ -1439,7 +1467,7 @@ class ReconcileTests(Base):
         self.assertEqual(status["ledger"]["positions"]["AAPL"]["units"], "0.0435")
         self.assertEqual(self.svc.deletes(), [])
 
-    async def test_an_order_never_seen_stays_until_a_minute_has_passed_then_clears(
+    async def test_an_order_never_seen_stays_until_three_minutes_have_passed_then_clears(
         self,
     ):
         await self.uncertain(place_fail=True)
@@ -1448,7 +1476,14 @@ class ReconcileTests(Base):
             await self.svc.reconcile(1)
         self.assertIn("Wait a minute", str(caught.exception))
         self.assertIsNotNone(self.ledger()["uncertain_order"])
+        # A minute on, the history is silent and the account unchanged: still not
+        # enough to say Trading 212 never created it.
         self.age(120)
+        with self.assertRaises(ValueError) as caught:
+            await self.svc.reconcile(1)
+        self.assertIn("No trace", str(caught.exception))
+        self.assertIsNotNone(self.ledger()["uncertain_order"])
+        self.age(t212.NOT_SEEN_AFTER_SEC + 20)
         status = await self.svc.reconcile(1)
         self.assertIsNone(status["ledger"]["uncertain_order"])
         self.assertFalse(status["ledger"]["enabled"])
@@ -1477,7 +1512,7 @@ class ReconcileTests(Base):
 
     async def test_an_order_placed_by_hand_in_the_app_is_not_ours(self):
         await self.uncertain(place_fail=True)
-        when = self.age(120)
+        when = self.age(200)
         self.record(when + 1, origin="IOS")
         status = await self.svc.reconcile(1)
         self.assertIsNone(status["ledger"]["uncertain_order"])
@@ -1485,7 +1520,7 @@ class ReconcileTests(Base):
 
     async def test_an_older_or_different_order_does_not_match(self):
         await self.uncertain(place_fail=True)
-        when = self.age(120)
+        when = self.age(200)
         self.record(when - 3600)
         status = await self.svc.reconcile(1)
         self.assertIsNone(status["ledger"]["uncertain_order"])
@@ -1495,6 +1530,526 @@ class ReconcileTests(Base):
         before = self.ledger()
         status = await self.svc.reconcile(1)
         self.assertEqual(status["ledger"], before)
+
+
+class AccountEvidenceTests(Base):
+    """The live sequence of 2026-10-29: the order filled, the history did not list it.
+
+    Trading 212's own account (free cash and positions) is the ground truth: the
+    outcome is read from what changed there, never guessed and never cleared on the
+    history's silence alone.
+    """
+
+    async def live_state(self):
+        """Cash 30, no bot positions, and the owner's own MRNA that the ledger lacks."""
+        self.svc.held.clear()
+        self.svc.cash = Decimal("30")
+        await self.synced()
+        self.svc.held["MRNA_US_EQ"] = position(
+            "MRNA_US_EQ", "0.0467626", "216.5", "9.1"
+        )
+        self.svc.history_hides = True
+
+    def account_matches(self, view):
+        self.assertTrue(view["ledger_matches_account"], view["mismatch"])
+        self.assertEqual(view["mismatch"], [])
+
+    async def test_a_fill_the_history_omits_is_booked_from_the_account(self):
+        await self.live_state()
+        result = await self.svc.order(1, "buy", "AAPL", "6")
+        order = result["order"]
+        self.assertEqual(order["fill_source"], "account_evidence")
+        self.assertEqual(order["value_source"], "account_cash_change")
+        self.assertEqual(order["fee_source"], "estimate")
+        self.assertIn("EUR/USD", order["average_price_source"])
+        self.assertEqual(order["status"], "filled")
+        self.assertIn("history did not list", order["inferred"])
+        held = self.svc.held["AAPL_US_EQ"]["quantity"]
+        ledger = self.ledger()
+        self.assertEqual(Decimal(ledger["positions"]["AAPL"]["units"]), held)
+        self.assertEqual(Decimal(order["filled_quantity"]), held)
+        # Ledger == reality: cash is the account's cash, the order is not uncertain.
+        self.assertAlmostEqual(Decimal(ledger["cash"]), self.svc.cash, places=6)
+        self.assertIsNone(ledger["uncertain_order"])
+        self.assertTrue(ledger["enabled"])  # a conclusive fill does not pause
+        self.assertEqual(ledger["orders"][-1]["fill_source"], "account_evidence")
+        self.assertEqual(ledger["orders"][-1]["ticker"], "AAPL_US_EQ")
+        self.assertEqual(self.svc.deletes(), [])
+        # The fee is split out of the cash change: value + fee is exactly what left.
+        spent = Decimal("30") - self.svc.cash
+        self.assertAlmostEqual(
+            Decimal(order["filled_value_eur"]) + Decimal(order["fee_eur"]),
+            spent,
+            places=6,
+        )
+        # (f) The owner's MRNA (not in the ledger, unchanged) is no mismatch.
+        view = await self.svc.valuation(1)
+        self.account_matches(view)
+        self.assertEqual(
+            [(r["ticker"], r["excluded"]) for r in view["outside_allocation"]],
+            [("MRNA_US_EQ", False)],
+        )
+
+    async def test_the_average_price_is_the_eur_value_over_the_quantity_at_the_reference_rate(
+        self,
+    ):
+        await self.live_state()
+        order = (await self.svc.order(1, "buy", "AAPL", "6"))["order"]
+        expected = (
+            Decimal(order["filled_value_eur"]) * FX / Decimal(order["filled_quantity"])
+        )
+        self.assertAlmostEqual(
+            Decimal(order["average_fill_price"]), expected, delta=Decimal("0.001")
+        )
+
+    async def test_only_the_cash_moved_stays_uncertain_with_the_evidence_listed(self):
+        await self.live_state()
+        self.svc.after_place = lambda: self.svc.held.pop("AAPL_US_EQ")
+        with self.assertRaises(ValueError) as caught:
+            await self.svc.order(1, "buy", "AAPL", "6")
+        message = str(caught.exception)
+        self.assertIn("reconciliation", message)
+        self.assertIn("only the cash moved", message)
+        self.assertIn("AAPL_US_EQ quantity 0 -> 0", message)
+        pending = self.ledger()["uncertain_order"]
+        self.assertEqual(pending["order_id"], OID)
+        self.assertEqual(self.ledger()["positions"], {})
+        self.assertFalse(self.svc.status(1)["enabled"])
+        # Reconcile much later still does not guess: the evidence stays mixed.
+        pending["time"] = time.time() - 900
+        self.set_ledger(uncertain_order=pending)
+        with self.assertRaises(ValueError) as again:
+            await self.svc.reconcile(1)
+        self.assertIn("mixed or ambiguous", str(again.exception))
+        self.assertIsNotNone(self.ledger()["uncertain_order"])
+
+    async def test_only_the_position_moved_stays_uncertain(self):
+        await self.live_state()
+
+        def only_position():
+            self.svc.cash = Decimal("30")
+
+        self.svc.after_place = only_position
+        with self.assertRaises(ValueError) as caught:
+            await self.svc.order(1, "buy", "AAPL", "6")
+        self.assertIn("only the position moved", str(caught.exception))
+        self.assertIsNotNone(self.ledger()["uncertain_order"])
+
+    async def test_nothing_moved_is_uncertain_until_three_minutes_then_cleared(self):
+        await self.live_state()
+        self.svc.fill = {"quantity": "0", "price": "200.10"}  # accepted, no fill
+        with self.assertRaises(ValueError) as caught:
+            await self.svc.order(1, "buy", "AAPL", "6")
+        self.assertIn("reconciliation", str(caught.exception))
+        pending = self.ledger()["uncertain_order"]
+        self.assertEqual(pending["order_id"], OID)
+
+        def age(seconds):
+            entry = self.ledger()["uncertain_order"]
+            entry["time"] = time.time() - seconds
+            self.set_ledger(uncertain_order=entry)
+
+        age(30)
+        with self.assertRaises(ValueError) as caught:
+            await self.svc.reconcile(1)
+        self.assertIn("Wait a minute", str(caught.exception))
+        age(t212.NOT_SEEN_AFTER_SEC - 20)
+        with self.assertRaises(ValueError) as caught:
+            await self.svc.reconcile(1)
+        self.assertIn("No trace", str(caught.exception))
+        self.assertIsNotNone(self.ledger()["uncertain_order"])
+        age(t212.NOT_SEEN_AFTER_SEC + 5)
+        status = await self.svc.reconcile(1)
+        self.assertIsNone(status["ledger"]["uncertain_order"])
+        self.assertFalse(status["ledger"]["enabled"])
+        self.assertEqual(status["ledger"]["positions"], {})
+        self.assertEqual(Decimal(status["ledger"]["cash"]), Decimal("30"))
+
+    async def test_a_reconcile_books_a_fill_that_only_the_account_shows(self):
+        """The live failure: reconcile used to clear this order and leave ledger != reality."""
+        await self.live_state()
+        # The order call could not read the account back: the fill is not booked.
+        original_cash = self.svc.cash
+        with patch.object(
+            t212.Trading212Service,
+            "_poll_verdict",
+            side_effect=ValueError("account unreadable"),
+        ):
+            with self.assertRaises(ValueError):
+                await self.svc.order(1, "buy", "AAPL", "6")
+        self.assertIsNotNone(self.ledger()["uncertain_order"])
+        self.assertLess(self.svc.cash, original_cash)  # the buy really filled
+        entry = self.ledger()["uncertain_order"]
+        entry["time"] = time.time() - 90  # past the first reconcile's one minute
+        self.set_ledger(uncertain_order=entry)
+        status = await self.svc.reconcile(1)
+        ledger = status["ledger"]
+        self.assertIsNone(ledger["uncertain_order"])
+        self.assertFalse(ledger["enabled"])  # a reconcile always leaves it paused
+        held = self.svc.held["AAPL_US_EQ"]["quantity"]
+        self.assertEqual(Decimal(ledger["positions"]["AAPL"]["units"]), held)
+        self.assertAlmostEqual(Decimal(ledger["cash"]), self.svc.cash, places=6)
+        self.assertEqual(ledger["orders"][-1]["fill_source"], "account_evidence")
+        self.account_matches(await self.svc.valuation(1))
+
+    async def test_a_partial_fill_is_booked_from_the_account_once_it_reads_the_same_twice(
+        self,
+    ):
+        await self.live_state()
+        self.svc.fill = {"quantity": "0.01", "price": "200.10"}
+        self.svc.stuck = True  # the rest rests; Condor cancels it
+        result = await self.svc.order(1, "buy", "AAPL", "6")
+        order = result["order"]
+        self.assertTrue(order["cancelled_by_condor"])
+        self.assertEqual(order["fill_source"], "account_evidence")
+        self.assertEqual(order["status"], "partially_filled")
+        self.assertEqual(order["filled_quantity"], "0.01")
+        self.assertEqual(self.ledger()["positions"]["AAPL"]["units"], "0.01")
+        self.assertIsNone(self.ledger()["uncertain_order"])
+        self.assertEqual(self.svc.deletes(), [f"/equity/orders/{OID}"])
+        self.account_matches(await self.svc.valuation(1))
+
+    async def test_a_partial_move_without_an_order_id_is_never_guessed(self):
+        await self.live_state()
+        self.svc.no_id = True  # accepted but no id came back
+        with self.assertRaises(ValueError):
+            await self.svc.order(1, "buy", "AAPL", "6")
+        entry = self.ledger()["uncertain_order"]
+        self.assertNotIn("order_id", entry)
+        # Half of the order's quantity shows up in the account, with proportional cash.
+        quantity = Decimal(entry["quantity"])
+        half = (quantity / 2).quantize(Decimal("0.0001"))
+        price = Decimal("200.10")
+        self.svc.held["AAPL_US_EQ"] = position(
+            "AAPL_US_EQ", half, price, half * price / FX
+        )
+        self.svc.cash -= half * price / FX
+        entry["time"] = time.time() - 90
+        self.set_ledger(uncertain_order=entry)
+        with self.assertRaises(ValueError) as caught:
+            await self.svc.reconcile(1)
+        self.assertIn("without its order id", str(caught.exception))
+        self.assertIsNotNone(self.ledger()["uncertain_order"])
+
+    async def test_a_sale_the_history_omits_is_booked_from_the_account_too(self):
+        await self.live_state()
+        self.svc.held["MSFT_US_EQ"] = position("MSFT_US_EQ", "0.05", "400", "17.5")
+        self.svc.cash = Decimal("30")
+        self.svc.set_enabled(1, False)
+        await self.svc.sync_from_account(1)
+        self.svc.set_enabled(1, True)
+        self.svc.history_hides = True
+        self.svc.fill = {"quantity": None, "price": "399.5"}
+        result = await self.svc.order(1, "sell", "MSFT", "0.05")
+        order = result["order"]
+        self.assertEqual(order["fill_source"], "account_evidence")
+        self.assertEqual(order["filled_quantity"], "0.05")
+        ledger = self.ledger()
+        self.assertEqual(ledger["positions"].get("MSFT"), None)
+        self.assertAlmostEqual(Decimal(ledger["cash"]), self.svc.cash, places=6)
+        # The sale's fee is added back to the proceeds: value - fee is what arrived.
+        arrived = self.svc.cash - Decimal("30")
+        self.assertAlmostEqual(
+            Decimal(order["filled_value_eur"]) - Decimal(order["fee_eur"]),
+            arrived,
+            places=6,
+        )
+        self.account_matches(await self.svc.valuation(1))
+
+    async def test_a_concurrent_manual_buy_of_the_same_ticker_is_not_booked(self):
+        await self.live_state()
+
+        def manual_extra():
+            row = self.svc.held["AAPL_US_EQ"]
+            more = row["quantity"] + Decimal("0.05")
+            self.svc.held["AAPL_US_EQ"] = position(
+                "AAPL_US_EQ", more, "200.10", row["cost_eur"]
+            )
+            self.svc.cash -= Decimal("9")
+
+        self.svc.after_place = manual_extra
+        with self.assertRaises(ValueError) as caught:
+            await self.svc.order(1, "buy", "AAPL", "6")
+        self.assertIn("more than this order", str(caught.exception))
+        self.assertIsNotNone(self.ledger()["uncertain_order"])
+        self.assertEqual(self.ledger()["positions"], {})
+
+    async def test_a_cash_change_that_does_not_fit_the_order_is_not_booked(self):
+        await self.live_state()
+
+        def deposit_and_buy():
+            self.svc.cash += Decimal("3")  # a deposit lands at the same moment
+
+        self.svc.after_place = deposit_and_buy
+        with self.assertRaises(ValueError) as caught:
+            await self.svc.order(1, "buy", "AAPL", "6")
+        self.assertIn("does not match the order", str(caught.exception))
+        self.assertIsNotNone(self.ledger()["uncertain_order"])
+
+    async def test_reserved_cash_changing_means_a_resting_order_and_is_ambiguous(self):
+        await self.live_state()
+
+        def reserve():
+            self.svc.reserved = Decimal("3")
+
+        self.svc.after_place = reserve
+        with self.assertRaises(ValueError) as caught:
+            await self.svc.order(1, "buy", "AAPL", "6")
+        self.assertIn("reserved", str(caught.exception))
+        self.assertIsNotNone(self.ledger()["uncertain_order"])
+
+    async def test_the_owners_other_holding_moving_does_not_decide_this_order(self):
+        """A different ticker changing is not evidence about this ticker."""
+        await self.live_state()
+        self.svc.after_place = lambda: self.svc.held["MRNA_US_EQ"].update(
+            {"quantity": Decimal("0.5"), "available": Decimal("0.5")}
+        )
+        result = await self.svc.order(1, "buy", "AAPL", "6")
+        self.assertEqual(result["order"]["fill_source"], "account_evidence")
+
+    async def test_the_account_is_snapshotted_before_any_order_is_sent(self):
+        await self.live_state()
+        sequence = []
+        original = self.svc.private
+
+        async def spy(user_id, method, path, query=None, body=None):
+            sequence.append((method, path))
+            return await original(user_id, method, path, query, body)
+
+        self.svc.private = spy
+        await self.svc.order(1, "buy", "AAPL", "6")
+        post = sequence.index(("POST", "/equity/orders/limit"))
+        before = sequence[:post]
+        self.assertIn(("GET", "/equity/account/summary"), before)
+        self.assertIn(("GET", "/equity/positions"), before)
+        # ... and an account that cannot be read means no order at all.
+        self.svc.set_enabled(1, False)
+        await self.svc.sync_from_account(1)
+        self.svc.set_enabled(1, True)
+        before_posts = len(self.svc.posts())
+
+        async def broken(*args, **kwargs):
+            raise ValueError("unreadable")
+
+        self.svc._snapshot = broken
+        with self.assertRaises(ValueError) as caught:
+            await self.svc.order(1, "buy", "MSFT", "8")
+        self.assertIn("no order placed", str(caught.exception))
+        self.assertEqual(len(self.svc.posts()), before_posts)
+        self.assertIsNone(self.ledger()["uncertain_order"])
+
+    async def test_a_final_order_object_read_by_id_is_booked_with_the_account_figures(
+        self,
+    ):
+        await self.live_state()
+
+        async def none(*args, **kwargs):
+            return None
+
+        self.svc._history_detail = none
+        removed = {}
+
+        def lag():
+            removed["row"] = self.svc.held.pop("AAPL_US_EQ")
+
+        self.svc.after_place = lag
+        with self.assertRaises(ValueError):
+            await self.svc.order(1, "buy", "AAPL", "6")
+        entry = self.ledger()["uncertain_order"]
+        self.svc.held["AAPL_US_EQ"] = removed["row"]  # the positions read caught up
+        self.svc.object_final = ("FILLED", removed["row"]["quantity"])
+        entry["time"] = time.time() - 90
+        self.set_ledger(uncertain_order=entry)
+        status = await self.svc.reconcile(1)
+        ledger = status["ledger"]
+        self.assertIsNone(ledger["uncertain_order"])
+        self.assertEqual(self.svc.deletes(), [])  # a filled order is not "cancelled"
+        self.assertEqual(
+            Decimal(ledger["positions"]["AAPL"]["units"]), removed["row"]["quantity"]
+        )
+        self.assertEqual(ledger["orders"][-1]["fill_source"], "account_evidence")
+        self.assertEqual(ledger["orders"][-1]["status"], "filled")
+
+    async def test_the_history_saying_unfilled_while_the_account_moved_stays_uncertain(
+        self,
+    ):
+        await self.live_state()
+        self.svc.history_hides = False
+        self.svc.after_place = lambda: self.svc.held.pop("AAPL_US_EQ")
+        original = self.svc._history_detail
+
+        async def none(*args, **kwargs):
+            return None
+
+        self.svc._history_detail = none
+        with self.assertRaises(ValueError):
+            await self.svc.order(1, "buy", "AAPL", "6")
+        self.svc._history_detail = original
+        # Now the history lists the order as cancelled with no fill, yet cash left.
+        record = self.svc.records[-1]
+        self.svc.records[-1] = record[:4] + (Decimal("0"),) + record[5:]
+        self.svc.lists_unfilled = True
+        entry = self.ledger()["uncertain_order"]
+        entry["time"] = time.time() - 90
+        self.set_ledger(uncertain_order=entry)
+        with self.assertRaises(ValueError) as caught:
+            await self.svc.reconcile(1)
+        self.assertIn(
+            "history shows no fill but the account changed", str(caught.exception)
+        )
+        self.assertIsNotNone(self.ledger()["uncertain_order"])
+
+
+class LedgerAgainstAccountTests(Base):
+    async def test_a_ledger_that_does_not_match_the_account_cannot_enable_trading(
+        self,
+    ):
+        await self.synced(enabled=False)
+        # The live state: the order filled, the ledger never booked it.
+        self.svc.cash = Decimal("34.05")
+        self.svc.held["AAPL_US_EQ"] = position("AAPL_US_EQ", "0.0188", "352.29", "5.95")
+        self.set_ledger(
+            orders=[{"time": 1, "side": "buy", "symbol": "AAPL", "status": "filled"}]
+        )
+        with self.assertRaises(ValueError) as caught:
+            await self.svc.enable_checked(1)
+        message = str(caught.exception)
+        self.assertIn("disagree", message)
+        self.assertIn("cash: ledger 40 EUR, account 34.05 EUR", message)
+        self.assertIn("AAPL: ledger 0 units, account 0.0188 units", message)
+        self.assertIn("Sync", message)
+        self.assertFalse(self.ledger()["enabled"])
+        # A direct switch is refused too: it needs a fresh, matching check.
+        with self.assertRaises(ValueError):
+            self.svc.set_enabled(1, True)
+        self.assertFalse(self.ledger()["enabled"])
+        status = self.svc.status(1)
+        self.assertFalse(status["account_check"]["ledger_matches_account"])
+        # After a sync (the "Pause trading to sync" step) the ledger is the account.
+        await self.svc.sync_from_account(1)
+        self.assertEqual(self.ledger()["positions"]["AAPL"]["units"], "0.0188")
+        status = await self.svc.enable_checked(1)
+        self.assertTrue(status["enabled"])
+        self.assertTrue(status["account_check"]["ledger_matches_account"])
+
+    async def test_a_position_difference_for_a_held_ticker_blocks_enabling(self):
+        await self.synced(enabled=False)
+        self.svc.held["MSFT_US_EQ"] = position("MSFT_US_EQ", "0.03", "400", "10")
+        with self.assertRaises(ValueError) as caught:
+            await self.svc.enable_checked(1)
+        self.assertIn(
+            "MSFT: ledger 0.05 units, account 0.03 units", str(caught.exception)
+        )
+
+    async def test_valuation_reports_the_check_and_lists_outside_holdings_not_as_errors(
+        self,
+    ):
+        await self.synced()
+        self.svc.held["MRNA_US_EQ"] = position(
+            "MRNA_US_EQ", "0.0467626", "216.5", "9.1"
+        )
+        view = await self.svc.valuation(1)
+        self.assertTrue(view["ledger_matches_account"])
+        self.assertEqual(view["mismatch"], [])
+        self.assertEqual(
+            [r["ticker"] for r in view["outside_allocation"]],
+            ["MRNA_US_EQ", "SAP_DE_EQ"],
+        )
+        self.svc.cash = Decimal("10")
+        view = await self.svc.valuation(1)
+        self.assertFalse(view["ledger_matches_account"])
+        self.assertEqual([m["kind"] for m in view["mismatch"]], ["cash"])
+        self.assertEqual(view["mismatch"][0]["difference"], "30")
+
+    async def test_cash_within_five_cents_is_not_a_mismatch(self):
+        await self.synced()
+        self.svc.cash = Decimal("40.04")
+        self.assertTrue((await self.svc.valuation(1))["ledger_matches_account"])
+        self.svc.cash = Decimal("40.06")
+        self.assertFalse((await self.svc.valuation(1))["ledger_matches_account"])
+
+    async def test_enabling_needs_the_check_even_right_after_a_restart(self):
+        await self.synced(enabled=False)
+        self.svc._verified.clear()  # a new process knows nothing of an earlier check
+        with self.assertRaises(ValueError) as caught:
+            self.svc.set_enabled(1, True)
+        self.assertIn("checked against the Trading 212 account", str(caught.exception))
+        status = await self.svc.enable_checked(1)
+        self.assertTrue(status["enabled"])
+
+
+class ExclusionTests(Base):
+    MRNA = instrument("MRNA_US_EQ", "MRNA", isin="US60770K1079")
+
+    def owner_holds_mrna(self):
+        self.svc.instruments_raw = INSTRUMENTS + [self.MRNA]
+        self.svc.held["MRNA_US_EQ"] = position(
+            "MRNA_US_EQ", "0.0467626", "216.5", "9.1"
+        )
+
+    async def test_by_default_sync_adopts_a_position_the_bot_did_not_open(self):
+        self.owner_holds_mrna()
+        status = await self.svc.sync_from_account(1)
+        self.assertIn("MRNA", status["ledger"]["positions"])
+        self.assertEqual(status["excluded_tickers"], [])
+
+    async def test_an_excluded_ticker_is_never_adopted_and_stays_across_syncs(self):
+        self.owner_holds_mrna()
+        status = await self.svc.set_excluded(1, ["mrna_us_eq", "MRNA", " tsla "])
+        self.assertEqual(status["excluded_tickers"], ["MRNA", "TSLA"])
+        status = await self.svc.sync_from_account(1)
+        self.assertNotIn("MRNA", status["ledger"]["positions"])
+        self.assertIn("MRNA_US_EQ", status["skipped"])
+        self.assertTrue(any("exclusion list" in n for n in status["notes"]))
+        self.assertEqual(status["ledger"]["excluded_tickers"], ["MRNA", "TSLA"])
+        # The owner's holding is outside the allocation, listed and flagged, no error.
+        self.svc.set_enabled(1, True)
+        view = await self.svc.valuation(1)
+        self.assertTrue(view["ledger_matches_account"])
+        mrna = [r for r in view["outside_allocation"] if r["symbol"] == "MRNA"]
+        self.assertEqual(mrna[0]["excluded"], True)
+
+    async def test_the_order_path_refuses_an_excluded_ticker_definitely(self):
+        self.owner_holds_mrna()
+        await self.svc.set_excluded(1, ["MRNA"])
+        await self.synced()
+        for call in (
+            self.svc.order(1, "buy", "MRNA", "8"),
+            self.svc.order(1, "sell", "MRNA", "0.04"),
+            self.svc.preview(1, "buy", "MRNA", "8"),
+        ):
+            with self.assertRaises(ValueError) as caught:
+                await call
+            self.assertIn("exclusion list", str(caught.exception))
+            self.assertIn("no order placed", str(caught.exception))
+        self.assertEqual(self.svc.posts(), [])
+        self.assertIsNone(self.ledger()["uncertain_order"])
+        self.assertTrue(self.ledger()["enabled"])  # a refusal does not pause trading
+
+    async def test_changing_the_list_pauses_trading_and_a_held_symbol_must_be_synced_out(
+        self,
+    ):
+        self.owner_holds_mrna()
+        await self.synced()
+        self.assertIn("MRNA", self.ledger()["positions"])
+        status = await self.svc.set_excluded(1, ["MRNA"])
+        self.assertFalse(status["ledger"]["enabled"])
+        with self.assertRaises(ValueError) as caught:
+            await self.svc.enable_checked(1)
+        self.assertIn(
+            "MRNA is on the exclusion list but still in the bot ledger",
+            str(caught.exception),
+        )
+        await self.svc.sync_from_account(1)
+        self.assertNotIn("MRNA", self.ledger()["positions"])
+        self.assertTrue((await self.svc.enable_checked(1))["enabled"])
+
+    async def test_bad_exclusions_are_refused(self):
+        for bad in ("nope", ["a b"], [5], ["x" * 20], ["A"] * 51):
+            with self.assertRaises(ValueError):
+                await self.svc.set_excluded(1, bad)
+        status = await self.svc.set_excluded(1, [])
+        self.assertEqual(status["excluded_tickers"], [])
 
 
 class FlowsTests(unittest.IsolatedAsyncioTestCase):

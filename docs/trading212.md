@@ -7,9 +7,11 @@ allocation, a native service (`condor/trading212.py`), web routes (`/api/v1/trad
 an MCP tool (`trading212`), a three-agent crew (`trading212_trader`, `trading212_analyst`,
 `trading212_risk_reviewer`; loop `intraday`), a Settings tab and a read-only Trade tab.
 
-**Nothing in it has run against a real account.** Every statement about an authenticated
-endpoint is read from Trading 212's public documentation, not observed. The first real
-order must be tiny and approved by the owner; see "First real order" below.
+**One real order has run** (2026-10-29, see "VERIFIED against the real account"). It
+filled, and it showed that the order history can omit an API order for a while: the
+module now reads an order's outcome from the account itself (cash and positions), never
+from the history's silence. Everything not listed under that heading is still read from
+Trading 212's public documentation, not observed; see "NOT VERIFIED".
 
 ## What it does and does not do
 
@@ -98,9 +100,14 @@ So the module works like this:
    resubmit". 429 honours `Retry-After`, else `x-ratelimit-reset`, and blocks that
    endpoint class locally for that long.
 4. **Settle:** poll `GET /equity/orders/{id}` until Trading 212 no longer lists the
-   order (404); if it is still pending after the bounded wait, **cancel it** and wait for
-   it to disappear. A resting order is never left behind. Then read the historical
-   orders for the ticker and take the fills (price, quantity, `walletImpact`).
+   order (404, or an order object in a final state); if it is still pending after the
+   bounded wait, **cancel it** and wait for it to disappear. A resting order is never
+   left behind. Then read the historical orders for the ticker and take the fills
+   (price, quantity, `walletImpact`).
+   **If the history does not list the order** (it can lag or omit API orders), the
+   outcome is read from the **account** (see "Account evidence" below) after a short
+   settle wait (three reads two seconds apart). A conclusive fill is booked and
+   labelled; anything else keeps the order uncertain and trading paused.
 5. **Valuation of the fill in EUR:** the account's own cash change around the order
    (best evidence: includes every fee and the real FX rate) when it agrees with the fill
    within 10%; else the fills' reported `netValue`; else an **ESTIMATE** from the fill
@@ -108,13 +115,67 @@ So the module works like this:
 6. **Zero or partial fills** are normal: only what filled moves the ledger. A cancelled
    order that the history does not list is accepted as unfilled **only** when Condor
    cancelled it and the account's position did not move (labelled `inferred`).
-7. **Reconcile** (`reconcile`): by order id when known, else by listing pending orders
-   and the historical orders and matching **ticker, side, quantity, created through the
-   API within 30 s before the send**. A pending match is cancelled (and trading stays
-   paused); a historical match is applied; two candidates are never guessed between; an
-   order that is nowhere after a minute is cleared as never created. Orders placed by hand
-   in the app (`initiatedFrom` other than `API`) never match. Reconcile always leaves
+7. **Reconcile** (`reconcile`), evidence in this order: (i) the order object by id; (ii)
+   the pending and historical orders, by id, else **ticker, side, quantity, created
+   through the API within 30 s before the send**; (iii) the **account** (below). A pending
+   match is cancelled (and trading stays paused); a historical match is applied (an
+   unfilled one only if the account agrees that nothing moved); two candidates are never
+   guessed between. Orders placed by hand in the app (`initiatedFrom` other than `API`)
+   never match. The first reconcile waits at least **60 s** after the send. An order is
+   cleared as "never created" only when the pending list, the history AND the account
+   (cash and that ticker's quantity) all show no trace of it for **180 s** since the send
+   (`NOT_SEEN_AFTER_SEC`); between 60 s and 180 s it says how long is left. Mixed or
+   ambiguous evidence stays uncertain, with the evidence listed. Reconcile always leaves
    trading paused; the owner enables it again in Settings.
+
+### Account evidence
+
+`GET /equity/account/summary` (free cash, `availableToTrade`) and `GET /equity/positions`
+update immediately and are the ground truth. **Before any order is sent** the module reads
+both (fresh) and stores in the `uncertain_order` entry (written before the send, as
+before) `evidence_before` (free cash, reserved cash, the ticker's quantity) and
+`expected_eur` (the order's EUR value). If the account cannot be read, no order is sent.
+The outcome is then judged per **ticker** (the owner's other holdings never count):
+
+| account change vs the snapshot | verdict |
+|---|---|
+| cash and the ticker's quantity both moved the right way, the quantity equals the order's (0.5% tolerance), the cash is within 10% (or 0.05 EUR) of the order's EUR value | **filled** (booked) |
+| the same, for less than the quantity, order id known, reading identical twice | **partial** (booked) |
+| neither moved (cash within 0.05 EUR, quantity within 0.00001) | **unchanged**: cleared only by reconcile after 180 s |
+| only cash moved, only the position moved, wrong direction, the position moved by MORE than the order (a concurrent manual trade of the same ticker), cash that does not fit the order, reserved cash changed (a resting order), a partial move without an order id | **ambiguous**: stays uncertain, never guessed |
+
+A fill booked from the account carries `fill_source: "account_evidence"` and
+`value_source: "account_cash_change"`: quantity = the position's change, EUR value = the
+cash change (minus the fee), fee = an **estimate** at the published (or observed) FX rate
+(`fee_source: "estimate"`; no tax figures exist without a history record), average price
+= EUR value / quantity converted at Kraken's reference EUR/USD (`average_price_source`
+says so). In the order call a conclusive fill is returned without pausing trading; a
+reconcile leaves it paused.
+
+## The bot ledger against the real account
+
+`valuation` (and the cached `status.account_check`) carry `ledger_matches_account` and a
+`mismatch` list: the ledger's cash against the account's free cash (more than **0.05 EUR**
+apart) and, for every ticker the ledger holds or the bot has traded, its units against the
+account's quantity (pie shares excluded). The owner's other holdings are not errors: they
+are listed under `outside_allocation` (flagged `excluded` when on the exclusion list).
+**Trading cannot be enabled** while they disagree: `PUT /trading212/enabled {"enabled":
+true}` reads the account first and refuses with the differences and the instruction to
+pause trading and **Sync allocation** (the same step as before). A successful sync (it
+seeds the ledger from the same read) or a matching check allows enabling for two minutes; a
+mismatch cancels it.
+
+## The owner's own holdings (exclusion list)
+
+Sync **adopts** every mapped position the account holds, as the other venues do, except
+the tickers on the **exclusion list** (`excluded_tickers`, plain symbols such as `MRNA`,
+stored in the ledger and kept across syncs). Edit it in Settings > Trading 212 > "Holdings
+kept out of the bot" or `PUT /trading212/excluded {"tickers": ["MRNA"]}` (a Trading 212
+ticker such as `MRNA_US_EQ` is accepted and stored as `MRNA`). Changing it pauses trading;
+sync, then enable. An excluded ticker is refused by `preview` and `order` with a definite
+message before anything is sent (a refusal does not pause trading), and it counts as a
+mismatch if it is still in the ledger. The crew prompts say these tickers and any holding
+outside the ledger are off limits.
 
 Pacing: Condor spaces calls a little wider than the published per-account limits
 (summary 1 per 5 s, pending orders 1 per 5 s, order by id and positions 1 per s,
@@ -138,6 +199,38 @@ a refusal. Reads are cached for a few seconds, the instrument list for 30 minute
    (units available to trade, cost from `walletImpact.totalCost`, else the current value
    and the answer says so). Then "Enable trading". The crew's loop is started separately
    (see the scheduler).
+
+## VERIFIED against the real account (the first live order, 2026-10-29 13:31 UTC)
+
+Account EUR, free cash 30.00, US session open. `POST /trading212/order` buy AAPL, amount
+6: preview ticker `AAPL_US_EQ`, quantity **0.0188**, limit **352.29**, notional 5.96 EUR.
+
+* A **limit order is accepted** by the live API, with a **fractional quantity of four
+  decimals** and a `DAY` validity, and it **fills instantly** (the pending list,
+  `GET /equity/orders`, answered a bare empty array `[]` right after).
+* After the fill the account showed free cash **24.05** (5.95 EUR spent, the limit price
+  read as USD: 0.0188 x 352.29 / 1.1125 = 5.95 EUR) and a position `AAPL_US_EQ` quantity
+  0.0188 worth about 5.92 EUR. `availableToTrade` and the positions answer reflected the
+  fill at once: they are the ground truth.
+* **The history can omit an API order.** `GET /equity/history/orders?limit=5` returned
+  only the owner's earlier order, not the API order 59604555109, even more than a minute
+  after it filled. This is what made the old read-back give up ("needs reconciliation")
+  and the old reconcile then clear the order as never created while the account had
+  changed (ledger != reality). Nothing is cleared on the history's silence any more.
+* **The history's shape**, from the owner's own market order (id 59601807310, `MARKET`,
+  status `FILLED`, `initiatedFrom` `SYSTEM`, created 11:35:59Z, filled 13:30:00Z at
+  `fill.price` 216.5 in USD): `items[]` with `order{...}` and `fill{... walletImpact{
+  currency EUR, netValue 9.11, fxRate 1.11253878, taxes[{name
+  CURRENCY_CONVERSION_FEE, quantity -0.01, currency EUR}]}}`. The tax quantity is
+  **negative** (the module takes its absolute value); `fxRate` is USD per EUR; the 0.01
+  EUR conversion fee is the published 0.15% rounded to the cent. 0.0467626 x 216.5 /
+  1.11253878 = 9.10, so `netValue` 9.11 looks like it INCLUDES the 0.01 fee (one buy, not
+  yet confirmed): the module still takes the account's cash change first and `netValue`
+  second, and a follow-up should confirm whether `netValue` includes the fee before
+  `netValue + fee` is trusted for a purchase.
+* The owner's MRNA position (0.0467626) was in the account and not in the ledger: the
+  bot compares per ticker, so a holding it did not open never confuses an order.
+* The module's protections worked: write-before-send, the pause on doubt, no resubmit.
 
 ## VERIFIED (read from Trading 212's public documentation on 2026-10-29)
 
@@ -191,29 +284,32 @@ sections, the per-endpoint pages) and the help centre FX fee articles.
 
 ## NOT VERIFIED (each needs the first tiny real order, or a real response, to settle)
 
-1. **Whether live accounts accept limit orders at all.** A third-party summary said the
-   live environment supports market orders only; the official pages I read say nothing
-   either way. If the live API rejects limit orders, the definite 4xx comes back, the
-   crew journals it and uses `order_type="market"` (same size) as instructed.
-2. Whether **fractional quantities** are accepted through the API and with how many
-   decimals (Condor rounds down to 4; a full close sends the exact quantity the account
-   reports). The documentation example quantity is `0.1`.
-3. The **currency and tick** of `limitPrice` (assumed USD, the instrument's currency;
-   rounded to the cent), and any minimum price increment.
+1. ~~Whether live accounts accept limit orders.~~ **Settled by the live order: they do**
+   (and `market` stays for the one case where they would not).
+2. ~~Fractional quantities.~~ **Settled: four decimals accepted** (0.0188). A full close
+   sending the exact quantity the account reports, and sells, are still untried live.
+3. The **tick** of `limitPrice` and the fill price's currency as read from a fill record:
+   the limit was accepted as USD (see the arithmetic above) but the API order's own fill
+   record was never read, because the history omitted it. Any minimum price increment.
 4. Whether the instrument list carries **`minTradeQuantity`** (the instruments page does
    not list it; Condor reads it when present and otherwise relies on the 1 EUR floor), and
    that `shortName` equals the ticker's symbol and `isin` starts with `US` for US stocks.
-5. That `GET /equity/orders/{id}` answers **404 once an order is no longer pending**, and
-   whether `GET /equity/orders` answers a bare array.
+5. That `GET /equity/orders/{id}` answers **404 once an order is no longer pending**
+   (presumed; the order call did not record what it answered; a final-state object is
+   handled too). `GET /equity/orders` answering a bare array is verified.
 6. What the **history lists for a cancelled or unfilled order** (Condor handles both),
-   whether items come newest first, one per fill or one per order, the **sign** of
-   `netValue` and `taxes[].quantity`, and whether `netValue` already includes the fees.
-   The primary EUR evidence is therefore the account's cash change, with `netValue` second.
+   whether items come newest first, one per fill or one per order, **when and whether the
+   history lists an order placed through the API at all** (the live one was missing after
+   more than a minute), the sign of `netValue` of a sale, and whether `netValue` includes
+   the fee on a purchase (one fill suggests it does). The primary EUR evidence is the
+   account's cash change, with `netValue` second.
 7. Whether `cash.availableToTrade` is all free cash, whether a buy reserves cash
    (`reservedForOrders`), and what `totalValue` contains. Condor does not use
    `totalValue`.
-8. Whether the account cash has **settled** the moment the order leaves the pending list
-   (the cash-change figure is read right after).
+8. ~~Whether the account cash has settled the moment the order leaves the pending
+   list.~~ **Settled for a buy: free cash and the position updated at once.** Whether
+   `quantityAvailableForTrading` follows as fast (the ledger compares the position's
+   `quantity`, not that field) and the same for a sale are still unobserved.
 9. The **error body shape** (Condor reads `message`, `code` or `type`), whether `429`
    carries `Retry-After`, and what `x-ratelimit-reset` holds exactly.
 10. What a **408** means for an order (Condor treats it as uncertain).
@@ -237,6 +333,12 @@ sections, the per-endpoint pages) and the help centre FX fee articles.
 18. Practical behaviour of a `DAY` limit order priced through the reference when the
     reference (a tokenized copy) lags the real market: the common failure is a zero fill
     that Condor cancels, which is safe.
+19. The account-evidence path against a **sale**, a **partial** fill and a resting order
+    (`reservedForOrders`), and whether `reservedForOrders` is part of `availableToTrade`:
+    all are unit-tested with fakes of the live sequence, none has been seen live.
+20. The **FX fee of an evidence-booked fill** is an estimate (0.15%); the real figure is
+    in the history record the API omitted. Once it appears there, the next sync or a
+    sufficiently large fill (50 EUR or more) teaches the observed rate.
 
 ## First real order (owner-approved, tiny)
 
@@ -246,10 +348,12 @@ sections, the per-endpoint pages) and the help centre FX fee articles.
    under about 3.5 EUR): check the quantity, the limit price (USD) and the labelled cost.
 3. Place that one order. Compare, against the app: the limit being accepted (item 1), the
    quantity and its decimals (2), the fill price against the reference, the EUR spent
-   against `value_source: account cash change`, the FX fee in the app against the
-   published 0.15% (`fee_source`), and what the history returned (6).
+   against `value_source` (`account cash change`, or `account_cash_change` with
+   `fill_source: account_evidence` when the history omits the order), the FX fee in the
+   app against the published 0.15% (`fee_source`), and what the history returned (6).
+   (Done once on 2026-10-29; see the verified section.)
 4. Sell it back (the full close path, which sends the exact quantity) and compare the
-   round trip with the estimate.
+   round trip with the estimate. **Still to do.**
 5. Only then start the crew's loop.
 
 ## Deposits and withdrawals

@@ -31,6 +31,7 @@ export function Trading212() {
   const [apiSecret, setApiSecret] = useState("");
   const [synced, setSynced] = useState<SyncResult | null>(null);
   const [notice, setNotice] = useState("");
+  const [excludedText, setExcludedText] = useState<string | null>(null);
   const status = useTrading212Status();
   const refresh = () => qc.invalidateQueries({ queryKey: ["trading212-status"] });
   const save = useMutation({
@@ -71,6 +72,16 @@ export function Trading212() {
     onSettled: () => refresh(),
     retry: false,
   });
+  const exclude = useMutation({
+    mutationFn: (tickers: string[]) => apiFetch(base + "/excluded", { method: "PUT", body: JSON.stringify({ tickers }) }),
+    onMutate: () => setNotice(""),
+    onSuccess: () => {
+      setExcludedText(null);
+      setNotice("Exclusion list saved. Trading is paused: sync the allocation, then enable trading.");
+      refresh();
+    },
+    retry: false,
+  });
   const failures: [string, boolean, unknown][] = [
     ["Loading status", status.isError, status.error],
     ["Save API key", save.isError, save.error],
@@ -78,12 +89,16 @@ export function Trading212() {
     ["Enable/pause trading", toggle.isError, toggle.error],
     ["Sync allocation", sync.isError, sync.error],
     ["Reconcile", reconcile.isError, reconcile.error],
+    ["Save exclusions", exclude.isError, exclude.error],
   ];
   const data = status.data;
   const ledger = data?.ledger;
   const uncertain = !!ledger?.uncertain_order;
   const held = Object.keys(ledger?.positions ?? {});
   const enabled = !!data?.enabled;
+  const excluded = data?.excluded_tickers ?? ledger?.excluded_tickers ?? [];
+  const check = data?.account_check;
+  const outside = (check?.outside_allocation ?? []).map((row) => `${row.symbol} ${row.units}${row.excluded ? " (excluded)" : ""}`);
   const currency = data?.account_currency ?? ledger?.account_currency ?? null;
   const wrongCurrency = !!currency && currency.toUpperCase() !== "EUR";
 
@@ -120,6 +135,8 @@ export function Trading212() {
       {ledger && (ledger.synced
         ? <p className="text-sm">Allocated cash: {ledger.cash} EUR · Open positions: {held.length}{held.length > 0 && ` (${held.join(", ")})`}</p>
         : <p className="text-sm">The allocation has not been synced from the Trading 212 account yet. Sync it before enabling trading.</p>)}
+      {check && !check.ledger_matches_account && <p role="alert" className="text-sm text-[var(--color-red)]">The bot ledger and the Trading 212 account disagree ({check.mismatch.map((m) => m.message).join("; ")}). Trading cannot be enabled until you pause trading and sync the allocation.</p>}
+      {outside.length > 0 && <p className="text-xs text-[var(--color-text-muted)]">Your own holdings outside the bot allocation (never traded by the bot): {outside.join(", ")}.</p>}
       {uncertain && <p role="alert" className="text-sm text-[var(--color-red)]">An order needs reconciliation. Trading stays paused. Check the Trading 212 order history before any new submission.</p>}
       {uncertain && <button className={button} disabled={reconcile.isPending} aria-busy={reconcile.isPending} onClick={() => reconcile.mutate()}>{reconcile.isPending ? "Reconciling…" : "Reconcile from Trading 212 order history"}</button>}
       <div className="flex flex-wrap items-center gap-2">
@@ -134,6 +151,15 @@ export function Trading212() {
         {" · "}positions: {Object.entries(synced.ledger.positions).map(([symbol, position]) => `${symbol} ${position.units}`).join(", ") || "none"}
         {synced.skipped.length > 0 && <> · skipped (not tradable here or no price): {synced.skipped.join(", ")}</>}</p>}
       <p className="text-xs text-[var(--color-text-muted)]">Enabling execution does not start a loop or place an order. Account holdings outside the bot allocation are excluded. Trading 212 has no quote endpoint, so prices the agents see are reference prices from Kraken xStocks public data; real fills and fees come from Trading 212. Authenticated behaviour (order body, limit vs market, error and rate-limit headers, fees) is not yet verified against a real account: the first real order must be tiny and approved by you.</p>
+    </section>
+    <section className="space-y-3 rounded-lg border border-[var(--color-border)] p-4">
+      <h2 className="font-semibold">Holdings kept out of the bot</h2>
+      <p className="text-sm">Stocks you hold yourself in this account (for example one you bought by hand) that the bot must never trade. Syncing adopts every other position into the bot allocation; the symbols listed here are skipped, and the order tool refuses them. Changing the list pauses trading: sync the allocation, then enable trading again.</p>
+      <label className="block text-sm">Excluded stock symbols, separated by commas
+        <input value={excludedText ?? excluded.join(", ")} onChange={(event) => setExcludedText(event.target.value)} className={input} placeholder="for example MRNA" /></label>
+      <button className={button} disabled={exclude.isPending || excludedText === null} aria-busy={exclude.isPending}
+        onClick={() => exclude.mutate((excludedText ?? "").split(/[\s,]+/).filter(Boolean))}>{exclude.isPending ? "Saving…" : "Save exclusions"}</button>
+      {excludedText === null && <p className="text-xs text-[var(--color-text-muted)]">Save exclusions is unavailable: change the list first.</p>}
     </section>
     <form className="space-y-3 rounded-lg border border-[var(--color-border)] p-4" onSubmit={(event) => { event.preventDefault(); save.mutate(); }}>
       <h2 className="font-semibold">Connect a Trading 212 API key</h2>

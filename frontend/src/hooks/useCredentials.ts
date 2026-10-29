@@ -110,7 +110,15 @@ export type Trading212Status = {
   /** The account currency Trading 212 reported, or null before the first successful read. */
   account_currency: string | null;
   enabled: boolean;
-  ledger: ExchangeLedger & { account_currency?: string | null };
+  ledger: ExchangeLedger & { account_currency?: string | null; excluded_tickers?: string[] };
+  /** The owner's own holdings the bot never adopts or trades (plain symbols). */
+  excluded_tickers?: string[];
+  /** The last bot-ledger-against-account check (memory only on the server; null until one ran). */
+  account_check?: {
+    ledger_matches_account: boolean;
+    mismatch: { kind: string; message: string }[];
+    outside_allocation: { ticker: string; symbol: string; units: string; excluded: boolean }[];
+  } | null;
   market: { open: boolean; new_york_time: string; minutes_to_close: number; note?: string };
   limits?: {
     floor?: string;

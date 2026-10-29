@@ -24,12 +24,19 @@ positions, pending/historical order and transaction answers, the ``orders:execut
 scope, ``DAY``/``GOOD_TILL_CANCEL`` time validity, negative quantity to sell, and that
 the order endpoints are NOT idempotent.
 
+VERIFIED against the real account by the first live order (2026-10-29, see
+``docs/trading212.md``): a limit order with a four-decimal fractional quantity is
+accepted and fills instantly; ``GET /equity/orders`` answers a bare array; the account
+summary and positions reflect a fill at once and are the ground truth; the history can
+OMIT an API order for over a minute, so an order's outcome is never concluded from the
+history's silence (the account's cash and the ticker's quantity are read against a
+snapshot taken before the order); the history's shape for a fill, incl. the negative
+``CURRENCY_CONVERSION_FEE`` tax of -0.01 EUR and ``fxRate`` 1.1125.
+
 NOT VERIFIED against a real account (comments say so where it matters): everything
-that only a real call can show, notably whether live accounts accept limit orders,
-fractional quantities and their precision, the sign and fee semantics of
-``walletImpact`` figures, what the history lists for a cancelled order, the error
-bodies and rate-limit headers, and the fee and FX numbers. The first real order must
-be tiny; see ``docs/trading212.md``.
+else that only a real call can show, notably a sale and a partial fill, what the
+history lists for a cancelled order, whether ``netValue`` includes the fee, the error
+bodies and rate-limit headers, and the fee and FX numbers.
 """
 
 from __future__ import annotations
@@ -127,6 +134,20 @@ PENDING_POLLS = 6
 CANCEL_POLLS = 5
 HISTORY_POLLS = 3
 POLL_WAIT_SEC = 2.0
+#: Account-evidence polls (positions and account summary) when the history does not
+#: list an order the API accepted; the account is the ground truth and updates at once.
+EVIDENCE_POLLS = 3
+EVIDENCE_WAIT_SEC = 2.0
+#: Reconcile may clear an order as "never created" only when the pending list, the
+#: history AND the account (cash and the ticker's position) all show no trace of it for
+#: this long. Reconcile's own minimum wait before its first answer stays 60 s.
+MIN_RECONCILE_WAIT_SEC = 60
+NOT_SEEN_AFTER_SEC = 180
+#: Cash (EUR) and quantity differences below these are noise, not movement.
+CASH_TOLERANCE_EUR = Decimal("0.05")
+QTY_EPSILON = Decimal("0.00001")
+#: How long a successful ledger-vs-account check allows trading to be enabled.
+VERIFY_TTL_SEC = 120.0
 # The full instrument list (about 17k rows) is far larger than any other answer; it is fetched
 # at most once per INSTRUMENT_TTL_SEC and Trading 212 allows it once per 50 s.
 MAX_BYTES = 32 * 1024 * 1024
@@ -291,6 +312,8 @@ def new_ledger():
         "tickers": {},
         # The FX fee rate (percent) the last real fill reported; None until then.
         "observed_fx_fee_pct": None,
+        # Plain symbols of the owner's own holdings the bot must never adopt or trade.
+        "excluded_tickers": [],
     }
 
 
@@ -378,6 +401,18 @@ class Trading212Error(ValueError):
         )
 
 
+class _NotInHistory(ValueError):
+    """The order left the pending list but the history does not list it."""
+
+    def __init__(self, cancelled=False):
+        super().__init__("Order is not in the Trading 212 history")
+        self.cancelled = cancelled
+
+
+class _Inconclusive(ValueError):
+    """The account evidence does not settle an order's outcome; it stays uncertain."""
+
+
 class Trading212Service:
     def __init__(self):
         self.locks = defaultdict(asyncio.Lock)
@@ -392,6 +427,11 @@ class Trading212Service:
         self._instruments = {}
         self._exchanges = {}
         self._eur_usd = (0.0, None)
+        #: ``user -> clock time`` of the last ledger-vs-account check that matched.
+        self._verified = {}
+        #: ``user -> the last ledger-vs-account check`` (memory only: never written
+        #: from a read path, so it cannot overwrite a concurrent ledger write).
+        self._checks = {}
 
     # ── credentials and switches ──
 
@@ -433,6 +473,8 @@ class Trading212Service:
             "account_currency": ledger.get("account_currency"),
             "enabled": ledger["enabled"] and not ledger["uncertain_order"],
             "ledger": ledger,
+            "excluded_tickers": list(ledger.get("excluded_tickers") or []),
+            "account_check": self._checks.get(user_id),
             "market": self._market(),
             "limits": {
                 "floor": str(FLOOR),
@@ -477,6 +519,8 @@ class Trading212Service:
                 del table[key]
         self._instruments.pop(user_id, None)
         self._exchanges.pop(user_id, None)
+        self._verified.pop(user_id, None)
+        self._checks.pop(user_id, None)
 
     def set_enabled(self, user_id, enabled):
         ledger = _read_ledger(user_id)
@@ -494,8 +538,80 @@ class Trading212Service:
                 raise ValueError(
                     "The Trading 212 account currency is not confirmed as EUR; sync again"
                 )
+            verified = self._verified.get(user_id)
+            if verified is None or not 0 <= self.clock() - verified <= VERIFY_TTL_SEC:
+                raise ValueError(
+                    "The bot ledger has not just been checked against the Trading 212 "
+                    "account: use Enable trading in Settings (it checks first) or sync "
+                    "the allocation"
+                )
         ledger["enabled"] = bool(enabled)
         _write(_root(user_id) / "ledger.json", ledger)
+        return self.status(user_id)
+
+    async def enable_checked(self, user_id):
+        """Enable trading only when the bot ledger and the real account agree.
+
+        The ledger owns the bot's cash and positions; the account is the ground truth.
+        A disagreement (an order the ledger never booked, a deposit, a manual trade of
+        a ticker the bot trades) means the ledger cannot be trusted to size orders, so
+        the owner must sync first (the same step as "Pause trading to sync").
+        """
+        async with self.locks[user_id]:
+            ledger = _read_ledger(user_id)
+            self.credentials(user_id)
+            if ledger["uncertain_order"]:
+                raise ValueError(
+                    "An order needs reconciliation before trading can resume"
+                )
+            if not ledger.get("synced"):
+                raise ValueError(
+                    "Sync the bot allocation from the Trading 212 account first"
+                )
+            if ledger.get("account_currency") != QUOTE:
+                raise ValueError(
+                    "The Trading 212 account currency is not confirmed as EUR; sync again"
+                )
+            summary = await self._summary(user_id, fresh=True)
+            self._require_eur(summary)
+            positions = await self._positions(user_id, fresh=True)
+            check = self.account_check(user_id, ledger, summary, positions)
+            if not check["ledger_matches_account"]:
+                raise ValueError(
+                    "The bot ledger and the Trading 212 account disagree, so trading "
+                    "cannot be enabled: "
+                    + "; ".join(m["message"] for m in check["mismatch"])
+                    + ". Pause trading and use Sync allocation to re-seed the ledger "
+                    "from the account (positions listed under outside_allocation or "
+                    "in the exclusion list stay out of the bot allocation), then "
+                    "enable again."
+                )
+            self._verified[user_id] = self.clock()
+            return self.set_enabled(user_id, True)
+
+    async def set_excluded(self, user_id, tickers):
+        """Replace the owner's exclusion list: holdings the bot never adopts or trades.
+
+        Plain symbols (``MRNA``) or Trading 212 tickers (``MRNA_US_EQ``). Changing the
+        list pauses trading, because a symbol the ledger holds is no longer allowed.
+        """
+        if not isinstance(tickers, list) or len(tickers) > 50:
+            raise ValueError("Send a list of at most 50 tickers")
+        cleaned = []
+        for item in tickers:
+            text = item.strip().upper() if isinstance(item, str) else ""
+            match = TICKER.fullmatch(text)
+            symbol = match.group(1) if match else text
+            if not re.fullmatch(r"[A-Z0-9]{1,12}", symbol):
+                raise ValueError("Use plain stock symbols such as MRNA")
+            if symbol not in cleaned:
+                cleaned.append(symbol)
+        async with self.locks[user_id]:
+            ledger = _read_ledger(user_id)
+            ledger["excluded_tickers"] = sorted(cleaned)
+            ledger["enabled"] = False
+            self._verified.pop(user_id, None)
+            _write(_root(user_id) / "ledger.json", ledger)
         return self.status(user_id)
 
     def disconnect(self, user_id):
@@ -680,6 +796,7 @@ class Trading212Service:
                 "ticker": ticker,
                 "quantity": quantity,
                 "available": max(available, Decimal(0)),
+                "in_pies": in_pies,
                 "price_usd": _decimal(row.get("currentPrice")),
                 "avg_price_usd": _decimal(row.get("averagePricePaid")),
                 "value_eur": _decimal(impact.get("currentValue")),
@@ -811,6 +928,11 @@ class Trading212Service:
         Cash is the available-to-trade cash. A position's cost is the total cost the
         API reports in EUR (``walletImpact.totalCost``); when it reports none, the
         current value stands in and the row is named in ``notes``.
+
+        Positions the bot did not open are ADOPTED (the other venues do the same),
+        except the tickers on the owner's exclusion list (``excluded_tickers``): those
+        stay the owner's own holdings, outside the bot allocation, and the bot refuses
+        to trade them.
         """
         async with self.locks[user_id]:
             ledger = _read_ledger(user_id)
@@ -823,11 +945,19 @@ class Trading212Service:
             positions = await self._positions(user_id, fresh=True)
             universe = {i["ticker"]: i for i in await self._universe(user_id)}
             held, tickers, skipped, notes = {}, {}, [], []
+            excluded = set(ledger.get("excluded_tickers") or [])
             for ticker, row in positions.items():
                 item = universe.get(ticker)
                 units = row["available"]
                 if not item or units <= 0:
                     skipped.append(ticker)
+                    continue
+                if item["symbol"] in excluded:
+                    skipped.append(ticker)
+                    notes.append(
+                        f"{item['symbol']}: on the exclusion list, kept out of the bot "
+                        "allocation"
+                    )
                     continue
                 cost, basis = row["cost_eur"], "reported"
                 if not cost or cost <= 0:
@@ -849,8 +979,115 @@ class Trading212Service:
             fresh["account_currency"] = summary["currency"]
             # The fee a real fill showed is not forgotten by a re-sync.
             fresh["observed_fx_fee_pct"] = ledger.get("observed_fx_fee_pct")
+            fresh["excluded_tickers"] = list(ledger.get("excluded_tickers") or [])
             _write(_root(user_id) / "ledger.json", fresh)
+            # The ledger was just seeded from this very read of the account.
+            check = self.account_check(user_id, fresh, summary, positions)
+            if check["ledger_matches_account"]:
+                self._verified[user_id] = self.clock()
+            else:
+                self._verified.pop(user_id, None)
+                notes += [m["message"] for m in check["mismatch"]]
             return {**self.status(user_id), "skipped": skipped, "notes": notes}
+
+    # ── ledger against the account ──
+
+    def account_check(self, user_id, ledger, summary, positions):
+        """Does the bot ledger agree with the real account? Pure: no request is made.
+
+        The ledger's cash must equal the account's free cash and, for every ticker the
+        ledger holds or the bot has traded, its units must equal the account's
+        quantity of that ticker (shares in a pie excluded). The owner's other holdings
+        are not errors: they are listed under ``outside_allocation``.
+        """
+        excluded = set(ledger.get("excluded_tickers") or [])
+        mismatch, outside = [], []
+        cash_ledger, cash_account = Decimal(ledger["cash"]), summary["available"]
+        if abs(cash_ledger - cash_account) > CASH_TOLERANCE_EUR:
+            mismatch.append(
+                {
+                    "kind": "cash",
+                    "ledger": fmt(cash_ledger),
+                    "account": fmt(cash_account),
+                    "difference": fmt(cash_ledger - cash_account),
+                    "message": (
+                        f"cash: ledger {fmt(cash_ledger)} EUR, account "
+                        f"{fmt(cash_account)} EUR"
+                    ),
+                }
+            )
+        cached = self._instruments.get(user_id, (0.0, None))[1]
+        bot = {}  # Trading 212 ticker -> plain symbol, for every ticker the bot owns
+        for symbol in ledger["positions"]:
+            ticker = self._ledger_ticker(ledger, symbol, cached)
+            if ticker:
+                bot[ticker] = symbol
+        for order in ledger.get("orders") or []:
+            symbol = order.get("symbol")
+            ticker = order.get("ticker") or self._ledger_ticker(ledger, symbol, cached)
+            if ticker and symbol:
+                bot.setdefault(ticker, symbol)
+        for ticker, symbol in sorted(bot.items()):
+            held = ledger["positions"].get(symbol)
+            if symbol in excluded:
+                if held:
+                    mismatch.append(
+                        {
+                            "kind": "excluded_in_ledger",
+                            "symbol": symbol,
+                            "ticker": ticker,
+                            "message": (
+                                f"{symbol} is on the exclusion list but still in the "
+                                "bot ledger"
+                            ),
+                        }
+                    )
+                continue
+            units = Decimal(held["units"]) if held else Decimal(0)
+            row = positions.get(ticker)
+            account = Decimal(0)
+            if row:
+                account = max(row["quantity"] - row["in_pies"], Decimal(0))
+            tolerance = max(Decimal("0.0001"), max(units, account) * Decimal("0.001"))
+            if abs(units - account) > tolerance:
+                mismatch.append(
+                    {
+                        "kind": "position",
+                        "symbol": symbol,
+                        "ticker": ticker,
+                        "ledger_units": fmt(units),
+                        "account_units": fmt(account),
+                        "difference": fmt(units - account),
+                        "message": (
+                            f"{symbol}: ledger {fmt(units)} units, account "
+                            f"{fmt(account)} units"
+                        ),
+                    }
+                )
+        for ticker, row in sorted(positions.items()):
+            if ticker in bot:
+                continue
+            match = TICKER.fullmatch(ticker)
+            symbol = match.group(1) if match else ticker
+            outside.append(
+                {
+                    "ticker": ticker,
+                    "symbol": symbol,
+                    "units": fmt(row["quantity"]),
+                    "excluded": symbol in excluded,
+                }
+            )
+        result = {
+            "checked_at": self.clock(),
+            "ledger_matches_account": not mismatch,
+            "mismatch": mismatch,
+            "outside_allocation": outside,
+        }
+        self._checks[user_id] = result
+        if mismatch:
+            # An earlier match no longer vouches for the ledger.
+            self._verified.pop(user_id, None)
+        return result
 
     # ── instruments and the reference feed ──
 
@@ -1071,6 +1308,7 @@ class Trading212Service:
         equity = await self.equity(user_id, ledger, positions)
         if equity <= FLOOR and ledger["enabled"]:
             self.set_enabled(user_id, False)
+        check = self.account_check(user_id, ledger, summary, positions)
         rows = []
         for symbol, position in ledger["positions"].items():
             ticker = (ledger.get("tickers") or {}).get(symbol)
@@ -1101,6 +1339,9 @@ class Trading212Service:
             "minimum_cash_reserve": fmt(
                 equity / 2 if guards_active(equity) else Decimal(0)
             ),
+            "ledger_matches_account": check["ledger_matches_account"],
+            "mismatch": check["mismatch"],
+            "outside_allocation": check["outside_allocation"],
             **self.status(user_id),
         }
 
@@ -1154,6 +1395,11 @@ class Trading212Service:
         if order_type not in ORDER_TYPES:
             raise ValueError("Use order_type limit or market")
         symbol = symbol_of(symbol)
+        if symbol in (_read_ledger(user_id).get("excluded_tickers") or []):
+            raise ValueError(
+                f"{symbol} is on the owner's exclusion list (a holding outside the "
+                "bot allocation): the bot never trades it; no order placed"
+            )
         instrument = await self._instrument(user_id, symbol)
         pair = (await self._reference_pairs()).get(symbol)
         if not pair:
@@ -1385,7 +1631,6 @@ class Trading212Service:
                     "(a holiday or a break); no order placed"
                 )
             estimate = self._estimate(ledger, plan)
-            held_before = (positions.get(ticker) or {}).get("quantity", Decimal(0))
             if plan["side"] == "buy":
                 equity = await self.equity(user_id, ledger, positions)
                 if equity <= FLOOR:
@@ -1417,6 +1662,17 @@ class Trading212Service:
             # Anything that can fail without sending must fail BEFORE the uncertain
             # entry is written, or it would read as an order that may exist.
             self.credentials(user_id)
+            # The account is the ground truth (cash and positions update at once; the
+            # history may not list an API order promptly): snapshot it now so that
+            # the outcome can be read from what changed.
+            try:
+                before = await self._snapshot(user_id, ticker)
+            except ValueError as error:
+                raise ValueError(
+                    "Refused, no order placed: the Trading 212 account could not be "
+                    f"read to snapshot it before the order ({error})"
+                ) from None
+            held_before = before["quantity"]
             signed = plan["quantity"] if plan["side"] == "buy" else -plan["quantity"]
             if plan["order_type"] == "limit":
                 path = "/equity/orders/limit"
@@ -1443,6 +1699,8 @@ class Trading212Service:
                 "quantity": fmt(plan["quantity"]),
                 "limit_price": fmt(plan["limit_price"]),
                 "order_type": plan["order_type"],
+                "expected_eur": fmt(plan["notional_eur"]),
+                "evidence_before": self._pack(before),
                 "time": time.time(),
             }
             _write(_root(user_id) / "ledger.json", ledger)
@@ -1466,23 +1724,37 @@ class Trading212Service:
             ledger["uncertain_order"]["order_id"] = order_id
             _write(_root(user_id) / "ledger.json", ledger)
             try:
-                detail, cancelled = await self._settle(
-                    user_id, ticker, order_id, held_before
-                )
-                after = None
                 try:
-                    after = (await self._summary(user_id, fresh=True))["cash_total"]
-                except ValueError:
-                    pass
-                valued = self._valued(
-                    plan["side"],
-                    detail,
-                    plan["fx"],
-                    summary["cash_total"],
-                    after,
-                    fx_fee_rate(ledger),
-                )
+                    detail, cancelled = await self._settle(
+                        user_id, ticker, order_id, held_before
+                    )
+                    after = None
+                    try:
+                        after = (await self._summary(user_id, fresh=True))["cash_total"]
+                    except ValueError:
+                        pass
+                    valued = self._valued(
+                        plan["side"],
+                        detail,
+                        plan["fx"],
+                        summary["cash_total"],
+                        after,
+                        fx_fee_rate(ledger),
+                    )
+                except _NotInHistory as gone:
+                    # The history did not list the order (it may lag or omit API
+                    # orders): the account's cash and position say what happened.
+                    cancelled = gone.cancelled
+                    pending = ledger["uncertain_order"]
+                    verdict = await self._poll_verdict(
+                        user_id, ledger, pending, known=True, settle=True
+                    )
+                    detail, valued = await self._book_evidence(
+                        ledger, pending, verdict, plan["fx"]
+                    )
                 self._guard_market_fill(plan, detail, valued)
+            except _Inconclusive as error:
+                raise ValueError(f"{_UNCERTAIN} Account evidence: {error}") from None
             except Exception:
                 raise ValueError(_UNCERTAIN) from None
             self._apply_fill(ledger, plan["side"], symbol, ticker, detail, valued)
@@ -1494,6 +1766,238 @@ class Trading212Service:
                 "order": self._summarise(detail, valued, plan, cancelled),
                 "status": self.status(user_id),
             }
+
+    # ── account evidence ──
+
+    async def _snapshot(self, user_id, ticker):
+        """Free cash (EUR) and the quantity of one ticker, read fresh from the account."""
+        summary = await self._summary(user_id, fresh=True)
+        self._require_eur(summary)
+        positions = await self._positions(user_id, fresh=True)
+        row = positions.get(ticker)
+        return {
+            "cash": summary["available"],
+            "reserved": summary["reserved"],
+            "quantity": row["quantity"] if row else Decimal(0),
+            "time": time.time(),
+        }
+
+    @staticmethod
+    def _pack(snapshot):
+        return {
+            "cash": fmt(snapshot["cash"]),
+            "reserved": fmt(snapshot["reserved"]),
+            "quantity": fmt(snapshot["quantity"]),
+            "time": snapshot["time"],
+        }
+
+    @staticmethod
+    def _baseline(pending, ledger):
+        """What the account looked like before the order: the stored snapshot, else the ledger."""
+        packed = pending.get("evidence_before")
+        if isinstance(packed, dict):
+            cash = _decimal(packed.get("cash"))
+            quantity = _decimal(packed.get("quantity"))
+            if cash is not None and quantity is not None:
+                return {
+                    "cash": cash,
+                    "reserved": _decimal(packed.get("reserved")),
+                    "quantity": quantity,
+                    "source": "snapshot taken before the order",
+                }
+        held = (ledger.get("positions") or {}).get(pending.get("symbol"))
+        return {
+            "cash": Decimal(ledger["cash"]),
+            "reserved": None,
+            "quantity": Decimal(held["units"]) if held else Decimal(0),
+            "source": "the bot ledger (no snapshot was stored with this order)",
+        }
+
+    async def _expected_eur(self, pending):
+        """The EUR value of the whole order as planned, or None."""
+        value = _decimal(pending.get("expected_eur"))
+        if value and value > 0:
+            return value
+        limit = _decimal(pending.get("limit_price"))
+        rate = await self.eur_usd()
+        if limit and rate:
+            return Decimal(pending["quantity"]) * limit / rate
+        return None
+
+    @staticmethod
+    def _judge(pending, before, after, quantity, expected_eur, known):
+        """What the account alone says happened to one order. Never guesses.
+
+        ``filled``: the ticker's quantity moved by the order's quantity in the right
+        direction AND free cash moved the right way by about the expected EUR.
+        ``partial``: the same, for less than the quantity (only with a known order
+        id: a smaller move cannot otherwise be told from a manual trade).
+        ``unchanged``: neither cash nor the position moved. Anything else (only cash
+        moved, only the position moved, the wrong direction, a different quantity, a
+        different amount of cash, reserved cash changed) is ``ambiguous``.
+        """
+        sign = 1 if pending["side"] == "buy" else -1
+        dq = (after["quantity"] - before["quantity"]) * sign
+        dc = (before["cash"] - after["cash"]) * sign
+        ticker = pending["ticker"]
+        text = (
+            f"free cash {fmt(before['cash'])} -> {fmt(after['cash'])} EUR, "
+            f"{ticker} quantity {fmt(before['quantity'])} -> {fmt(after['quantity'])} "
+            f"(baseline: {before['source']})"
+        )
+        verdict = {
+            "verdict": "ambiguous",
+            "quantity": dq,
+            "cash": dc,
+            "text": text,
+            "before": before,
+            "after": after,
+        }
+        reserved = before.get("reserved")
+        if reserved is not None and after["reserved"] != reserved:
+            verdict["text"] = (
+                "cash reserved for orders changed (a resting order?): " + text
+            )
+            return verdict
+        qty_moved = abs(dq) > QTY_EPSILON
+        cash_moved = abs(dc) > CASH_TOLERANCE_EUR
+        if not qty_moved and not cash_moved:
+            verdict["verdict"] = "unchanged"
+            return verdict
+        if not (qty_moved and cash_moved):
+            what = "only the cash moved" if cash_moved else "only the position moved"
+            verdict["text"] = f"{what}: {text}"
+            return verdict
+        if dq <= 0 or dc <= 0:
+            verdict["text"] = f"moved the wrong way: {text}"
+            return verdict
+        tolerance = max(quantity * FILLS_QUANTITY_TOLERANCE, QTY_EPSILON)
+        if dq > quantity + tolerance:
+            verdict["text"] = (
+                "the position moved by more than this order (a concurrent manual "
+                f"trade of the same ticker?): {text}"
+            )
+            return verdict
+        if expected_eur is not None:
+            part = expected_eur * min(dq, quantity) / quantity
+            if abs(dc - part) > max(part * CASH_AGREEMENT, CASH_TOLERANCE_EUR):
+                verdict["text"] = (
+                    f"the cash change does not match the order (about "
+                    f"{fmt(part.quantize(Decimal('0.01')))} EUR expected): {text}"
+                )
+                return verdict
+        if abs(dq - quantity) <= tolerance:
+            verdict["verdict"] = "filled"
+        elif known:
+            verdict["verdict"] = "partial"
+        else:
+            verdict["text"] = (
+                f"a part of the order may have filled, but without its order id that "
+                f"cannot be told from a manual trade: {text}"
+            )
+        return verdict
+
+    async def _poll_verdict(
+        self, user_id, ledger, pending, *, known, settle, quantity=None
+    ):
+        """Read the account (a few times when ``settle``) and judge the order by it.
+
+        ``settle``: the order was only just placed, so cash and position may take a
+        moment to show it: poll. Otherwise (a reconcile, long after) one answer that
+        is neither a fill nor a partial one is final. A partial fill must read the
+        same twice. An unreadable account is an error, never "unchanged".
+        """
+        before = self._baseline(pending, ledger)
+        order_quantity = Decimal(pending["quantity"])
+        quantity = order_quantity if quantity is None else quantity
+        expected = await self._expected_eur(pending)
+        if expected is not None:
+            expected = expected * quantity / order_quantity
+        verdict, last_partial, stable, failure = None, None, False, None
+        for attempt in range(EVIDENCE_POLLS):
+            try:
+                after = await self._snapshot(user_id, pending["ticker"])
+            except ValueError as error:
+                failure, after = error, None
+            if after is not None:
+                failure = None
+                verdict = self._judge(pending, before, after, quantity, expected, known)
+                kind = verdict["verdict"]
+                if kind == "filled":
+                    break
+                if kind == "partial":
+                    if last_partial is not None and (
+                        abs(last_partial - verdict["quantity"]) <= QTY_EPSILON
+                    ):
+                        stable = True
+                        break
+                    last_partial = verdict["quantity"]
+                else:
+                    last_partial = None
+                    if not settle:
+                        break
+            if attempt + 1 < EVIDENCE_POLLS:
+                await self.sleep(EVIDENCE_WAIT_SEC)
+        if verdict is None:
+            raise ValueError(
+                "The Trading 212 account could not be read to verify the order "
+                f"({failure}); trading stays paused, reconcile again shortly"
+            )
+        if verdict["verdict"] == "partial" and not stable:
+            verdict["verdict"] = "ambiguous"
+            verdict["text"] = "the partial move was still changing: " + verdict["text"]
+        return verdict
+
+    async def _book_evidence(self, ledger, pending, verdict, fx):
+        """``(detail, valued)`` of a fill that only the account shows, every figure labelled."""
+        if verdict["verdict"] not in ("filled", "partial"):
+            raise _Inconclusive(verdict["text"])
+        side = pending["side"]
+        quantity, total = verdict["quantity"], verdict["cash"]
+        held = (ledger.get("positions") or {}).get(pending["symbol"])
+        if side == "sell" and held:
+            units = Decimal(held["units"])
+            if units < quantity <= units + max(units * Decimal("0.001"), QTY_EPSILON):
+                quantity = units
+        rate = fx_fee_rate(ledger)
+        fraction = rate["fx_fee_pct"] / 100
+        if side == "buy":
+            fee = total * fraction / (1 + fraction)
+            value = total - fee
+        else:
+            value = total / (1 - fraction)
+            fee = value * fraction
+        average = value * fx / quantity if fx and quantity > 0 else None
+        detail = {
+            "order_id": pending.get("order_id"),
+            "ticker": pending["ticker"],
+            "status": (
+                "filled" if verdict["verdict"] == "filled" else "partially_filled"
+            ),
+            "inferred": (
+                "the history did not list this order; booked from the account: "
+                + verdict["text"]
+            ),
+        }
+        valued = {
+            "quantity": quantity,
+            "value": value,
+            "fee": fee,
+            "value_source": "account_cash_change",
+            "fee_source": "estimate",
+            "fee_note": (
+                f"FX fee estimated at the {rate['source']} {rate['fx_fee_pct']}% "
+                "rate; the account evidence carries no tax figures"
+            ),
+            "fx_fee": None,
+            "average_price": average,
+            "average_price_source": (
+                "estimate: EUR value / quantity converted at the Kraken reference "
+                "EUR/USD"
+            ),
+            "fill_source": "account_evidence",
+        }
+        return detail, valued
 
     # ── reading orders back ──
 
@@ -1537,7 +2041,8 @@ class Trading212Service:
         """Poll until the order is no longer pending; True when it is gone."""
         for attempt in range(polls):
             try:
-                if await self._pending(user_id, order_id) is None:
+                info = await self._pending(user_id, order_id)
+                if info is None or info["status"] in FINAL_STATUSES:
                     return True
             except ValueError:
                 # A refused or failed read (rate limit, transport) is not an answer
@@ -1704,7 +2209,7 @@ class Trading212Service:
                     },
                     True,
                 )
-            raise ValueError("Order is not in the Trading 212 history")
+            raise _NotInHistory(cancelled)
         if detail["status"] not in FINAL_STATUSES and not (
             detail["filled_quantity"] > 0 and detail["status"] == "partially_filled"
         ):
@@ -1818,6 +2323,7 @@ class Trading212Service:
                     "time": time.time(),
                     "side": side,
                     "symbol": symbol,
+                    "ticker": ticker,
                     "order_id": detail.get("order_id"),
                     "client_oid": None,
                     "status": detail["status"],
@@ -1827,6 +2333,11 @@ class Trading212Service:
                     "fee_currency": QUOTE,
                     "fee_source": valued["fee_source"],
                     "value_source": valued["value_source"],
+                    **(
+                        {"fill_source": valued["fill_source"]}
+                        if "fill_source" in valued
+                        else {}
+                    ),
                 }
             ]
         )[-200:]
@@ -1858,6 +2369,9 @@ class Trading212Service:
             out["fill_vs_reference_pct"] = str(
                 round((average - reference) / reference * 100, 3)
             )
+        for key in ("fill_source", "average_price_source", "fee_note"):
+            if valued.get(key):
+                out[key] = valued[key]
         for key in ("price_note", "inferred"):
             if detail.get(key):
                 out[key] = detail[key]
@@ -1948,25 +2462,50 @@ class Trading212Service:
         groups = self.group_history(await self._history_pages(user_id, ticker))
         if pending.get("order_id") and pending["order_id"] in groups:
             return "history", groups[pending["order_id"]], False
-        if not pending.get("order_id"):
-            hits = [
-                d
-                for d in groups.values()
-                if matches(d["created"], d["quantity"], d["side"], d["initiated_from"])
-            ]
-            if len(hits) == 1:
-                return "history", hits[0], False
-            if len(hits) > 1:
-                return None, None, True
+        # Also by ticker, side, quantity and the time window, whether or not an id is
+        # known: the history may list the order under a record that does not carry it.
+        hits = [
+            d
+            for d in groups.values()
+            if matches(d["created"], d["quantity"], d["side"], d["initiated_from"])
+        ]
+        if len(hits) == 1:
+            return "history", hits[0], False
+        if len(hits) > 1:
+            return None, None, True
         return None, None, False
 
+    @staticmethod
+    def _object_detail(info):
+        """A final-state order object read by id, shaped like a history record."""
+        return {
+            "order_id": info["order_id"],
+            "ticker": info["ticker"],
+            "side": info["side"],
+            "status": info["status"],
+            "quantity": abs(info["quantity"] or Decimal(0)),
+            "filled_quantity": info["filled_quantity"] or Decimal(0),
+        }
+
     async def reconcile(self, user_id):
-        """Settle an order whose outcome was unknown. Leaves trading paused."""
+        """Settle an order whose outcome was unknown. Leaves trading paused.
+
+        Evidence, in this order: (i) the order object by id; (ii) the pending and
+        historical orders (by id, else ticker, side, quantity and the time window);
+        (iii) the ACCOUNT: free cash and the ticker's quantity against the snapshot
+        taken before the order was sent. A fill that only the account shows is booked
+        from it (labelled). The order is cleared as "never created" only when all of
+        them show no trace of it for ``NOT_SEEN_AFTER_SEC``; mixed or ambiguous
+        evidence keeps it uncertain, and nothing is ever cleared on the history's
+        silence alone.
+        """
         async with self.locks[user_id]:
             ledger = _read_ledger(user_id)
             pending = ledger["uncertain_order"]
             if not pending:
                 return self.status(user_id)
+            known = bool(pending.get("order_id"))
+            age = time.time() - pending["time"]
             kind, detail, ambiguous = await self._find_order(user_id, pending)
             if ambiguous:
                 raise ValueError(
@@ -1974,6 +2513,8 @@ class Trading212Service:
                     "side and size): keep trading paused, check the Trading 212 order "
                     "history and clear the uncertain order by hand"
                 )
+            if kind == "pending" and detail["status"] in FINAL_STATUSES:
+                kind, detail = "object", self._object_detail(detail)
             if kind == "pending":
                 # Never leave a resting order behind: ask for it to be cancelled.
                 await self._cancel(user_id, detail["order_id"])
@@ -1981,34 +2522,125 @@ class Trading212Service:
                     "The order is still pending at Trading 212; a cancel was requested. "
                     "Reconcile again shortly"
                 )
-            if detail is None:
-                if time.time() - pending["time"] < 60:
+            if kind == "history":
+                await self._apply_history(user_id, ledger, pending, detail)
+            elif kind == "object":
+                await self._apply_object(user_id, ledger, pending, detail)
+            else:
+                if age < MIN_RECONCILE_WAIT_SEC:
                     raise ValueError("Wait a minute before reconciling")
-                # Not pending and not in the history after a minute: Trading 212 never
-                # created it.
-                ledger["uncertain_order"] = None
-                ledger["enabled"] = False
-                _write(_root(user_id) / "ledger.json", ledger)
-                return self.status(user_id)
-            if detail["status"] not in FINAL_STATUSES and not (
-                detail["filled_quantity"] > 0 and detail["status"] == "partially_filled"
-            ):
-                raise ValueError("The order is still open; reconcile again shortly")
-            fx = await self.eur_usd()
-            valued = self._valued(
-                pending["side"], detail, fx, None, None, fx_fee_rate(ledger)
-            )
-            self._apply_fill(
-                ledger,
-                pending["side"],
-                pending["symbol"],
-                pending["ticker"],
-                detail,
-                valued,
-            )
+                verdict = await self._poll_verdict(
+                    user_id, ledger, pending, known=known, settle=False
+                )
+                if verdict["verdict"] in ("filled", "partial"):
+                    fx = await self.eur_usd()
+                    book, valued = await self._book_evidence(
+                        ledger, pending, verdict, fx
+                    )
+                    self._apply_fill(
+                        ledger,
+                        pending["side"],
+                        pending["symbol"],
+                        pending["ticker"],
+                        book,
+                        valued,
+                    )
+                elif verdict["verdict"] == "unchanged":
+                    if age < NOT_SEEN_AFTER_SEC:
+                        raise ValueError(
+                            "No trace of the order yet in the pending list, the "
+                            "history or the account; it stays uncertain until "
+                            f"{NOT_SEEN_AFTER_SEC} s have passed since it was sent "
+                            f"({int(NOT_SEEN_AFTER_SEC - age)} s left): "
+                            + verdict["text"]
+                        )
+                    # Not pending, not in the history and the account has not moved
+                    # in minutes: Trading 212 never created it.
+                    ledger["uncertain_order"] = None
+                else:
+                    raise ValueError(
+                        "The evidence is mixed or ambiguous, so the order stays "
+                        "uncertain and trading stays paused (nothing is guessed): "
+                        + verdict["text"]
+                        + ". Check the Trading 212 order history and account."
+                    )
             ledger["enabled"] = False
             _write(_root(user_id) / "ledger.json", ledger)
             return self.status(user_id)
+
+    async def _apply_history(self, user_id, ledger, pending, detail):
+        """Book an order the history lists; an unfilled one must agree with the account."""
+        if detail["status"] not in FINAL_STATUSES and not (
+            detail["filled_quantity"] > 0 and detail["status"] == "partially_filled"
+        ):
+            raise ValueError("The order is still open; reconcile again shortly")
+        cash_before = cash_after = None
+        if detail["filled_quantity"] <= 0:
+            # The history says nothing filled: the account must say the same.
+            verdict = await self._poll_verdict(
+                user_id, ledger, pending, known=True, settle=False
+            )
+            if verdict["verdict"] != "unchanged":
+                raise ValueError(
+                    "The history shows no fill but the account changed, so the order "
+                    "stays uncertain: " + verdict["text"]
+                )
+        else:
+            before = self._baseline(pending, ledger)
+            if before["source"].startswith("snapshot"):
+                try:
+                    after = await self._snapshot(user_id, pending["ticker"])
+                    cash_before, cash_after = before["cash"], after["cash"]
+                except ValueError:
+                    pass
+        fx = await self.eur_usd()
+        valued = self._valued(
+            pending["side"], detail, fx, cash_before, cash_after, fx_fee_rate(ledger)
+        )
+        self._apply_fill(
+            ledger,
+            pending["side"],
+            pending["symbol"],
+            pending["ticker"],
+            detail,
+            valued,
+        )
+
+    async def _apply_object(self, user_id, ledger, pending, detail):
+        """The order object by id is in a final state: the account supplies the figures."""
+        quantity = detail["filled_quantity"]
+        verdict = await self._poll_verdict(
+            user_id,
+            ledger,
+            pending,
+            known=True,
+            settle=False,
+            quantity=quantity if quantity > 0 else None,
+        )
+        if quantity <= 0:
+            if verdict["verdict"] != "unchanged":
+                raise ValueError(
+                    "The order is final with no fill but the account changed, so it "
+                    "stays uncertain: " + verdict["text"]
+                )
+            ledger["uncertain_order"] = None
+            return
+        if verdict["verdict"] not in ("filled", "partial"):
+            raise ValueError(
+                "The order reports a fill that the account does not confirm, so it "
+                "stays uncertain: " + verdict["text"]
+            )
+        book, valued = await self._book_evidence(
+            ledger, pending, verdict, await self.eur_usd()
+        )
+        book["status"] = detail["status"]
+        book["inferred"] = (
+            "the order object by id was final; booked from the account: "
+            + verdict["text"]
+        )
+        self._apply_fill(
+            ledger, pending["side"], pending["symbol"], pending["ticker"], book, valued
+        )
 
     # ── scorecard ──
 

@@ -190,6 +190,37 @@ it("toggles trading and confirms it, or shows the server's refusal text", async 
   expect(alerts().join(" ")).toContain("first");
 });
 
+it("saves the owner's exclusion list as plain symbols and says trading is paused", async () => {
+  await mount();
+  expect(button("Save exclusions").disabled).toBe(true);
+  expect(host.textContent).toContain("Save exclusions is unavailable: change the list first.");
+  const field = host.querySelector('input[placeholder="for example MRNA"]') as HTMLInputElement;
+  await type(field, "mrna, TSLA  aapl");
+  expect(button("Save exclusions").disabled).toBe(false);
+  await act(async () => button("Save exclusions").click());
+  await wait();
+  const [path, init] = calls("PUT").find(([p]) => p.endsWith("/excluded"))!;
+  expect(path).toBe("/api/v1/trading212/excluded");
+  expect(JSON.parse(init.body)).toEqual({ tickers: ["mrna", "TSLA", "aapl"] });
+  expect(host.textContent).toContain("Exclusion list saved. Trading is paused");
+});
+
+it("shows the excluded symbols from the server and the ledger-against-account verdict", async () => {
+  await mount();
+  await remount({
+    ...status,
+    excluded_tickers: ["MRNA"],
+    account_check: {
+      ledger_matches_account: false,
+      mismatch: [{ kind: "cash", message: "cash: ledger 30 EUR, account 24.05 EUR" }],
+      outside_allocation: [{ ticker: "MRNA_US_EQ", symbol: "MRNA", units: "0.0467626", excluded: true }],
+    },
+  });
+  expect((host.querySelector('input[placeholder="for example MRNA"]') as HTMLInputElement).value).toBe("MRNA");
+  expect(alerts().join(" ")).toContain("disagree (cash: ledger 30 EUR, account 24.05 EUR)");
+  expect(host.textContent).toContain("MRNA 0.0467626 (excluded)");
+});
+
 it("offers reconcile only for an uncertain order and keeps trading paused", async () => {
   await mount();
   expect(button("Reconcile from Trading 212 order history")).toBeUndefined();
