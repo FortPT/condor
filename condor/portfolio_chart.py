@@ -331,6 +331,9 @@ def build(
     if not points:
         out["result_reason"] = "no_history"
         return out
+    # The line starts where every account has a reading *and* there is one to draw: a
+    # source that was still in a gap at the baseline pushes the start to its return.
+    start = out["series_start_ts"] = points[0]["timestamp"]
 
     flow_rows, unreadable = _flows(user_id, sources)
     window_flows: list[dict[str, Any]] = []

@@ -220,6 +220,24 @@ class GapTests(Base):
             gaps, [{"source": chart.HUMMINGBOT, "from_ts": gap_from, "to_ts": gap_to}]
         )
 
+    def test_a_gap_at_the_baseline_moves_the_start_to_when_the_line_can_begin(self):
+        # Revolut X starts at +2h, but Hummingbot has no reading until +3h: the first
+        # honest point is where every account is back.
+        points = hb_series(
+            T0, NOW, lambda ts: 0.0 if T0 + 3600 < ts < T0 + 3 * 3600 else 9.0
+        )
+        record(ph.EXCHANGE, T0, NOW, 43.0)
+        record(ph.REVOLUT, T0 + 7200, NOW, 4.0)
+        out = self.build(points)
+        self.assertEqual(out["baseline_ts"], T0 + 7200)
+        self.assertGreaterEqual(out["series_start_ts"], T0 + 3 * 3600 - 900)
+        self.assertEqual(out["series_start_ts"], out["chart_points"][0]["timestamp"])
+        self.assertIsNotNone(out["chart_points"][0]["total_usd"])
+        self.assertEqual(out["series_start_reason"], chart.START_REASON)
+        self.assertEqual(
+            len([g for g in out["gaps"] if g["source"] == chart.HUMMINGBOT]), 1
+        )
+
     def test_a_gap_is_cut_even_when_no_source_recorded_anything_in_it(self):
         record(ph.EXCHANGE, T0, T0 + 3600, 43.0)
         record(ph.EXCHANGE, T0 + 3 * 3600, NOW, 43.0)
@@ -429,9 +447,8 @@ class RouteTests(unittest.IsolatedAsyncioTestCase):
             }
 
         history = [
-            snapshot(self.since + 600, 9.0),
-            snapshot(self.now - 900, 9.2),
-            snapshot(self.now - 300, 9.3),
+            snapshot(ts, 9.0 + (ts - self.since) / 1e6)
+            for ts in range(int(self.since) + 600, int(self.now) - 200, 300)
         ]
         sds = SimpleNamespace(get_or_fetch=AsyncMock(return_value=history))
         self.patch = patch.object(
