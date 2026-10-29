@@ -26,6 +26,11 @@ class Enable(BaseModel):
     enabled: bool
 
 
+class Excluded(BaseModel):
+    # Validated in the service: plain symbols (MRNA) or Trading 212 tickers (MRNA_US_EQ).
+    tickers: list[str]
+
+
 class OrderRequest(BaseModel):
     side: str
     symbol: str
@@ -76,7 +81,19 @@ async def disconnect(user: WebUser = Depends(get_current_user)):
 @router.put("/enabled")
 async def enabled(body: Enable, user: WebUser = Depends(get_current_user)):
     try:
-        return service.set_enabled(user.id, body.enabled)
+        if body.enabled:
+            # Enabling first checks the bot ledger against the real account.
+            return await service.enable_checked(user.id)
+        return service.set_enabled(user.id, False)
+    except ValueError as error:
+        reject(error)
+
+
+@router.put("/excluded")
+async def excluded(body: Excluded, user: WebUser = Depends(get_current_user)):
+    """The owner's own holdings the bot never adopts or trades; changing it pauses trading."""
+    try:
+        return await service.set_excluded(user.id, body.tickers)
     except ValueError as error:
         reject(error)
 

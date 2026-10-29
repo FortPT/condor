@@ -78,6 +78,44 @@ def test_enabling_needs_a_synced_eur_account_and_says_why(client):
     assert "Sync" in refused.json()["detail"]
 
 
+def test_enabling_goes_through_the_ledger_against_account_check(client, monkeypatch):
+    client.put("/trading212/credentials", json={"api_key": KEY, "api_secret": SECRET})
+    calls = []
+
+    async def refused(user_id):
+        calls.append(user_id)
+        raise ValueError("The bot ledger and the Trading 212 account disagree")
+
+    monkeypatch.setattr(t212.service, "enable_checked", refused)
+    response = client.put("/trading212/enabled", json={"enabled": True})
+    assert response.status_code == 400
+    assert "disagree" in response.json()["detail"]
+    assert calls == [5]
+    # Pausing never needs the account.
+    paused = client.put("/trading212/enabled", json={"enabled": False})
+    assert paused.status_code == 200 and paused.json()["enabled"] is False
+    assert calls == [5]
+
+
+def test_the_exclusion_list_is_owner_editable_and_validated(client):
+    saved = client.put("/trading212/excluded", json={"tickers": ["mrna", "AAPL_US_EQ"]})
+    assert saved.status_code == 200
+    assert saved.json()["excluded_tickers"] == ["AAPL", "MRNA"]
+    assert client.get("/trading212/status").json()["excluded_tickers"] == [
+        "AAPL",
+        "MRNA",
+    ]
+    bad = client.put("/trading212/excluded", json={"tickers": ["not a symbol"]})
+    assert bad.status_code == 400
+    assert client.put("/trading212/excluded", json={}).status_code == 422
+    assert (
+        client.put("/trading212/excluded", json={"tickers": []}).json()[
+            "excluded_tickers"
+        ]
+        == []
+    )
+
+
 def test_the_session_clock_needs_no_key(client):
     clock = client.get("/trading212/market").json()
     assert clock["venue"] == "Trading 212"
@@ -102,6 +140,7 @@ def test_the_routes_offer_no_way_to_withdraw_or_bypass_the_cost_guard():
         "/trading212/status",
         "/trading212/credentials",
         "/trading212/enabled",
+        "/trading212/excluded",
         "/trading212/sync",
         "/trading212/accounts",
         "/trading212/valuation",
