@@ -1,14 +1,16 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
 import { ExchangeResult } from "@/components/settings/CryptoComExchange";
 import { apiFetch, type CandleData } from "@/lib/api";
 import { withRealFigures } from "./nativeHistory";
 import { CandleChart, Change, ScorecardPanel } from "./TradeParts";
+import { Amount, HoldingsTotalsRow, PerformanceSummary, ResultCell } from "./PerformanceSummary";
 import {
   REFERENCE_NOTE, accountRowValue, accountsOf, equityFromValuation, equityOf, historyOf, holdingsFromValuation, holdingsOf, rowsOf,
-  useNativeStatus, type NativeVenue, type VenueRow,
+  toggleBlock, useNativeStatus, type NativeVenue, type VenueRow,
 } from "./nativeVenue";
+import { holdingPnl, orderKey, resultsByOrderId, resultsOf, totalsOf, usePerformance } from "./performance";
 import { money, num, price } from "./tradeFormat";
 
 type Candles = { pair: string; timeframe: string; candles: { t: number | string; o: string; h: string; l: string; c: string; v: string }[] };
@@ -38,6 +40,7 @@ const volume = (value: string | number | null) => {
  */
 export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
   const { base, key, title } = venue;
+  const qc = useQueryClient();
   const status = useNativeStatus(venue);
   const data = status.data;
   const ledger = data?.ledger;
@@ -122,6 +125,18 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
     retry: false,
   });
 
+  // Pause or enable trading: the same PUT route and the same rules as this venue's Settings tab.
+  const toggle = useMutation({
+    mutationFn: (enable: boolean) => apiFetch(`${base}/enabled`, { method: "PUT", body: JSON.stringify({ enabled: enable }) }),
+    onSettled: () => qc.invalidateQueries({ queryKey: [`${key}-status`] }),
+    retry: false,
+  });
+  const blocked = toggleBlock(venue, data);
+  const enabled = !!data?.enabled;
+  const performance = usePerformance(base, key, connected);
+  const byOrder = useMemo(() => resultsOf(performance.data), [performance.data]);
+  const byOrderId = useMemo(() => resultsByOrderId(performance.data), [performance.data]);
+
   const holdings = own ? holdingsFromValuation(ledger, ownValuation.data) : holdingsOf(ledger, known);
   const cash = num(ledger?.cash);
   const equity = own ? equityFromValuation(ledger, ownValuation.data, holdings) : equityOf(ledger, holdings);
@@ -129,7 +144,8 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
   const accountRows = accountsOf(accounts.data);
   const historyRows = withRealFigures(venue, historyOf(venue, history.data), ledger?.orders);
   const botOrders = [...(ledger?.orders ?? [])].reverse().slice(0, 5);
-  const error = status.error || top.error || found.error || accounts.error || history.error || valuation.error || ownValuation.error;
+  const totals = totalsOf(cash, holdings);
+  const error = status.error || top.error || found.error || accounts.error || history.error || valuation.error || ownValuation.error || toggle.error;
 
   return <div className="space-y-4" data-venue={key}>
     <div className="flex flex-wrap items-center gap-3">
@@ -139,12 +155,17 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
       {ledger && <span className="text-sm">Equity {equity === null ? "—" : money(equity, quote)}</span>}
       {data?.market && <span className="text-sm">US market {data.market.open ? "open" : "closed"}{data.market.note ? ` · ${data.market.note}` : ""}</span>}
       <div className="ml-auto flex flex-wrap gap-2">
+        <button className={button} disabled={!!blocked || toggle.isPending} aria-busy={toggle.isPending} onClick={() => toggle.mutate(!enabled)}>
+          {toggle.isPending ? (enabled ? "Pausing…" : "Enabling…") : enabled ? "Pause trading" : "Enable trading within allocation"}
+        </button>
         <button className={button} disabled={!connected || accounts.isFetching} onClick={() => void accounts.refetch()}>{accounts.isFetching ? "Reading balances…" : "Refresh balances"}</button>
         <button className={button} disabled={!connected || history.isFetching} onClick={() => void history.refetch()}>{history.isFetching ? "Reading history…" : "Refresh history"}</button>
         <button className={button} disabled={!connected || valuing} onClick={() => (own ? void ownValuation.refetch() : valuation.mutate())}>{valuing ? "Valuing…" : "Value allocation"}</button>
       </div>
     </div>
+    {blocked && data && connected && <p className="text-xs text-[var(--color-text-muted)]" data-testid="toggle-block">Enabling trading is unavailable: {blocked}.</p>}
     {error && <p role="alert" className="text-sm text-[var(--color-red)]">{error.message}</p>}
+    <PerformanceSummary query={performance} />
     {data && !connected && <p className="text-sm" data-state="not-connected">Not connected - open <a className="underline" href={settings}>Settings</a> to add the {title} API key. Markets below are public data.</p>}
     {connected && !synced && <p className="text-sm">The bot allocation has not been synced from the {title} account. Use the sync in <a className="underline" href={settings}>Settings</a> to start.</p>}
     {uncertain && <p role="alert" className="text-sm text-[var(--color-red)]">An order needs reconciliation and trading stays paused. Reconcile it in <a className="underline" href={settings}>Settings</a> or ask the trading agent.</p>}
@@ -197,13 +218,15 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
     <section className={card} aria-label="Holdings">
       <h2 className="mb-2 font-semibold">Bot holdings</h2>
       <table className="w-full text-left text-sm">
-        <thead><tr><th>Asset</th><th>Units</th><th>Cost</th><th>{own ? "Value at Trading 212 price (EUR)" : "Value at bid"}</th><th>vs cost</th></tr></thead>
+        <thead><tr><th>Asset</th><th>Units</th><th>Cost</th><th>{own ? "Value at Trading 212 price (EUR)" : "Value at bid"}</th><th>vs cost</th><th>P/L</th></tr></thead>
         <tbody>
-          <tr><td>{quote} cash</td><td>{ledger?.cash ?? "—"}</td><td>—</td><td>{money(cash, quote)}</td><td>—</td></tr>
+          <tr><td>{quote} cash</td><td>{ledger?.cash ?? "—"}</td><td>—</td><td>{money(cash, quote)}</td><td>—</td><td>—</td></tr>
           {holdings.map((row) => <tr key={row.symbol}>
             <td>{row.symbol}</td><td>{row.units}</td><td>{money(row.cost, quote)}</td><td>{money(row.value, quote)}</td>
             <td>{row.pnl === null ? "—" : <Change value={String(row.pnl)} />}</td>
+            <td><Amount value={holdingPnl(row)} currency={quote} /></td>
           </tr>)}
+          {ledger && <HoldingsTotalsRow totals={totals} quote={quote} />}
         </tbody>
       </table>
       {ledger && !holdings.length && <p className="mt-2 text-sm">The bot holds no positions.</p>}
@@ -235,21 +258,23 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
       {connected && history.isLoading && <p role="status" className="text-sm">Reading history…</p>}
       {connected && history.isError && <p className="text-sm text-[var(--color-text-muted)]">History unavailable: {history.error.message}</p>}
       {connected && history.data !== undefined && (historyRows.length ? <table className="w-full text-left text-sm">
-        <thead><tr><th>Time</th><th>Pair</th><th>Side</th><th>Status</th><th>Filled</th><th>Avg price</th><th>Value</th><th>Fee</th></tr></thead>
+        <thead><tr><th>Time</th><th>Pair</th><th>Side</th><th>Status</th><th>Filled</th><th>Avg price</th><th>Value</th><th>Fee</th><th>Result</th></tr></thead>
         <tbody>{historyRows.map((row) => <tr key={row.id}>
           <td>{row.time === null ? "—" : new Date(row.time).toLocaleString()}</td><td>{row.pair}</td><td>{row.side}</td><td>{row.status}</td>
           <td>{row.quantity}</td>
           <td>{row.average_price}{row.rounded && <span className="ml-1 text-xs text-[var(--color-text-muted)]" title="Revolut X reports this price rounded to the cent; no fills were stored for this older order.">rounded</span>}</td>
           <td>{row.value}</td><td>{row.fee}</td>
+          <ResultCell side={row.side} orderId={row.id} results={byOrderId} currency={quote} missing="Not a sale in the bot ledger, so its cost is not recorded here" />
         </tr>)}</tbody>
       </table> : <p className="text-sm">No final orders in the history window.</p>)}
       {botOrders.length > 0 && <>
         <h3 className="mb-1 mt-3 text-sm font-medium">Bot ledger</h3>
         <table className="w-full text-left text-sm">
-          <thead><tr><th>Time</th><th>Side</th><th>Asset</th><th>Status</th><th>Filled</th><th>Value</th><th>Fee</th></tr></thead>
+          <thead><tr><th>Time</th><th>Side</th><th>Asset</th><th>Status</th><th>Filled</th><th>Value</th><th>Fee</th><th>Result</th></tr></thead>
           <tbody>{botOrders.map((order) => <tr key={`${order.order_id ?? order.client_oid}-${order.time}`}>
             <td>{new Date(order.time * 1000).toLocaleString()}</td><td>{order.side}</td><td>{order.symbol}</td><td>{order.status}</td>
             <td>{order.quantity}</td><td>{order.value} {quote}</td><td>{order.fee} {order.fee_currency ?? ""}</td>
+            <ResultCell side={order.side} orderId={orderKey(order)} results={byOrder} currency={quote} />
           </tr>)}</tbody>
         </table>
       </>}

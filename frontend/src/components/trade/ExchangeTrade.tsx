@@ -7,6 +7,8 @@ import { useCryptoExchangeStatus } from "@/hooks/useCredentials";
 import { apiFetch, type CandleData } from "@/lib/api";
 import { MakerStatsPanel } from "./MakerStatsPanel";
 import { CandleChart, Change, ScorecardPanel } from "./TradeParts";
+import { Amount, HoldingsTotalsRow, PerformanceSummary, ResultCell } from "./PerformanceSummary";
+import { holdingPnl, orderKey, resultsOf, totalsOf, usePerformance } from "./performance";
 import { money, num, price } from "./tradeFormat";
 
 export type ExchangeCoin = {
@@ -73,6 +75,8 @@ export function ExchangeTrade() {
   const positions = ledger?.positions ?? {};
   const held = Object.keys(positions);
   const uncertain = !!ledger?.uncertain_order;
+  const performance = usePerformance(base, "crypto-exchange", !!data?.connected);
+  const results = useMemo(() => resultsOf(performance.data), [performance.data]);
 
   const top = useQuery({
     queryKey: ["crypto-exchange-top"],
@@ -143,7 +147,7 @@ export function ExchangeTrade() {
     mutationFn: (body: OrderBody) => apiFetch(`${base}/order`, { method: "POST", body: JSON.stringify(body) }),
     onSuccess: (next) => { setResult(next); setAmount(""); },
     // An order whose outcome is unknown fails with an error but changes the ledger, so always re-read the status.
-    onSettled: () => { reset(); refresh(); qc.invalidateQueries({ queryKey: ["crypto-exchange-top"] }); },
+    onSettled: () => { reset(); refresh(); qc.invalidateQueries({ queryKey: ["crypto-exchange-top"] }); qc.invalidateQueries({ queryKey: ["crypto-exchange", "performance"] }); },
     retry: false,
   });
   const toggle = useMutation({
@@ -183,6 +187,7 @@ export function ExchangeTrade() {
     return { symbol: heldSymbol, units: position.units, cost, value, pnl: value !== null && cost ? (value / cost - 1) * 100 : null };
   });
   const botOrders = [...(ledger?.orders ?? [])].reverse().slice(0, 5);
+  const totals = totalsOf(cash, valueRows);
 
   return <div className="space-y-4">
     <div className="flex flex-wrap items-center gap-3">
@@ -196,6 +201,7 @@ export function ExchangeTrade() {
         <button className={button} disabled={!data?.connected || inspect.isPending} onClick={() => inspect.mutate("/valuation")}>Value allocation</button>
       </div>
     </div>
+    <PerformanceSummary query={performance} />
     {error && <p role="alert" className="text-sm text-[var(--color-red)]">{error.message}</p>}
     {data && !data.connected && <p className="text-sm">Connect a Crypto.com API key in <a className="underline" href="/settings?tab=crypto-exchange">Settings</a> to trade.</p>}
     {data?.connected && !synced && <p className="text-sm">The bot allocation has not been synced from the Crypto.com account. Use “Sync allocation from Crypto.com account” in <a className="underline" href="/settings?tab=crypto-exchange">Settings</a> before trading.</p>}
@@ -288,14 +294,16 @@ export function ExchangeTrade() {
     <section className={card} aria-label="Holdings">
       <h2 className="mb-2 font-semibold">Bot holdings</h2>
       <table className="w-full text-left text-sm">
-        <thead><tr><th>Asset</th><th>Units</th><th>Cost</th><th>Value at bid</th><th>vs cost</th><th></th></tr></thead>
+        <thead><tr><th>Asset</th><th>Units</th><th>Cost</th><th>Value at bid</th><th>vs cost</th><th>P/L</th><th></th></tr></thead>
         <tbody>
-          <tr><td>{quote} cash</td><td>{ledger?.cash ?? "—"}</td><td>—</td><td>{money(cash, quote)}</td><td>—</td><td></td></tr>
+          <tr><td>{quote} cash</td><td>{ledger?.cash ?? "—"}</td><td>—</td><td>{money(cash, quote)}</td><td>—</td><td>—</td><td></td></tr>
           {valueRows.map((row) => <tr key={row.symbol}>
             <td>{row.symbol}</td><td>{row.units}</td><td>{money(row.cost, quote)}</td><td>{money(row.value, quote)}</td>
             <td>{row.pnl === null ? "—" : <Change value={String(row.pnl)} />}</td>
+            <td><Amount value={holdingPnl(row)} currency={quote} /></td>
             <td><button className={button} onClick={() => pick(row.symbol, "sell")}>Sell…</button></td>
           </tr>)}
+          {ledger && <HoldingsTotalsRow totals={totals} quote={quote} trailing={1} />}
         </tbody>
       </table>
       <p className="mt-2 text-xs text-[var(--color-text-muted)]">Value uses the live best bid, the price a sale would meet first. Cost for coins carried over at a sync restarts at their bid then. Only the bot allocation is traded; the agent loop uses this same ledger.</p>
@@ -304,10 +312,11 @@ export function ExchangeTrade() {
     {botOrders.length > 0 && <section className={card} aria-label="Bot orders">
       <h2 className="mb-2 font-semibold">Recent bot orders</h2>
       <table className="w-full text-left text-sm">
-        <thead><tr><th>Time</th><th>Side</th><th>Asset</th><th>Status</th><th>Filled</th><th>Value</th><th>Fee</th></tr></thead>
+        <thead><tr><th>Time</th><th>Side</th><th>Asset</th><th>Status</th><th>Filled</th><th>Value</th><th>Fee</th><th>Result</th></tr></thead>
         <tbody>{botOrders.map((order) => <tr key={`${order.order_id ?? order.client_oid}-${order.time}`}>
           <td>{new Date(order.time * 1000).toLocaleString()}</td><td>{order.side}</td><td>{order.symbol}</td><td>{order.status}</td>
           <td>{order.quantity}</td><td>{order.value} {quote}</td><td>{order.fee} {order.fee_currency ?? ""}</td>
+          <ResultCell side={order.side} orderId={orderKey(order)} results={results} currency={quote} />
         </tr>)}</tbody>
       </table>
     </section>}

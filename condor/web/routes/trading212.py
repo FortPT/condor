@@ -7,6 +7,7 @@ Trading 212 API has no withdrawal endpoint, and nothing here can reach one.
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, SecretStr
 
+from condor import native_performance
 from condor.trading212 import service
 from condor.web.auth import get_current_user
 from condor.web.models import WebUser
@@ -112,6 +113,12 @@ async def accounts(user: WebUser = Depends(get_current_user)):
         return await service.accounts(user.id)
     except ValueError as error:
         reject(error)
+
+
+@router.get("/performance")
+async def performance(user: WebUser = Depends(get_current_user)):
+    """What this venue earns and loses, from its recorded ledger and value history."""
+    return await native_performance.report("trading212", user.id)
 
 
 @router.get("/valuation")

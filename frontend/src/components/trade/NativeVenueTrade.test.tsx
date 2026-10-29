@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NativeVenueTrade } from "./NativeVenueTrade";
 import { NATIVE_VENUES } from "./nativeVenue";
+import { makePerformance } from "./performance.fixture";
+import type { Performance } from "./performance";
 
 const mocks = vi.hoisted(() => ({ fetch: vi.fn(), setData: vi.fn() }));
 vi.mock("@/lib/api", () => ({ apiFetch: mocks.fetch }));
@@ -77,6 +79,7 @@ let root: Root;
 let host: HTMLDivElement;
 let qc: QueryClient;
 let status: Record<string, unknown>;
+let performance: Performance;
 const wait = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 15)); });
 const calls = () => mocks.fetch.mock.calls as [string, { method?: string } | undefined][];
 const paths = () => calls().map(([path]) => path);
@@ -92,8 +95,10 @@ function build(key: Key, overrides: Partial<{ connected: boolean; positions: Rec
     },
     ...(f.market ? { market: f.market } : {}),
   };
+  performance = makePerformance(f.quote);
   mocks.fetch.mockReset().mockImplementation((path: string) => {
     if (path.endsWith("/status")) return Promise.resolve(status);
+    if (path.endsWith("/performance")) return Promise.resolve(performance);
     if (path.endsWith("/scorecard")) return Promise.resolve(scorecard);
     if (path.includes("/coins?keyword=SU")) return Promise.resolve(f.coinsPayload([f.rows[1]]));
     if (path.includes("/coins")) return Promise.resolve(f.coinsPayload([...f.rows]));
@@ -169,7 +174,9 @@ describe.each(["revolut-x", "kraken-xstocks"] as const)("%s panel", (key) => {
     build(key);
     await mount(key);
     const labels = Array.from(host.querySelectorAll("button")).map((b) => b.textContent ?? "");
-    expect(labels.filter((label) => /\b(buy|sell|order|place|preview|confirm|enable|pause|reconcile)\b/i.test(label))).toEqual([]);
+    // The only control that changes anything is pause/enable, and it sends nothing until it is clicked.
+    expect(labels.filter((label) => /\b(buy|sell|order|place|preview|confirm|reconcile)\b/i.test(label))).toEqual([]);
+    expect(labels.filter((label) => /\b(enable|pause)\b/i.test(label))).toEqual(["Pause trading"]);
     expect(host.querySelector("form")).toBeNull();
     await act(async () => button("Value allocation").click());
     await wait();
@@ -188,7 +195,7 @@ describe.each(["revolut-x", "kraken-xstocks"] as const)("%s panel", (key) => {
       await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
       // status polls every 10 s and the markets every 30 s: nothing refires within 5 s
       expect(paths().length).toBe(before);
-      for (const suffix of ["/status", "/accounts", "/history", "/scorecard"]) {
+      for (const suffix of ["/status", "/accounts", "/history", "/scorecard", "/performance"]) {
         expect(paths().filter((path) => path.endsWith(suffix)).length).toBe(1);
       }
       expect(paths().filter((path) => path.includes("/coins?keyword=")).length).toBe(1);
@@ -352,8 +359,10 @@ describe("trading212 panel (EUR ledger, USD reference market rows)", () => {
       market: { open: true, new_york_time: "Wed 10:00", minutes_to_close: 360 },
       ledger: { quote: "EUR", cash: "30", positions: { TSLA: { units: "0.05", cost: "10" } }, uncertain_order: null, enabled: true, floor: "2", synced: true, orders: [] },
     };
+    performance = makePerformance("EUR");
     mocks.fetch.mockReset().mockImplementation((path: string) => {
       if (path.endsWith("/status")) return Promise.resolve(status);
+      if (path.endsWith("/performance")) return Promise.resolve(performance);
       if (path.endsWith("/scorecard")) return Promise.resolve(scorecard);
       if (path.includes("/stocks?keyword=TS")) return Promise.resolve({ quote: "EUR", stocks: [rows[1]] });
       if (path.includes("/stocks")) return Promise.resolve({ quote: "EUR", stocks: rows });
@@ -428,6 +437,10 @@ describe("trading212 panel (EUR ledger, USD reference market rows)", () => {
     expect(host.querySelector('section[aria-label="Markets"]')!.textContent).toContain("AAPL");
     expect(calls().every(([path, init]) => path.startsWith(venue.base) && !init)).toBe(true);
     const labels = Array.from(host.querySelectorAll("button")).map((b) => b.textContent ?? "");
-    expect(labels.filter((label) => /\b(buy|sell|order|place|preview|confirm|enable|pause|reconcile)\b/i.test(label))).toEqual([]);
+    expect(labels.filter((label) => /\b(buy|sell|order|place|preview|confirm|reconcile)\b/i.test(label))).toEqual([]);
+    // Not connected: the trading switch is there but cannot be used, and says why.
+    const switches = Array.from(host.querySelectorAll("button")).filter((b) => /\b(enable|pause)\b/i.test(b.textContent ?? ""));
+    expect(switches.map((b) => b.disabled)).toEqual([true]);
+    expect(paths().some((path) => path.endsWith("/performance"))).toBe(false);
   });
 });
