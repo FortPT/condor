@@ -17,6 +17,7 @@ T0 = 1_790_000_000
 EXCHANGE = native_venues.get("crypto_com_exchange")
 KRAKEN = native_venues.get("kraken_xstocks")
 REVOLUT = native_venues.get("revolut_x")
+TRADING212 = native_venues.get("trading212")
 
 
 class FakeService:
@@ -307,10 +308,12 @@ def test_overview_reports_each_account_with_cash_positions_ledger_and_equity_cha
         ),
         "kraken_xstocks": FakeService(connected=False),
         "revolut_x": FakeService(connected=False),
+        "trading212": FakeService(connected=False),
     }
     out = run(na.overview(1, services=services, now=T0))
     assert out["total_usd"] == 48.0
-    exchange, kraken, revolut = out["venues"]
+    exchange, kraken, revolut, trading212 = out["venues"]
+    assert trading212["connected"] is False and trading212["connector"] == "Trading 212"
     assert revolut["connected"] is False and revolut["connector"] == "Revolut X"
     assert exchange["connected"] is True
     assert exchange["account"]["total_usd"] == 48.0
@@ -338,9 +341,10 @@ def test_overview_says_so_when_a_venue_cannot_be_valued_and_leaves_it_out_of_the
         "crypto_com_exchange": FakeService(error=ValueError("down")),
         "kraken_xstocks": FakeService(total=9.0),
         "revolut_x": FakeService(connected=False),
+        "trading212": FakeService(connected=False),
     }
     out = run(na.overview(1, services=services, now=T0))
-    exchange, kraken, _revolut = out["venues"]
+    exchange, kraken, _revolut, _trading212 = out["venues"]
     assert "Could not be valued" in exchange["error"]
     assert "account" not in exchange
     assert out["total_usd"] == 9.0
@@ -446,3 +450,90 @@ def test_a_revolut_x_session_pnl_is_its_usd_equity_change():
     )
     assert out.unavailable == ""
     assert out.sessions[0].pnl == pytest.approx(6.2)
+
+
+# ── Trading 212: one registry entry, a euro ledger valued in USD ──
+
+
+class Trading212Service(EuroService):
+    async def portfolio(self, user_id):
+        self.calls += 1
+        return {
+            "connector": "Trading 212",
+            "total_usd": self.total,
+            "balances": [
+                {"token": "EUR", "total": 40, "available": 40, "usd_value": 44.0},
+                {"token": "AAPL", "total": 0.05, "available": 0.05, "usd_value": 10.0},
+            ],
+            "note": "Euros converted at Kraken's public EURUSD rate.",
+        }
+
+
+def test_trading212_is_registered_once_with_its_crew():
+    assert [v.key for v in native_venues.VENUES].count("trading212") == 1
+    assert TRADING212.label == "Trading 212"
+    assert TRADING212.module == "condor.trading212"
+    assert TRADING212.agents == ("trading212_trader",)
+    assert native_venues.for_agent("trading212_trader") is TRADING212
+    assert TRADING212 in native_venues.account_venues()
+    assert "Trading 212" in ph.SOURCES
+    assert "Trading 212 could not be valued" in TRADING212.unvalued_note
+    assert TRADING212.service is not None
+
+
+def test_trading212_joins_the_dashboard_views_and_the_history_once():
+    services = {
+        "crypto_com_exchange": FakeService(connected=False),
+        "kraken_xstocks": FakeService(connected=False),
+        "revolut_x": FakeService(connected=False),
+        "trading212": Trading212Service(total=54.0),
+    }
+    result = run(na.collect_views(1, services=services))
+    assert [v["connector"] for v in result.views] == ["Trading 212"]
+    assert [v["total_usd"] for v in result.views] == [54.0]
+    assert [v for _, v in ph.series(1, since=0)["Trading 212"]] == [54.0]
+
+
+def test_trading212_failing_is_its_own_note():
+    services = {
+        "crypto_com_exchange": FakeService(total=48.0),
+        "kraken_xstocks": FakeService(connected=False),
+        "revolut_x": FakeService(connected=False),
+        "trading212": FakeService(error=ValueError("no EUR/USD rate")),
+    }
+    result = run(na.collect_views(1, services=services))
+    assert [v["total_usd"] for v in result.views] == [48.0]
+    assert result.notes == [TRADING212.unvalued_note]
+
+
+def test_the_history_recorder_samples_trading212_from_the_registry():
+    run(ph.sample_user(1, trading212=Trading212Service(total=54.0)))
+    assert ph.series(1, since=0)["Trading 212"][0][1] == 54.0
+
+
+def test_trading212_equity_change_is_measured_in_usd_not_euros():
+    sample(TRADING212, T0 - 86400, 50.0)
+    services = {
+        "crypto_com_exchange": FakeService(connected=False),
+        "kraken_xstocks": FakeService(connected=False),
+        "revolut_x": FakeService(connected=False),
+        "trading212": Trading212Service(total=54.0),
+    }
+    out = run(na.overview(1, services=services, now=T0))
+    entry = out["venues"][3]
+    assert entry["ledger"]["quote"] == "EUR"
+    assert entry["account"]["cash_usd"] == 44.0
+    assert [p["token"] for p in entry["account"]["positions"]] == ["AAPL"]
+    assert entry["equity_change"]["since_first_sample"]["change_usd"] == 4.0
+
+
+def test_a_trading212_session_pnl_is_its_usd_equity_change():
+    sample(TRADING212, T0 - 100, 50.0)
+    out = perf(
+        TRADING212,
+        [na.SessionSpan(1, T0, live=True)],
+        Trading212Service(total=54.0),
+        now=T0 + 3600,
+    )
+    assert out.unavailable == ""
+    assert out.sessions[0].pnl == pytest.approx(4.0)

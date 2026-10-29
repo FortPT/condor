@@ -222,8 +222,8 @@ function DashboardStrip({
           pnlTitle={
             agents.some((a) => a.pnl_basis === ACCOUNT_EQUITY)
               ? agents.some((a) => a.pnl_basis === ACCOUNT_EQUITY && !a.pnl_flows_tracked)
-                ? "Includes the change in account equity of native crews (Crypto.com Exchange, Kraken xStocks, Revolut X); deposits and withdrawals are only subtracted where they are recorded"
-                : "Includes the trading result of native crews (Crypto.com Exchange, Kraken xStocks, Revolut X): the change in account equity net of recorded deposits and withdrawals"
+                ? "Includes the change in account equity of native crews (Crypto.com Exchange, Kraken xStocks, Revolut X, Trading 212); deposits and withdrawals are only subtracted where they are recorded"
+                : "Includes the trading result of native crews (Crypto.com Exchange, Kraken xStocks, Revolut X, Trading 212): the change in account equity net of recorded deposits and withdrawals"
               : undefined
           }
           details={`${agents.length} total · ${agentSessions} session${agentSessions !== 1 ? "s" : ""}`}

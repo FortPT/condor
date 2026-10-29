@@ -68,6 +68,9 @@ RESTRICTED_CREW = {
     "revolut_x_trader",
     "revolut_x_analyst",
     "revolut_x_risk_reviewer",
+    "trading212_trader",
+    "trading212_analyst",
+    "trading212_risk_reviewer",
 }
 
 

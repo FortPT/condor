@@ -26,6 +26,7 @@ EXPECTED_TOOLS = {
     "crypto_com_exchange",
     "kraken_xstocks",
     "revolut_x",
+    "trading212",
     "native_portfolio",
     "control_agent",
     "delegate",
