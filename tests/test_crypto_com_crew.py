@@ -163,6 +163,7 @@ def test_native_tool_exposes_no_enable_credentials_or_money_limit_mutation():
         "reconcile",
         "predict",
         "scorecard",
+        "maker_stats",
     }
     assert {arg.arg for arg in tool.args.args} == {
         "action",
@@ -178,6 +179,9 @@ def test_native_tool_exposes_no_enable_credentials_or_money_limit_mutation():
         "stop_pct",
         "horizon_hours",
         "note",
+        "mode",
+        "purpose",
+        "maker_wait_sec",
     }
 
 
@@ -297,3 +301,70 @@ def test_the_rotation_and_cheap_tick_paragraphs_match_in_agent_and_loop(registry
         ]
     )
     assert tail_agent == tail_loop
+
+
+def test_maker_mode_is_optional_bounded_and_never_used_for_stops(registry):
+    for where, text in _both(registry).items():
+        flat = _flat(text)
+        for phrase in (
+            "maker mode (owner instruction 2026-10-29, optional)",
+            "it may never fill",
+            "nothing has run live yet",
+            "the owner switches maker mode on",
+            "when it is false use taker mode as before",
+            'use mode="maker" only for an entry (purpose="entry", a buy)',
+            'a target exit (purpose="target_exit", a sell)',
+            "the thesis window is at least 1 hour",
+            "maker_taker_round_trip_pct (a maker entry plus a taker exit)",
+            "times the usual cost multiple (1.3) is at most the target",
+            "the 1.6% target bar is unchanged",
+            "maker mode lowers the cost, it does not lower the bar",
+            "always use taker mode for a stop or invalidation exit",
+            "for a rotation leg and for any exit that must complete",
+            "the effective price, which is the resting price at the touch, never through it",
+            "at most 75",
+            "an unfilled order changes nothing: no trade happened",
+            "never retry an unfilled or partial maker order as a taker order in the same tick",
+            "never resubmit it, and never chase the price",
+            "a post-only refusal (the price would cross the book) is a refusal",
+            "journal the maker outcome (filled, partial or unfilled)",
+            'action="maker_stats"',
+            "never change the mode or the cost bar from those numbers yourself",
+        ):
+            assert phrase in flat, (where, phrase)
+    # The maker paragraph sits before the rotation and idle-tick rules and adds no
+    # consultation, so the order of the protocol and those sections is unchanged.
+    for text in _both(registry).values():
+        assert text.index("Maker mode (owner") < text.index("Cash rotation (owner")
+        assert re.findall(r'delegate\(action="ask", agent="([^"]+)"', text) == [
+            ANALYST,
+            REVIEWER,
+        ]
+
+
+def test_the_cheap_idle_tick_never_reads_maker_stats(registry):
+    for text in _both(registry).values():
+        idle = _flat(text[text.index("Cheap idle ticks") :])
+        assert "maker_stats" not in idle
+        assert "no analyst, no reviewer, no previews, no scorecard calls" in idle
+
+
+def test_the_reviewer_binds_maker_intents_and_the_analyst_flags_patient_entries(
+    registry,
+):
+    reviewer = _flat(registry.get(REVIEWER).instructions)
+    for phrase in (
+        "a bounded intent may carry mode maker or taker (taker when absent)",
+        "purpose entry or target_exit (a stop exit is never maker)",
+        "maker_taker_round_trip_pct",
+        "at least 0.15 percentage points above it",
+        "the same maximum slippage and cost bounds to the effective price",
+        "reject an intent whose resting price is above the reviewed ask for a buy",
+        "below the reviewed bid for a sell",
+        "never a retry as a taker order",
+        "missing maker fields mean incomplete",
+        "unknown cost basis means incomplete, never approval",
+    ):
+        assert phrase in reviewer, phrase
+    analyst = _flat(registry.get(ANALYST).instructions)
+    assert "patient" in analyst and "urgent" in analyst

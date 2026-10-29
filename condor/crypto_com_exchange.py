@@ -39,6 +39,10 @@ _UNCERTAIN = (
     "Order outcome needs reconciliation. Trading paused; check the Exchange order "
     "history. Do not resubmit."
 )
+_UNCERTAIN_MAKER = (
+    _UNCERTAIN
+    + " A maker order may still be resting on the book: reconcile cancels it."
+)
 
 # Below this total bot equity (quote units) the bot may use all of its money
 # freely; only the equity floor and the single-asset cap apply. At or above it
@@ -55,6 +59,29 @@ MAX_SPREAD_PCT = Decimal("1")
 ORDER_POLLS = 10
 ORDER_POLL_WAIT_SEC = 1.0
 RATE_LIMIT_PER_MINUTE = 90
+
+# Maker mode (optional): a post-only limit order rests at the touch for a bounded
+# time inside ONE call, is then cancelled, and reports what filled. Nothing here
+# has been run against the live Exchange; see docs/crypto-com-exchange.md.
+MODES = ("taker", "maker")
+PURPOSES = ("entry", "target_exit", "stop_exit")
+MAKER_WAIT_DEFAULT_SEC = 60
+MAKER_WAIT_MIN_SEC = 5
+# The MCP tool budget for an order or reconcile is 90 s; the wait, the cancel and
+# the final read all have to fit inside it.
+MAKER_WAIT_MAX_SEC = 75
+MAKER_CALL_BUDGET_SEC = 72
+MAKER_POLL_SEC = 2.5
+MAKER_POLL_FAILURES = 3
+MAKER_CANCEL_ATTEMPTS = 2
+MAKER_FEE_DEFAULT_PCT = Decimal("0.25")
+TAKER_FEE_DEFAULT_PCT = Decimal("0.5")
+MAKER_LOG_LIMIT = 1000
+# Documented Exchange reason codes: POST_ONLY_REJ (create refused because the
+# post-only order was rejected) and NO_ACTIVE_ORDER (cancel of an order that is
+# no longer open: it already filled, expired or was cancelled).
+POST_ONLY_REJECTED_CODE = 43005
+NO_ACTIVE_ORDER_CODE = 316
 TIMEFRAMES = {
     "1m",
     "5m",
@@ -210,6 +237,196 @@ def _round_up(value: Decimal, step: Decimal) -> Decimal:
         return value
     down = _round_down(value, step)
     return down if down == value else down + step
+
+
+def _number(value):
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if result == result and abs(result) != float("inf") else None
+
+
+def _mean(values):
+    values = [v for v in values if v is not None]
+    return round(sum(values) / len(values), 4) if values else None
+
+
+def _rates(group):
+    count = len(group)
+    if not count:
+        return {"resolved": 0, "fill_rate": None, "any_fill_rate": None}
+    full = sum(1 for r in group if r.get("outcome") == "filled")
+    some = sum(1 for r in group if r.get("outcome") in ("filled", "partial"))
+    return {
+        "resolved": count,
+        "fill_rate": round(full / count, 4),
+        "any_fill_rate": round(some / count, 4),
+    }
+
+
+def maker_stats(rows):
+    """Aggregate the maker attempt log; read-only and recomputed on every call."""
+    # An attempt logged as uncertain is replaced by its reconciled row.
+    settled = {
+        r.get("client_oid")
+        for r in rows
+        if r.get("outcome") != "uncertain" and r.get("client_oid")
+    }
+    rows = [
+        r
+        for r in rows
+        if not (r.get("outcome") == "uncertain" and r.get("client_oid") in settled)
+    ]
+    outcomes = {
+        name: sum(1 for r in rows if r.get("outcome") == name)
+        for name in ("filled", "partial", "unfilled", "rejected", "uncertain")
+    }
+    resolved = [
+        r for r in rows if r.get("outcome") in ("filled", "partial", "unfilled")
+    ]
+    value = fee = saved = unfilled = fee_value = 0.0
+    fee_known = priced = 0
+    for row in resolved:
+        notional = _number(row.get("value"))
+        fee_quote = _number(row.get("fee_quote"))
+        taker = _number(row.get("taker_fee_pct"))
+        if notional and notional > 0:
+            value += notional
+            if fee_quote is not None:
+                fee += fee_quote
+                fee_value += notional
+                fee_known += 1
+                if taker is not None:
+                    saved += notional * taker / 100 - fee_quote
+                    priced += 1
+        if row.get("outcome") == "unfilled":
+            price = _number(row.get("resting_price"))
+            quantity = _number(row.get("ordered_quantity"))
+            if price and quantity:
+                unfilled += price * quantity
+    purposes = {}
+    for purpose in sorted({r.get("purpose") for r in rows if r.get("purpose")}):
+        purposes[purpose] = {
+            "attempts": sum(1 for r in rows if r.get("purpose") == purpose),
+            **_rates([r for r in resolved if r.get("purpose") == purpose]),
+        }
+    recent_keys = (
+        "time",
+        "pair",
+        "side",
+        "purpose",
+        "resting_price",
+        "outcome",
+        "filled_fraction",
+        "fee_quote",
+        "waited_sec",
+        "time_to_fill_sec",
+    )
+    return {
+        "attempts": len(rows),
+        "outcomes": outcomes,
+        **_rates(resolved),
+        "avg_filled_fraction": _mean(
+            _number(r.get("filled_fraction")) for r in resolved
+        ),
+        "avg_seconds_to_fill": _mean(
+            _number(r.get("time_to_fill_sec"))
+            for r in resolved
+            if r.get("outcome") == "filled"
+        ),
+        "filled_notional": round(value, 4),
+        "avg_fee_pct": round(fee / fee_value * 100, 4) if fee_value else None,
+        "fee_paid": round(fee, 6) if fee_known else None,
+        "fee_saved_vs_taker": round(saved, 6) if priced else None,
+        "unfilled_notional": round(unfilled, 4),
+        "quote": rows[-1].get("quote") if rows else None,
+        "first_attempt": rows[0].get("time") if rows else None,
+        "last_attempt": rows[-1].get("time") if rows else None,
+        "by_purpose": purposes,
+        "recent": [{k: r.get(k) for k in recent_keys} for r in rows[-10:]][::-1],
+        "note": (
+            "fill_rate counts orders that filled completely among those that were "
+            "placed and resolved (rejected and uncertain attempts are listed apart). "
+            "fee_saved_vs_taker is the taker fee the filled value would have paid, "
+            "minus the fee actually reported; it ignores the price moves missed by "
+            "unfilled orders, so compare the unfilled entries with later prices "
+            "before deciding whether maker mode pays."
+        ),
+    }
+
+
+def _maker_settings_path(user_id):
+    return _root(user_id) / "maker_settings.json"
+
+
+def _maker_log_path(user_id):
+    return _root(user_id) / "maker_log.json"
+
+
+def _read_maker_settings(user_id):
+    try:
+        data = json.loads(_maker_settings_path(user_id).read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        data = {}
+    overrides = data.get("maker_fee_overrides")
+    return {
+        "maker_enabled": data.get("maker_enabled") is True,
+        "maker_fee_overrides": overrides if isinstance(overrides, dict) else {},
+    }
+
+
+def _read_maker_log(user_id):
+    try:
+        data = json.loads(_maker_log_path(user_id).read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+    rows = data.get("attempts") if isinstance(data, dict) else None
+    return [row for row in rows if isinstance(row, dict)] if rows else []
+
+
+def _mode_args(side, mode, purpose, maker_wait_sec):
+    """Validate the optional maker arguments; the taker path keeps its old inputs."""
+    mode = "taker" if mode in (None, "") else str(mode).strip().lower()
+    if mode not in MODES:
+        raise ValueError("mode must be taker or maker")
+    if purpose in (None, ""):
+        purpose = None
+    elif purpose not in PURPOSES:
+        raise ValueError("purpose must be entry, target_exit or stop_exit")
+    given = maker_wait_sec not in (None, "")
+    if mode == "taker":
+        if given:
+            raise ValueError("maker_wait_sec applies to maker mode only")
+        return "taker", purpose, None
+    if purpose == "stop_exit":
+        raise ValueError(
+            "Maker mode is refused for a stop or invalidation exit: use taker mode "
+            "so the exit completes"
+        )
+    if purpose is None:
+        raise ValueError("Maker mode needs purpose entry or target_exit")
+    side = side.lower() if isinstance(side, str) else ""
+    if side not in SIDES:
+        raise ValueError("Use side buy or sell")
+    if (purpose == "entry") != (side == "buy"):
+        raise ValueError("Maker purpose entry is a buy; target_exit is a sell")
+    wait = MAKER_WAIT_DEFAULT_SEC
+    if given:
+        text = str(maker_wait_sec).strip()
+        if not re.fullmatch(r"\d{1,3}", text) or not (
+            MAKER_WAIT_MIN_SEC <= int(text) <= MAKER_WAIT_MAX_SEC
+        ):
+            raise ValueError(
+                f"maker_wait_sec must be a whole number from {MAKER_WAIT_MIN_SEC} "
+                f"to {MAKER_WAIT_MAX_SEC}"
+            )
+        wait = int(text)
+    return "maker", purpose, wait
+
+
+class _MakerUnresolved(Exception):
+    """The maker order's final state could not be confirmed: reconcile decides."""
 
 
 class ExchangeService:
@@ -735,7 +952,22 @@ class ExchangeService:
             "slippage_pct": slip,
         }
 
-    async def preview(self, user_id, side, symbol, value, slippage_pct=None):
+    async def preview(
+        self,
+        user_id,
+        side,
+        symbol,
+        value,
+        slippage_pct=None,
+        mode="taker",
+        purpose=None,
+        maker_wait_sec=None,
+    ):
+        mode, purpose, wait = _mode_args(side, mode, purpose, maker_wait_sec)
+        if mode == "maker":
+            return await self._preview_maker(
+                user_id, side, symbol, value, purpose, wait
+            )
         plan = await self._plan(user_id, side, symbol, value, slippage_pct)
         book = await self.book(user_id, plan["symbol"], 20)
         remaining, cost = plan["quantity"], Decimal(0)
@@ -774,46 +1006,64 @@ class ExchangeService:
             "book_covers_order": remaining <= 0,
         }
 
-    async def order(self, user_id, side, symbol, value, slippage_pct=None):
+    async def _check_order(self, user_id, ledger, plan):
+        """The guards every order passes before anything is written or sent."""
+        symbol, quote = plan["symbol"], plan["quote"]
+        if plan["side"] == "buy":
+            equity = await self.equity(user_id, ledger)
+            if equity <= FLOOR:
+                self.set_enabled(user_id, False)
+                raise ValueError(
+                    f"Bot equity reached the {FLOOR} stop threshold; trading paused"
+                )
+            spend = plan["quantity"] * plan["limit_price"]
+            if spend > Decimal(ledger["cash"]):
+                raise ValueError("Not enough bot cash for this purchase")
+            check_purchase(ledger, symbol, spend, equity)
+        else:
+            position = ledger["positions"].get(symbol)
+            if not position or plan["quantity"] > Decimal(position["units"]):
+                raise ValueError("Cannot sell assets outside the bot allocation")
+        accounts = {
+            a["currency"]: a for a in (await self.accounts(user_id))["accounts"]
+        }
+        need_currency = quote if plan["side"] == "buy" else symbol
+        need = (
+            plan["quantity"] * plan["limit_price"]
+            if plan["side"] == "buy"
+            else plan["quantity"]
+        )
+        have = Decimal(accounts.get(need_currency, {}).get("available", "0"))
+        if have < need:
+            raise ValueError("Insufficient available Exchange balance")
+        recent = [o for o in ledger["orders"] if time.time() - o["time"] < 60]
+        if len(recent) >= 10:
+            raise ValueError("Maximum ten orders per minute")
+        current = _read_ledger(user_id)
+        if not current["enabled"]:
+            raise ValueError("Trading paused during checks")
+
+    async def order(
+        self,
+        user_id,
+        side,
+        symbol,
+        value,
+        slippage_pct=None,
+        mode="taker",
+        purpose=None,
+        maker_wait_sec=None,
+    ):
+        mode, purpose, wait = _mode_args(side, mode, purpose, maker_wait_sec)
+        if mode == "maker":
+            return await self._order_maker(user_id, side, symbol, value, purpose, wait)
         async with self.locks[user_id]:
             ledger = _read_ledger(user_id)
             if not ledger["enabled"] or ledger["uncertain_order"]:
                 raise ValueError("Trading is paused")
             plan = await self._plan(user_id, side, symbol, value, slippage_pct)
             symbol, quote = plan["symbol"], plan["quote"]
-            if plan["side"] == "buy":
-                equity = await self.equity(user_id, ledger)
-                if equity <= FLOOR:
-                    self.set_enabled(user_id, False)
-                    raise ValueError(
-                        f"Bot equity reached the {FLOOR} stop threshold; trading paused"
-                    )
-                spend = plan["quantity"] * plan["limit_price"]
-                if spend > Decimal(ledger["cash"]):
-                    raise ValueError("Not enough bot cash for this purchase")
-                check_purchase(ledger, symbol, spend, equity)
-            else:
-                position = ledger["positions"].get(symbol)
-                if not position or plan["quantity"] > Decimal(position["units"]):
-                    raise ValueError("Cannot sell assets outside the bot allocation")
-            accounts = {
-                a["currency"]: a for a in (await self.accounts(user_id))["accounts"]
-            }
-            need_currency = quote if plan["side"] == "buy" else symbol
-            need = (
-                plan["quantity"] * plan["limit_price"]
-                if plan["side"] == "buy"
-                else plan["quantity"]
-            )
-            have = Decimal(accounts.get(need_currency, {}).get("available", "0"))
-            if have < need:
-                raise ValueError("Insufficient available Exchange balance")
-            recent = [o for o in ledger["orders"] if time.time() - o["time"] < 60]
-            if len(recent) >= 10:
-                raise ValueError("Maximum ten orders per minute")
-            current = _read_ledger(user_id)
-            if not current["enabled"]:
-                raise ValueError("Trading paused during checks")
+            await self._check_order(user_id, ledger, plan)
             client_oid = str(uuid.uuid4())
             ledger["uncertain_order"] = {
                 "client_oid": client_oid,
@@ -971,12 +1221,594 @@ class ExchangeService:
                 ledger["enabled"] = False
                 _write(_root(user_id) / "ledger.json", ledger)
                 return self.status(user_id)
+            if pending.get("mode") == "maker" and (
+                str(detail.get("status", "")).upper() not in FINAL_STATUSES
+            ):
+                # A maker order may still be resting: close it before settling.
+                detail = await self._close_resting(
+                    user_id, detail.get("order_id"), pending["client_oid"]
+                )
             self._apply_fill(
                 ledger, pending["side"], pending["symbol"], ledger["quote"], detail
             )
             ledger["enabled"] = False
             _write(_root(user_id) / "ledger.json", ledger)
+            if pending.get("mode") == "maker":
+                self._log_reconciled_maker(user_id, ledger, pending, detail)
             return self.status(user_id)
+
+    # ── maker mode ──
+
+    async def _sleep(self, seconds):
+        await asyncio.sleep(seconds)
+
+    def _monotonic(self):
+        return time.monotonic()
+
+    def maker_enabled(self, user_id):
+        return _read_maker_settings(user_id)["maker_enabled"]
+
+    def set_maker_enabled(self, user_id, enabled):
+        """Owner switch (web API only, never an MCP action); off until turned on."""
+        settings = _read_maker_settings(user_id)
+        settings["maker_enabled"] = bool(enabled)
+        _write(_maker_settings_path(user_id), settings)
+        return self.maker_stats(user_id)
+
+    def set_maker_fee_override(self, user_id, pair, pct):
+        """Owner/operator only (no route, no MCP action): a per-pair maker rate in
+        percent for estimates and fee labels, for example a promotion once its terms
+        are read. ``None`` removes it. The ledger always uses the fee the Exchange
+        reports, never this value."""
+        if not isinstance(pair, str) or not re.fullmatch(
+            r"[A-Z0-9]{1,24}_[A-Z0-9]{2,8}", pair
+        ):
+            raise ValueError("Use a pair such as SHIB_USD")
+        settings = _read_maker_settings(user_id)
+        if pct is None:
+            settings["maker_fee_overrides"].pop(pair, None)
+        else:
+            rate = _decimal(pct)
+            if rate is None or not Decimal(0) <= rate <= Decimal(1):
+                raise ValueError("A maker fee override is a percent from 0 to 1")
+            settings["maker_fee_overrides"][pair] = fmt(rate)
+        _write(_maker_settings_path(user_id), settings)
+        return settings
+
+    async def _fee_view(self, user_id, pair):
+        try:
+            rates = await self.fee_rates(user_id)
+            maker, taker = rates["maker_pct"], rates["taker_pct"]
+            source = "exchange_get_fee_rate"
+        except ValueError:
+            maker, taker = MAKER_FEE_DEFAULT_PCT, TAKER_FEE_DEFAULT_PCT
+            source = "default_estimate_not_read"
+        maker_source = source
+        overrides = _read_maker_settings(user_id)["maker_fee_overrides"]
+        override = _decimal(overrides.get(pair))
+        if override is not None and override >= 0:
+            maker, maker_source = override, "owner_override"
+        return {
+            "maker_pct": maker,
+            "taker_pct": taker,
+            "maker_source": maker_source,
+            "taker_source": source,
+        }
+
+    async def _plan_maker(self, user_id, side, symbol, value):
+        """Size a post-only limit order that rests at the touch and never crosses it."""
+        side = side.lower() if isinstance(side, str) else ""
+        if side not in SIDES:
+            raise ValueError("Use side buy or sell")
+        symbol = symbol_of(symbol)
+        ledger = _read_ledger(user_id)
+        quote = ledger["quote"]
+        pair = f"{symbol}_{quote}"
+        inst = (await self.instruments(user_id)).get(pair)
+        if not inst:
+            raise ValueError(f"{pair} is not a tradable Exchange pair")
+        book = await self.book(user_id, symbol, 10)
+        bids, asks = book["bids"], book["asks"]
+        bid = _decimal(bids[0][0]) if bids else None
+        ask = _decimal(asks[0][0]) if asks else None
+        if not bid or not ask or bid <= 0 or ask <= 0 or bid >= ask:
+            raise ValueError(f"No live market for {pair}")
+        spread = (ask - bid) / ask * 100
+        if spread > MAX_SPREAD_PCT:
+            raise ValueError(f"{pair} spread is {spread:.2f}%, above {MAX_SPREAD_PCT}%")
+        price_step = _decimal(inst.get("price_tick_size"), Decimal(0))
+        qty_step = _decimal(inst.get("qty_tick_size"), Decimal(0))
+        if side == "buy":
+            # Join the best bid, rounded down: it can never reach the ask.
+            price = _round_down(bid, price_step)
+            touch_size = _decimal(bids[0][1], Decimal(0))
+            if price <= 0 or price >= ask:
+                raise ValueError(f"No safe resting price for {pair}")
+            quantity = _round_down(amount(value) / price, qty_step)
+        else:
+            price = _round_up(ask, price_step)
+            touch_size = _decimal(asks[0][1], Decimal(0))
+            if price <= bid:
+                raise ValueError(f"No safe resting price for {pair}")
+            quantity = _round_down(amount(value), qty_step)
+        if quantity <= 0:
+            raise ValueError("Amount is below the minimum order size for this pair")
+        return {
+            "side": side,
+            "symbol": symbol,
+            "pair": pair,
+            "quote": quote,
+            "quantity": quantity,
+            "limit_price": price,
+            "bid": bid,
+            "ask": ask,
+            "spread_pct": spread,
+            "touch_size": touch_size,
+        }
+
+    async def _preview_maker(self, user_id, side, symbol, value, purpose, wait):
+        """Evidence for a resting post-only order; it places nothing."""
+        plan = await self._plan_maker(user_id, side, symbol, value)
+        fees = await self._fee_view(user_id, plan["pair"])
+        maker, taker = fees["maker_pct"], fees["taker_pct"]
+        price, quantity = plan["limit_price"], plan["quantity"]
+        queue = plan["touch_size"]
+        return {
+            "mode": "maker",
+            "purpose": purpose,
+            "pair": plan["pair"],
+            "side": plan["side"],
+            "post_only": True,
+            "time_in_force": "GOOD_TILL_CANCEL",
+            "exec_inst": ["POST_ONLY"],
+            "maker_mode_enabled": self.maker_enabled(user_id),
+            "resting_price": fmt(price),
+            "limit_price": fmt(price),
+            "quantity": fmt(quantity),
+            "notional": fmt(quantity * price),
+            "bid": fmt(plan["bid"]),
+            "ask": fmt(plan["ask"]),
+            "spread_pct": str(round(plan["spread_pct"], 3)),
+            "maker_wait_sec": wait,
+            "maker_fee_pct": fmt(maker),
+            "maker_fee_source": fees["maker_source"],
+            "taker_fee_pct": fmt(taker),
+            "taker_fee_source": fees["taker_source"],
+            # Fees only: a maker order does not cross the spread, so a maker entry
+            # and a taker exit at the same touch pay no spread. Spread captured by
+            # a resting sell is not counted. The cost is paid only if the order fills.
+            "estimated_round_trip_pct": fmt(round(maker + taker, 3)),
+            "maker_taker_round_trip_pct": fmt(round(maker + taker, 3)),
+            "maker_maker_round_trip_pct": fmt(round(2 * maker, 3)),
+            "taker_taker_round_trip_pct": fmt(round(plan["spread_pct"] + 2 * taker, 3)),
+            "round_trip_basis": (
+                "Fees only, paid only if the order fills. maker_taker = a maker entry "
+                "and a taker exit; maker_maker = both legs rest. A stop exit is always "
+                "taker. The saving versus taker_taker is before adverse selection: a "
+                "resting order tends to fill when the price moves against it."
+            ),
+            "touch_queue_quantity": fmt(queue),
+            "touch_queue_value": fmt(queue * price),
+            "fill_risk": (
+                "Maker orders are NOT guaranteed to fill; the fee is paid only on what "
+                "fills. Fill probability unknown (no trade-flow estimate is read). "
+                f"The order joins the touch behind about {fmt(queue)} units and is "
+                f"cancelled after {wait} s; an unfilled or partly filled order is not "
+                "retried and is never resubmitted as a taker order automatically."
+            ),
+        }
+
+    async def _order_maker(self, user_id, side, symbol, value, purpose, wait_sec):
+        started = self._monotonic()
+        async with self.locks[user_id]:
+            ledger = _read_ledger(user_id)
+            if not self.maker_enabled(user_id):
+                raise ValueError(
+                    "Maker mode is off for this account (the owner turns it on in the "
+                    "Exchange panel). Nothing was placed."
+                )
+            if not ledger["enabled"] or ledger["uncertain_order"]:
+                raise ValueError("Trading is paused")
+            plan = await self._plan_maker(user_id, side, symbol, value)
+            symbol, quote = plan["symbol"], plan["quote"]
+            await self._check_order(user_id, ledger, plan)
+            fees = await self._fee_view(user_id, plan["pair"])
+            client_oid = str(uuid.uuid4())
+            ledger["uncertain_order"] = {
+                "client_oid": client_oid,
+                "side": plan["side"],
+                "symbol": symbol,
+                "quantity": fmt(plan["quantity"]),
+                "limit_price": fmt(plan["limit_price"]),
+                "time": time.time(),
+                "mode": "maker",
+                "purpose": purpose,
+            }
+            _write(_root(user_id) / "ledger.json", ledger)
+            try:
+                placed = await self.private(
+                    user_id,
+                    "create-order",
+                    {
+                        "instrument_name": plan["pair"],
+                        "side": SIDES[plan["side"]],
+                        "type": "LIMIT",
+                        "price": fmt(plan["limit_price"]),
+                        "quantity": fmt(plan["quantity"]),
+                        "time_in_force": "GOOD_TILL_CANCEL",
+                        "exec_inst": ["POST_ONLY"],
+                        "client_oid": client_oid,
+                    },
+                )
+            except ExchangeError as error:
+                if not error.definite:
+                    raise self._uncertain(
+                        user_id, plan, purpose, wait_sec, client_oid, fees
+                    ) from None
+                ledger["uncertain_order"] = None
+                _write(_root(user_id) / "ledger.json", ledger)
+                entry = self._maker_entry(
+                    plan, purpose, wait_sec, "rejected", client_oid, fees
+                )
+                self._log_maker(user_id, entry)
+                raise ValueError(self._refusal(error)) from None
+            except Exception:
+                raise self._uncertain(
+                    user_id, plan, purpose, wait_sec, client_oid, fees
+                ) from None
+            order_id = placed.get("order_id")
+            try:
+                detail, context = await self._rest_and_close(
+                    user_id, order_id, client_oid, wait_sec, started
+                )
+            except Exception:
+                # Includes _MakerUnresolved: the final state is unknown, and the
+                # write-before-send record keeps trading paused until reconcile.
+                raise self._uncertain(
+                    user_id, plan, purpose, wait_sec, client_oid, fees
+                ) from None
+            status = str(detail.get("status", "")).upper()
+            filled = _decimal(detail.get("cumulative_quantity"), Decimal(0))
+            if filled <= 0 and status == "REJECTED":
+                ledger["uncertain_order"] = None
+                _write(_root(user_id) / "ledger.json", ledger)
+                entry = self._maker_entry(
+                    plan, purpose, wait_sec, "rejected", client_oid, fees, detail
+                )
+                self._log_maker(user_id, entry)
+                reason = re.sub(
+                    r"[^A-Za-z0-9 _.,:;()/-]", "", str(detail.get("reason", ""))
+                )
+                raise ValueError(
+                    "The Exchange rejected the post-only order"
+                    + (f" ({reason[:60]})" if reason else "")
+                    + ": it would probably have crossed the book. Nothing traded and "
+                    "nothing changed. The caller decides what to do; it is not "
+                    "retried as a taker order."
+                )
+            if filled > 0:
+                self._apply_fill(ledger, plan["side"], symbol, quote, detail)
+            else:
+                ledger["uncertain_order"] = None
+            ledger["enabled"] = (
+                credentials_path(user_id).exists() and _read_ledger(user_id)["enabled"]
+            )
+            _write(_root(user_id) / "ledger.json", ledger)
+            maker = self._maker_result(plan, purpose, wait_sec, detail, context, fees)
+            entry = self._maker_entry(
+                plan,
+                purpose,
+                wait_sec,
+                maker["outcome"],
+                client_oid,
+                fees,
+                detail,
+                context,
+            )
+            self._log_maker(user_id, entry)
+            return {
+                "order": self._summary(detail),
+                "outcome": maker["outcome"],
+                "maker": maker,
+                "status": self.status(user_id),
+            }
+
+    def _uncertain(self, user_id, plan, purpose, wait_sec, client_oid, fees):
+        entry = self._maker_entry(
+            plan, purpose, wait_sec, "uncertain", client_oid, fees
+        )
+        self._log_maker(user_id, entry)
+        return ValueError(_UNCERTAIN_MAKER)
+
+    @staticmethod
+    def _refusal(error):
+        if error.code == POST_ONLY_REJECTED_CODE:
+            return (
+                "The Exchange rejected the post-only order (it would have crossed the "
+                "book). Nothing was placed and nothing changed. The caller decides "
+                "what to do; it is not retried as a taker order."
+            )
+        return f"The Exchange rejected the maker order, nothing was placed: {error}"
+
+    async def _rest_and_close(self, user_id, order_id, client_oid, wait_sec, started):
+        """Let the order rest, then cancel what is left and read the final state."""
+        placed = self._monotonic()
+        deadline = min(placed + wait_sec, started + MAKER_CALL_BUDGET_SEC)
+        failures = 0
+        first_fill = None
+        while True:
+            detail = None
+            try:
+                detail = await self._detail(user_id, order_id, client_oid)
+                failures = 0
+            except ValueError:
+                failures += 1
+            if detail is not None:
+                if (
+                    _decimal(detail.get("cumulative_quantity"), Decimal(0)) > 0
+                    and first_fill is None
+                ):
+                    first_fill = self._monotonic() - placed
+                status = str(detail.get("status", "")).upper()
+                if status in FINAL_STATUSES:
+                    return detail, {
+                        "waited_sec": self._monotonic() - placed,
+                        "time_to_fill_sec": first_fill,
+                        "cancel_requested": False,
+                        "cancelled_by": "exchange" if status != "FILLED" else None,
+                    }
+            remaining = deadline - self._monotonic()
+            if remaining <= 0 or failures >= MAKER_POLL_FAILURES:
+                break
+            await self._sleep(min(MAKER_POLL_SEC, remaining))
+        await self._cancel_resting(user_id, order_id, client_oid)
+        detail = await self._settle(user_id, order_id, client_oid)
+        waited = self._monotonic() - placed
+        if first_fill is None and (
+            _decimal(detail.get("cumulative_quantity"), Decimal(0)) > 0
+        ):
+            first_fill = waited
+        return detail, {
+            "waited_sec": waited,
+            "time_to_fill_sec": first_fill,
+            "cancel_requested": True,
+            "cancelled_by": "us",
+        }
+
+    async def _cancel_resting(self, user_id, order_id, client_oid):
+        """private/cancel-order is asynchronous: it only confirms the request, so the
+        caller reads the order again. A cancel is idempotent, so it may be retried."""
+        params = {"order_id": str(order_id)} if order_id else {"client_oid": client_oid}
+        for attempt in range(MAKER_CANCEL_ATTEMPTS):
+            try:
+                await self.private(user_id, "cancel-order", params)
+                return
+            except ExchangeError as error:
+                if error.code == NO_ACTIVE_ORDER_CODE:
+                    return  # no longer open: the final read says why
+            except ValueError:
+                pass
+            if attempt + 1 < MAKER_CANCEL_ATTEMPTS:
+                await self._sleep(ORDER_POLL_WAIT_SEC)
+        raise _MakerUnresolved
+
+    async def _settle(self, user_id, order_id, client_oid):
+        for attempt in range(ORDER_POLLS):
+            try:
+                detail = await self._detail(user_id, order_id, client_oid)
+            except ValueError:
+                detail = None
+            if detail is not None and (
+                str(detail.get("status", "")).upper() in FINAL_STATUSES
+            ):
+                return detail
+            if attempt + 1 < ORDER_POLLS:
+                await self._sleep(ORDER_POLL_WAIT_SEC)
+        raise _MakerUnresolved
+
+    async def _close_resting(self, user_id, order_id, client_oid):
+        try:
+            await self._cancel_resting(user_id, order_id, client_oid)
+            return await self._settle(user_id, order_id, client_oid)
+        except _MakerUnresolved:
+            raise ValueError(
+                "The maker order could not be confirmed closed on the Exchange; "
+                "trading stays paused. Check the order history and reconcile again."
+            ) from None
+
+    @staticmethod
+    def _fee_figures(detail, symbol, quote):
+        filled = _decimal(detail.get("cumulative_quantity"), Decimal(0))
+        value = _decimal(detail.get("cumulative_value"), Decimal(0))
+        fee = _decimal(detail.get("cumulative_fee"), Decimal(0))
+        currency = detail.get("fee_instrument_name")
+        average = _decimal(detail.get("avg_price"))
+        if not average and filled > 0:
+            average = value / filled
+        fee_quote = None
+        if currency == quote:
+            fee_quote = fee
+        elif currency == symbol and average:
+            fee_quote = fee * average
+        return filled, value, fee, currency, average, fee_quote
+
+    def _maker_result(self, plan, purpose, wait_sec, detail, context, fees):
+        filled, value, fee, currency, average, fee_quote = self._fee_figures(
+            detail, plan["symbol"], plan["quote"]
+        )
+        ordered = plan["quantity"]
+        status = str(detail.get("status", "")).upper()
+        if filled <= 0:
+            outcome = "unfilled"
+        elif status == "FILLED" or filled >= ordered:
+            outcome = "filled"
+        else:
+            outcome = "partial"
+        effective = (
+            fee_quote / value * 100 if fee_quote is not None and value > 0 else None
+        )
+        if effective is None:
+            fee_class = "none" if filled <= 0 else "unknown"
+        elif abs(effective - fees["maker_pct"]) <= Decimal("0.03"):
+            fee_class = "maker"
+        elif abs(effective - fees["taker_pct"]) <= Decimal("0.03"):
+            fee_class = "taker"
+        else:
+            fee_class = "other"
+        notes = {
+            "filled": "The whole order filled as a maker order.",
+            "partial": (
+                "Part of the order filled; the rest was cancelled and is not retried. "
+                "The ledger holds only what filled."
+            ),
+            "unfilled": (
+                "No trade happened: the order did not fill and was cancelled. The "
+                "ledger is unchanged. Do not retry as a taker order in the same tick."
+            ),
+        }
+        note = notes[outcome]
+        if context["cancelled_by"] == "exchange" and outcome != "filled":
+            note += " The Exchange closed the order before the deadline."
+        return {
+            "outcome": outcome,
+            "mode": "maker",
+            "purpose": purpose,
+            "post_only": True,
+            "resting_price": fmt(plan["limit_price"]),
+            "ordered_quantity": fmt(ordered),
+            "filled_quantity": fmt(filled),
+            "unfilled_quantity": fmt(max(ordered - filled, Decimal(0))),
+            "filled_fraction": fmt(round(filled / ordered, 4)) if ordered else "0",
+            "average_price": fmt(average) if average else None,
+            "value": fmt(value),
+            "fee": fmt(fee),
+            "fee_currency": currency,
+            "effective_fee_pct": (
+                fmt(round(effective, 4)) if effective is not None else None
+            ),
+            "fee_class": fee_class,
+            "maker_fee_pct": fmt(fees["maker_pct"]),
+            "maker_fee_source": fees["maker_source"],
+            "taker_fee_pct": fmt(fees["taker_pct"]),
+            "wait_sec_requested": wait_sec,
+            "waited_sec": round(context["waited_sec"], 1),
+            "time_to_fill_sec": (
+                round(context["time_to_fill_sec"], 1)
+                if context["time_to_fill_sec"] is not None
+                else None
+            ),
+            "remainder_cancelled": context["cancel_requested"],
+            "cancelled_by": context["cancelled_by"],
+            "note": note,
+        }
+
+    def _maker_entry(
+        self,
+        plan,
+        purpose,
+        wait_sec,
+        outcome,
+        client_oid,
+        fees,
+        detail=None,
+        context=None,
+    ):
+        entry = {
+            "time": time.time(),
+            "pair": plan["pair"],
+            "quote": plan["quote"],
+            "side": plan["side"],
+            "purpose": purpose,
+            "resting_price": fmt(plan["limit_price"]),
+            "ordered_quantity": fmt(plan["quantity"]),
+            "wait_sec": wait_sec,
+            "outcome": outcome,
+            "client_oid": client_oid,
+            "taker_fee_pct": fmt(fees["taker_pct"]),
+            "maker_fee_pct": fmt(fees["maker_pct"]),
+            "filled_quantity": "0",
+            "filled_fraction": 0.0,
+        }
+        if detail is not None:
+            filled, value, fee, currency, average, fee_quote = self._fee_figures(
+                detail, plan["symbol"], plan["quote"]
+            )
+            entry.update(
+                {
+                    "order_id": detail.get("order_id"),
+                    "filled_quantity": fmt(filled),
+                    "filled_fraction": (
+                        float(round(filled / plan["quantity"], 4))
+                        if plan["quantity"]
+                        else 0.0
+                    ),
+                    "value": fmt(value),
+                    "average_price": fmt(average) if average else None,
+                    "fee": fmt(fee),
+                    "fee_currency": currency,
+                    "fee_quote": fmt(fee_quote) if fee_quote is not None else None,
+                }
+            )
+        if context is not None:
+            entry["waited_sec"] = round(context["waited_sec"], 1)
+            if context["time_to_fill_sec"] is not None:
+                entry["time_to_fill_sec"] = round(context["time_to_fill_sec"], 1)
+        return entry
+
+    @staticmethod
+    def _log_maker(user_id, entry):
+        """Measurement only: it must never be able to break an order."""
+        try:
+            rows = _read_maker_log(user_id)
+            rows.append(entry)
+            _write(_maker_log_path(user_id), {"attempts": rows[-MAKER_LOG_LIMIT:]})
+        except Exception:  # noqa: BLE001 - analytics only
+            pass
+
+    def _log_reconciled_maker(self, user_id, ledger, pending, detail):
+        try:
+            symbol, quote = pending["symbol"], ledger["quote"]
+            ordered = Decimal(pending["quantity"])
+            plan = {
+                "pair": f"{symbol}_{quote}",
+                "quote": quote,
+                "symbol": symbol,
+                "side": pending["side"],
+                "limit_price": Decimal(pending["limit_price"]),
+                "quantity": ordered,
+            }
+            fees = {
+                "maker_pct": MAKER_FEE_DEFAULT_PCT,
+                "taker_pct": TAKER_FEE_DEFAULT_PCT,
+            }
+            filled = _decimal(detail.get("cumulative_quantity"), Decimal(0))
+            if filled <= 0:
+                outcome = "unfilled"
+            elif filled >= ordered:
+                outcome = "filled"
+            else:
+                outcome = "partial"
+            entry = self._maker_entry(
+                plan,
+                pending.get("purpose"),
+                None,
+                outcome,
+                pending["client_oid"],
+                fees,
+                detail,
+            )
+            entry["reconciled"] = True
+            self._log_maker(user_id, entry)
+        except Exception:  # noqa: BLE001 - analytics only
+            pass
+
+    def maker_stats(self, user_id):
+        settings = _read_maker_settings(user_id)
+        return {
+            "maker_enabled": settings["maker_enabled"],
+            "maker_fee_overrides": settings["maker_fee_overrides"],
+            "stats": maker_stats(_read_maker_log(user_id)),
+        }
 
     # ── scorecard ──
 
@@ -1008,7 +1840,9 @@ class ExchangeError(ValueError):
         # A refusal that cannot have created an order: the Exchange processed the
         # request and said no. A server-side failure (HTTP 5xx or an internal-error
         # code) may still have created it, so that stays uncertain.
-        self.definite = status < 500 and not (isinstance(code, int) and code >= 50000)
+        self.definite = code == POST_ONLY_REJECTED_CODE or (
+            status < 500 and not (isinstance(code, int) and code >= 50000)
+        )
 
 
 service = ExchangeService()

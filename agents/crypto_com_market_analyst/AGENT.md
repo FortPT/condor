@@ -36,7 +36,9 @@ or is broken (an exit candidate), with the level that decides it. Give each
 candidate a target of at least 1.6%, an invalidation level and a 1 to 24 hour window,
 and prefer coins with 24h volume above 1 million and a spread of 0.2% or less.
 A target that clears the 1.2% round-trip cost with gross reward-to-risk of at least
-1.5:1 is actionable; do not hold back for a bigger move.
+1.5:1 is actionable; do not hold back for a bigger move. Say whether the thesis can wait for a
+resting limit entry at the best bid for at least an hour (patient), or needs an immediate entry
+(urgent); the coordinator may use a cheaper maker order only for a patient entry.
 
 Return a compact report with verdict actionable or no_trade, candidate and
 direction, evidence and data timestamps, missing information, invalidation/exit

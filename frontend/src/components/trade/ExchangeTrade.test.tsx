@@ -25,6 +25,7 @@ const limits = {
 const summary = { total: 0, resolved: 0, open: 0, hit_target: 0, stopped: 0, expired: 0, avg_gross_pct: null, avg_net_pct: null, beat_costs: 0 };
 let scorecard: Record<string, unknown>;
 let status: Record<string, unknown>;
+let makerStats: Record<string, unknown>;
 const coin = (symbol: string, last: string, bid = last) => ({
   symbol, pair: `${symbol}_USD`, price: last, bid, ask: last, spread_pct: "0.02", change_24h_pct: "1.5",
   volume_24h: "1000000", min_quantity_step: "0.001",
@@ -59,8 +60,22 @@ beforeEach(async () => {
     baseline_gross_pct: -0.4, edge_vs_baseline_pct: 3.1, enough_data: false,
     recent: [{ ts: 1, symbol: "SOL", verdict: "trade", target_pct: 10, stop_pct: 5, horizon_h: 24, outcome: "target", net_pct: 5 }],
   };
+  makerStats = {
+    maker_enabled: false,
+    maker_fee_overrides: {},
+    stats: {
+      attempts: 5, outcomes: { filled: 2, partial: 1, unfilled: 2, rejected: 0, uncertain: 0 }, resolved: 5,
+      fill_rate: 0.4, any_fill_rate: 0.6, avg_seconds_to_fill: 12.5, avg_fee_pct: 0.25,
+      fee_saved_vs_taker: 0.0123, unfilled_notional: 9.5, quote: "USD",
+    },
+  };
   mocks.setData.mockReset();
-  mocks.fetch.mockReset().mockImplementation((path: string) => {
+  mocks.fetch.mockReset().mockImplementation((path: string, init?: { method?: string; body?: string }) => {
+    if (path.endsWith("/maker-mode")) {
+      makerStats = { ...makerStats, maker_enabled: JSON.parse(init!.body!).enabled };
+      return Promise.resolve(makerStats);
+    }
+    if (path.endsWith("/maker-stats")) return Promise.resolve(makerStats);
     if (path.endsWith("/status")) return Promise.resolve(status);
     if (path.endsWith("/scorecard")) return Promise.resolve(scorecard);
     if (path.includes("/coins?keyword=CRO")) return Promise.resolve({ quote: "USD", coins: [coin("CRO", "0.05", "0.0499")] });
@@ -119,6 +134,36 @@ it("loads read-only: lists the top coins, never posts or enables anything", () =
   expect(posts()).toEqual([]);
   expect(host.textContent).toContain("BTC");
   expect(host.textContent).toContain("SOL");
+});
+
+it("shows the maker statistics in a compact read-only block", () => {
+  const block = host.querySelector('section[aria-label="Maker orders"]')!;
+  const cells = Array.from(block.querySelectorAll("tbody td")).map((cell) => cell.textContent);
+  expect(cells).toEqual(["5", "2", "1", "2", "0", "40%", "60%", "0.250%", "0.0123 USD", "12.5 s"]);
+  expect(block.textContent).toContain("off");
+  expect(block.textContent).toContain("may not fill");
+  expect(block.textContent).toContain("Nothing has been tried live yet");
+  expect(callsTo("/maker-stats")[0]).toEqual(["/api/v1/crypto-exchange/maker-stats"]);
+  expect(posts()).toEqual([]);
+});
+
+it("says so when no maker order has been tried, and keeps the figures empty", async () => {
+  makerStats = { maker_enabled: false, stats: { attempts: 0, outcomes: {}, resolved: 0, fill_rate: null, any_fill_rate: null, avg_seconds_to_fill: null, avg_fee_pct: null, fee_saved_vs_taker: null, unfilled_notional: 0, quote: null } };
+  await act(async () => { await qc.invalidateQueries({ queryKey: ["crypto-exchange-maker-stats"] }); });
+  await wait();
+  const block = host.querySelector('section[aria-label="Maker orders"]')!;
+  expect(block.textContent).toContain("No maker attempts yet");
+  expect(block.querySelector("table")).toBeNull();
+});
+
+it("lets the owner switch maker orders on with one explicit PUT", async () => {
+  await click("Allow maker orders");
+  const put = callsTo("/maker-mode");
+  expect(put).toHaveLength(1);
+  expect(put[0][1].method).toBe("PUT");
+  expect(JSON.parse(put[0][1].body)).toEqual({ enabled: true });
+  expect(host.querySelector('section[aria-label="Maker orders"]')!.textContent).toContain("allowed");
+  expect(button("Turn maker orders off")).toBeDefined();
 });
 
 it("shows held coins first, tagged held, valued at the live bid in the quote currency", () => {
