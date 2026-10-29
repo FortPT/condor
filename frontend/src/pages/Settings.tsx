@@ -92,7 +92,7 @@ function buildGroups(server: string | null, isAdmin: boolean): TabGroup[] {
     {
       label: "Account",
       tabs: [
-        { key: "crypto-exchange", label: "Crypto.com Exchange", icon: KeyRound },
+        { key: "crypto-exchange", label: "Crypto.com", icon: KeyRound },
         { key: "kraken-xstocks", label: "Kraken xStocks", icon: TrendingUp },
         { key: "revolut-x", label: "Revolut X", icon: Bitcoin },
         { key: "trading212", label: "Trading 212", icon: TrendingUp },

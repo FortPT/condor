@@ -116,12 +116,12 @@ it("takes the key, secret and environment in settings and never echoes them back
   expect(host.textContent).not.toContain("the-secret");
 });
 
-it("syncs the allocation from the Exchange account and shows cash, positions and skipped coins", async () => {
+it("syncs the allocation from the Crypto.com account and shows cash, positions and skipped coins", async () => {
   await mount(true);
   request.mockImplementation((path: string, init?: { method?: string }) => Promise.resolve(path.endsWith("/sync")
     ? { ...status, ledger: { ...(status.ledger as object), cash: "42.5", positions: { BTC: { units: "0.01", cost: "700" } }, synced: true }, skipped: ["XYZ"] }
     : init ? {} : status));
-  await act(async () => button("Sync allocation from Exchange account").click());
+  await act(async () => button("Sync allocation from Crypto.com account").click());
   await wait();
   const sync = calls("POST").find(([path]) => path.endsWith("/sync"))!;
   expect(JSON.parse(sync[1].body)).toEqual({ quote: "USD" });
@@ -134,7 +134,7 @@ it("syncs the allocation from the Exchange account and shows cash, positions and
 it("will not sync while trading is enabled, nor enable before the first sync", async () => {
   status = { ...status, enabled: true, ledger: { ...(status.ledger as object), enabled: true } };
   await mount(true);
-  expect(button("Sync allocation from Exchange account").disabled).toBe(true);
+  expect(button("Sync allocation from Crypto.com account").disabled).toBe(true);
   expect(host.textContent).toContain("Pause trading to sync");
   await act(async () => root.unmount());
   qc.clear();
@@ -158,7 +158,7 @@ it("toggles trading and shows the server's refusal text", async () => {
 
 it("offers reconcile only for an uncertain order and keeps trading paused", async () => {
   await mount(true);
-  expect(button("Reconcile from Exchange order history")).toBeUndefined();
+  expect(button("Reconcile from Crypto.com order history")).toBeUndefined();
   await act(async () => root.unmount());
   qc.clear();
   host.remove();
@@ -166,8 +166,8 @@ it("offers reconcile only for an uncertain order and keeps trading paused", asyn
   await mount(true);
   expect(host.querySelector('[role="alert"]')!.textContent).toContain("needs reconciliation");
   expect(button("Enable trading within allocation").disabled).toBe(true);
-  expect(button("Sync allocation from Exchange account").disabled).toBe(true);
-  await act(async () => button("Reconcile from Exchange order history").click());
+  expect(button("Sync allocation from Crypto.com account").disabled).toBe(true);
+  await act(async () => button("Reconcile from Crypto.com order history").click());
   await wait();
   expect(calls("POST").some(([path]) => path.endsWith("/reconcile"))).toBe(true);
 });

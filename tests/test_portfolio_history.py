@@ -213,3 +213,69 @@ class RecorderTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StoredNameTests(unittest.TestCase):
+    """The owner sees "Crypto.com"; history recorded as "Crypto.com Exchange" keeps working."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = patch.dict(os.environ, {"CONDOR_DATA_DIR": self.tmp.name})
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+        self.tmp.cleanup()
+
+    def _stored_sources(self):
+        import sqlite3
+        from contextlib import closing
+
+        with closing(sqlite3.connect(ph._db(1))) as conn:
+            return {r[0] for r in conn.execute("SELECT DISTINCT source FROM samples")}
+
+    def test_the_display_label_is_crypto_com(self):
+        self.assertEqual(ph.EXCHANGE, "Crypto.com")
+        self.assertIn("Crypto.com", ph.SOURCES)
+        self.assertNotIn("Crypto.com Exchange", ph.SOURCES)
+
+    def test_rows_recorded_under_the_old_name_are_read_under_the_new_one(self):
+        import sqlite3
+        from contextlib import closing
+
+        ph.record(1, ph.KRAKEN, 9.0, now=T0)  # creates the file and schema
+        with closing(sqlite3.connect(ph._db(1))) as conn:
+            conn.execute(
+                "INSERT INTO samples VALUES (?, 'Crypto.com Exchange', 40.0)",
+                (T0 - 600,),
+            )
+            conn.execute(
+                "INSERT INTO samples VALUES (?, 'Crypto.com Exchange', 41.0)",
+                (T0 + 600,),
+            )
+            conn.commit()
+        rows = ph.series(1, since=T0 - 1000, until=T0 + 1000)
+        self.assertEqual(rows[ph.EXCHANGE], [(T0 - 600, 40.0), (T0 + 600, 41.0)])
+        self.assertNotIn("Crypto.com Exchange", rows)
+        first, last = ph.bounds(1, ph.EXCHANGE)
+        self.assertEqual((first[0], last[0]), (T0 - 600, T0 + 600))
+        before, after = ph.nearest(1, ph.EXCHANGE, [T0])[0]
+        self.assertEqual((before[0], after[0]), (T0 - 600, T0 + 600))
+
+    def test_new_samples_continue_the_same_series_without_orphaning_it(self):
+        import sqlite3
+        from contextlib import closing
+
+        ph.record(1, ph.KRAKEN, 9.0, now=T0)
+        with closing(sqlite3.connect(ph._db(1))) as conn:
+            conn.execute(
+                "INSERT INTO samples VALUES (?, 'Crypto.com Exchange', 40.0)", (T0,)
+            )
+            conn.commit()
+        self.assertTrue(ph.record(1, ph.EXCHANGE, 41.0, now=T0 + 600))
+        # Stored under the old key, so history and a rollback both keep one series.
+        self.assertEqual(self._stored_sources(), {"Crypto.com Exchange", ph.KRAKEN})
+        rows = ph.series(1, since=T0 - 1, until=T0 + 1000)
+        self.assertEqual(rows[ph.EXCHANGE], [(T0, 40.0), (T0 + 600, 41.0)])
+        # The throttle sees the old rows too.
+        self.assertFalse(ph.record(1, ph.EXCHANGE, 42.0, now=T0 + 700))

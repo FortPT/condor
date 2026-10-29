@@ -1046,3 +1046,152 @@ def test_the_recorder_reads_history_and_detects_without_ever_failing():
         "get-withdrawal-history",
     ]
     assert nf.summary(USER, "crypto_com_exchange")["tracked"] is True
+
+
+# ── a detected deposit and the venue's own history row are one deposit ──
+
+
+def _detected_deposit(venue="kraken_xstocks", amount=50, at=T0 + 300, confirm=True):
+    """The recorder sees +amount USD with no order; the owner may confirm it."""
+    detect(view_of(USD=(20, 20)), now=T0, venue=venue)
+    (row,) = detect(view_of(USD=(20 + amount, 20 + amount)), now=at, venue=venue)
+    assert (row["source"], row["status"]) == ("detected", "pending")
+    if confirm:
+        row = nf.set_status(USER, row["id"], "confirmed", now=at + 1)
+        assert row["status"] == "confirmed"
+    return row
+
+
+def _history_row(
+    venue="kraken_xstocks", amount="50", ts=T0 + 200, ident="dep:1", **over
+):
+    args = dict(
+        amount=amount,
+        currency="USD",
+        ts=ts,
+        usd_value=amount,
+        source="api",
+        status="confirmed",
+        external_id=ident,
+        now=T0 + 9000,
+    )
+    args.update(over)
+    return nf.add_flow(USER, venue, **args)
+
+
+def _states(venue):
+    return {
+        (f["source"], f["status"])
+        for f in nf.list_flows(USER, venue, include_dismissed=True)
+    }
+
+
+def test_a_confirmed_detection_is_superseded_when_the_history_row_arrives_later():
+    detected = _detected_deposit()
+    assert nf.summary(USER, "kraken_xstocks")["recorded_net_flows_usd"] == 50.0
+
+    _history_row()
+
+    rows = {
+        f["id"]: f
+        for f in nf.list_flows(USER, "kraken_xstocks", include_dismissed=True)
+    }
+    assert rows[detected["id"]]["status"] == "dismissed"
+    assert "superseded by venue history" in rows[detected["id"]]["note"]
+    summary = nf.summary(USER, "kraken_xstocks")
+    # One deposit, counted once: the history row only.
+    assert (summary["confirmed_count"], summary["recorded_net_flows_usd"]) == (1, 50.0)
+    assert nf.window_net(USER, "kraken_xstocks", T0, T0 + 5000).net_usd == 50.0
+
+
+def test_the_same_holds_for_revolut_x_and_for_a_manual_entry():
+    _detected_deposit("revolut_x", 30)
+    _history_row("revolut_x", "30", ident="dep:r")
+    assert nf.window_net(USER, "revolut_x", T0, T0 + 5000).net_usd == 30.0
+
+    detected = _detected_deposit("crypto_com_exchange", 12)
+    nf.add_flow(
+        USER,
+        "crypto_com_exchange",
+        amount="12",
+        currency="USD",
+        ts=T0 + 250,
+        usd_value=12,
+        source="manual",
+        status="confirmed",
+        now=T0 + 9000,
+    )
+    flows = {
+        f["id"]: f
+        for f in nf.list_flows(USER, "crypto_com_exchange", include_dismissed=True)
+    }
+    assert flows[detected["id"]]["status"] == "dismissed"
+    assert nf.window_net(USER, "crypto_com_exchange", T0, T0 + 5000).net_usd == 12.0
+
+
+def test_confirming_a_detection_the_history_already_records_dismisses_it():
+    detected = _detected_deposit(confirm=False)
+    # The history row names the same deposit but arrives after the pending rule's day
+    # window, so the pending detection is still on screen when the owner confirms it.
+    _history_row(ts=T0 + 400, now=T0 + 300 + 2 * 86400)
+    assert [f["id"] for f in nf.pending(USER, "kraken_xstocks")] == [detected["id"]]
+    confirmed = nf.set_status(USER, detected["id"], "confirmed", now=T0 + 3 * 86400)
+    assert confirmed["status"] == "dismissed"
+    assert "superseded by venue history" in confirmed["note"]
+    assert nf.window_net(USER, "kraken_xstocks", T0 - 10, T0 + 5000).net_usd == 50.0
+
+
+def test_a_detection_is_dismissed_on_creation_when_a_matching_history_row_exists():
+    detect(view_of(USD=(20, 20)), now=T0, venue="kraken_xstocks")
+    # Recorded before the reference reading (created and stamped earlier), so it does
+    # not "explain" the move, but it names the same money.
+    _history_row(ts=T0 + 100, now=T0 - 50)
+    created = detect(view_of(USD=(70, 70)), now=T0 + 300, venue="kraken_xstocks")
+    assert created == []
+    assert nf.pending(USER, "kraken_xstocks") == []
+    (twin,) = [
+        f
+        for f in nf.list_flows(USER, "kraken_xstocks", include_dismissed=True)
+        if f["source"] == "detected"
+    ]
+    assert twin["status"] == "dismissed" and "venue history" in twin["note"]
+
+
+def test_a_detection_stamped_apart_or_of_another_amount_is_kept():
+    detected = _detected_deposit(amount=50, at=T0 + 300)
+    # More than 30 minutes apart: a separate deposit of the same size.
+    _history_row(ts=T0 + 300 + 3600, ident="late")
+    # More than 5% apart.
+    _history_row(amount="60", ts=T0 + 310, ident="big")
+    # A withdrawal of the same size is another movement.
+    _history_row(amount="-50", ts=T0 + 310, ident="out")
+    # Another venue is another account.
+    _history_row("revolut_x", "50", ts=T0 + 310, ident="elsewhere")
+    # Another currency is another balance.
+    _history_row(currency="EUR", ts=T0 + 310, ident="eur")
+    kept = {
+        f["id"]: f
+        for f in nf.list_flows(USER, "kraken_xstocks", include_dismissed=True)
+    }
+    assert kept[detected["id"]]["status"] == "confirmed"
+    window = nf.window_net(USER, "kraken_xstocks", T0, T0 + 9000)
+    # The detection plus the four kraken rows that are not the same money.
+    assert (window.count, window.net_usd) == (5, 160.0)
+
+
+def test_superseding_is_idempotent():
+    detected = _detected_deposit()
+    _history_row()
+    _history_row()  # the same transfer read again
+    twin = nf.list_flows(USER, "kraken_xstocks", include_dismissed=True)
+    note = next(f for f in twin if f["id"] == detected["id"])["note"]
+    assert note.count("superseded") == 1
+    # Dismissing, confirming or re-reading it changes nothing further.
+    nf.set_status(USER, detected["id"], "dismissed")
+    again = next(
+        f
+        for f in nf.list_flows(USER, "kraken_xstocks", include_dismissed=True)
+        if f["id"] == detected["id"]
+    )
+    assert again["note"] == note and again["status"] == "dismissed"
+    assert nf.summary(USER, "kraken_xstocks")["confirmed_count"] == 1

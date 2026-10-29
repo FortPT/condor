@@ -45,7 +45,7 @@ export function Trade() {
 
   return <div className="-m-6 flex h-[calc(100%+3rem)] flex-col">
     <div className="flex shrink-0 gap-2 border-b border-[var(--color-border)] p-3" role="group" aria-label="Trading account">
-      <button className="rounded border border-[var(--color-border)] px-3 py-2 text-sm aria-pressed:bg-[var(--color-surface-hover)]" aria-pressed={!loading && cryptoWorkspace} onClick={() => selectWorkspace("crypto-exchange")}>Crypto.com Exchange</button>
+      <button className="rounded border border-[var(--color-border)] px-3 py-2 text-sm aria-pressed:bg-[var(--color-surface-hover)]" aria-pressed={!loading && cryptoWorkspace} onClick={() => selectWorkspace("crypto-exchange")}>Crypto.com</button>
       {Object.values(NATIVE_VENUES).map((venue) =>
         <button key={venue.key} className="rounded border border-[var(--color-border)] px-3 py-2 text-sm aria-pressed:bg-[var(--color-surface-hover)]" aria-pressed={!loading && nativeWorkspace === venue.key} onClick={() => selectWorkspace(venue.key)}>{venue.title}</button>)}
       <button className="rounded border border-[var(--color-border)] px-3 py-2 text-sm aria-pressed:bg-[var(--color-surface-hover)]" aria-pressed={!loading && !cryptoWorkspace && !nativeWorkspace} onClick={() => selectWorkspace("hummingbot")}>Hummingbot</button>
@@ -57,7 +57,7 @@ export function Trade() {
       </div> :
       cryptoWorkspace ? <div className="min-h-0 flex-1 space-y-4 overflow-auto p-6">
         <ExchangeTrade />
-        <NativeFlowsPanel venue="crypto_com_exchange" title="the Crypto.com Exchange" defaultCurrency="USD" />
+        <NativeFlowsPanel venue="crypto_com_exchange" title="Crypto.com" defaultCurrency="USD" />
       </div> :
         <div className="relative min-h-0 flex-1 p-6">
           <CreateExecutor />

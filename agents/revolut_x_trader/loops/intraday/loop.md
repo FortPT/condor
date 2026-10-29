@@ -35,7 +35,7 @@ default_trading_context: Revolut X only (EUR pairs, 24/7); read capital from the
    the tick quietly after journaling. Selling a held coin to fund a better one is allowed when
    the new expected gain beats the held coin's own outlook plus both legs' costs. Review every
    held coin for an exit every tick: target reached, invalidation broken or thesis stale.
-3. Scorecard (a paper test): after the analyst's report each tick, log ONE call for the best
+3. Call scorecard (it scores the calls, not the trades placed): after the analyst's report each tick, log ONE call for the best
    candidate with no open call using `revolut_x(action="predict", symbol="<COIN>", verdict="trade"|"pass", target_pct="...", stop_pct="...", horizon_hours="...", note="...")`.
    Use the analyst's target, invalidation and window. Read `action="scorecard"` first and never
    log numbers you do not expect. Logging places no order.

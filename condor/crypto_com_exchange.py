@@ -1,4 +1,4 @@
-"""Crypto.com Exchange spot API (v1); account keys never enter agent tool arguments.
+"""Crypto.com spot API (v1); account keys never enter agent tool arguments.
 
 Orders go to the Exchange order book, so a buy followed by an immediate sell costs
 the spread plus the fee (a few hundredths of a percent on liquid coins), not the
@@ -36,7 +36,7 @@ SIDES = {"buy": "BUY", "sell": "SELL"}
 FINAL_STATUSES = {"FILLED", "CANCELED", "CANCELLED", "REJECTED", "EXPIRED"}
 MAX_PARAM_LEVEL = 3
 _UNCERTAIN = (
-    "Order outcome needs reconciliation. Trading paused; check the Exchange order "
+    "Order outcome needs reconciliation. Trading paused; check the Crypto.com order "
     "history. Do not resubmit."
 )
 _UNCERTAIN_MAKER = (
@@ -443,7 +443,7 @@ class ExchangeService:
             return json.loads(credentials_path(user_id).read_text())
         except (FileNotFoundError, KeyError, json.JSONDecodeError):
             raise ValueError(
-                "Connect an Exchange API key in Settings → Crypto.com Exchange"
+                "Connect a Crypto.com API key in Settings → Crypto.com"
             ) from None
 
     def credentials(self, user_id):
@@ -452,7 +452,7 @@ class ExchangeService:
             return data["api_key"], data["api_secret"]
         except KeyError:
             raise ValueError(
-                "Connect an Exchange API key in Settings → Crypto.com Exchange"
+                "Connect a Crypto.com API key in Settings → Crypto.com"
             ) from None
 
     def environment(self, user_id):
@@ -511,7 +511,7 @@ class ExchangeService:
                 )
             if not ledger.get("synced"):
                 raise ValueError(
-                    "Sync the bot allocation from the Exchange account first"
+                    "Sync the bot allocation from the Crypto.com account first"
                 )
         ledger["enabled"] = bool(enabled)
         _write(_root(user_id) / "ledger.json", ledger)
@@ -559,7 +559,7 @@ class ExchangeService:
                     session, "GET", base + "public/" + path, params=params or {}
                 )
         except (aiohttp.ClientError, TimeoutError, json.JSONDecodeError):
-            raise ValueError("Crypto.com Exchange unavailable") from None
+            raise ValueError("Crypto.com unavailable") from None
         return self._result(status, data)
 
     async def private(self, user_id, method, params=None):
@@ -588,7 +588,7 @@ class ExchangeService:
                 )
         except (aiohttp.ClientError, TimeoutError, json.JSONDecodeError):
             raise ValueError(
-                "Crypto.com Exchange unavailable or returned an invalid response; "
+                "Crypto.com unavailable or returned an invalid response; "
                 "order requests are never retried"
             ) from None
         return self._result(status, data, (key, secret))
@@ -774,7 +774,7 @@ class ExchangeService:
         ):
             bps = _decimal(result.get(key))
             if bps is None:
-                raise ValueError("The Exchange returned no spot fee rate")
+                raise ValueError("Crypto.com returned no spot fee rate")
             rates[name] = bps / 100
         self._fees[user_id] = (time.monotonic(), rates)
         return rates
@@ -812,11 +812,11 @@ class ExchangeService:
                     "usd_value": float(total * price),
                 }
             )
-        note = "Whole Exchange account at the last traded price. Only the bot allocation may be traded."
+        note = "Whole Crypto.com account at the last traded price. Only the bot allocation may be traded."
         if unpriced:
             note += " No USD price for " + ", ".join(unpriced) + "."
         return {
-            "connector": "Crypto.com Exchange",
+            "connector": "Crypto.com",
             "balances": balances,
             "total_usd": sum(row["usd_value"] for row in balances),
             "note": note,
@@ -920,7 +920,7 @@ class ExchangeService:
         instruments = await self.instruments(user_id)
         inst = instruments.get(pair)
         if not inst:
-            raise ValueError(f"{pair} is not a tradable Exchange pair")
+            raise ValueError(f"{pair} is not a tradable Crypto.com pair")
         ticker = (await self._tickers(user_id)).get(pair) or {}
         bid, ask = _decimal(ticker.get("b")), _decimal(ticker.get("k"))
         if not bid or not ask or bid <= 0 or ask <= 0:
@@ -1035,7 +1035,7 @@ class ExchangeService:
         )
         have = Decimal(accounts.get(need_currency, {}).get("available", "0"))
         if have < need:
-            raise ValueError("Insufficient available Exchange balance")
+            raise ValueError("Insufficient available Crypto.com balance")
         recent = [o for o in ledger["orders"] if time.time() - o["time"] < 60]
         if len(recent) >= 10:
             raise ValueError("Maximum ten orders per minute")
@@ -1098,7 +1098,7 @@ class ExchangeService:
                 # is nothing to reconcile and trading stays as it was.
                 ledger["uncertain_order"] = None
                 _write(_root(user_id) / "ledger.json", ledger)
-                raise ValueError(f"The Exchange rejected the order: {error}") from None
+                raise ValueError(f"Crypto.com rejected the order: {error}") from None
             except Exception:
                 raise ValueError(_UNCERTAIN) from None
             self._apply_fill(ledger, plan["side"], symbol, quote, detail)
@@ -1306,7 +1306,7 @@ class ExchangeService:
         pair = f"{symbol}_{quote}"
         inst = (await self.instruments(user_id)).get(pair)
         if not inst:
-            raise ValueError(f"{pair} is not a tradable Exchange pair")
+            raise ValueError(f"{pair} is not a tradable Crypto.com pair")
         book = await self.book(user_id, symbol, 10)
         bids, asks = book["bids"], book["asks"]
         bid = _decimal(bids[0][0]) if bids else None
@@ -1405,7 +1405,7 @@ class ExchangeService:
             if not self.maker_enabled(user_id):
                 raise ValueError(
                     "Maker mode is off for this account (the owner turns it on in the "
-                    "Exchange panel). Nothing was placed."
+                    "Crypto.com panel). Nothing was placed."
                 )
             if not ledger["enabled"] or ledger["uncertain_order"]:
                 raise ValueError("Trading is paused")
@@ -1480,7 +1480,7 @@ class ExchangeService:
                     r"[^A-Za-z0-9 _.,:;()/-]", "", str(detail.get("reason", ""))
                 )
                 raise ValueError(
-                    "The Exchange rejected the post-only order"
+                    "Crypto.com rejected the post-only order"
                     + (f" ({reason[:60]})" if reason else "")
                     + ": it would probably have crossed the book. Nothing traded and "
                     "nothing changed. The caller decides what to do; it is not "
@@ -1524,11 +1524,11 @@ class ExchangeService:
     def _refusal(error):
         if error.code == POST_ONLY_REJECTED_CODE:
             return (
-                "The Exchange rejected the post-only order (it would have crossed the "
+                "Crypto.com rejected the post-only order (it would have crossed the "
                 "book). Nothing was placed and nothing changed. The caller decides "
                 "what to do; it is not retried as a taker order."
             )
-        return f"The Exchange rejected the maker order, nothing was placed: {error}"
+        return f"Crypto.com rejected the maker order, nothing was placed: {error}"
 
     async def _rest_and_close(self, user_id, order_id, client_oid, wait_sec, started):
         """Let the order rest, then cancel what is left and read the final state."""
@@ -1612,7 +1612,7 @@ class ExchangeService:
             return await self._settle(user_id, order_id, client_oid)
         except _MakerUnresolved:
             raise ValueError(
-                "The maker order could not be confirmed closed on the Exchange; "
+                "The maker order could not be confirmed closed on Crypto.com; "
                 "trading stays paused. Check the order history and reconcile again."
             ) from None
 
@@ -1668,7 +1668,7 @@ class ExchangeService:
         }
         note = notes[outcome]
         if context["cancelled_by"] == "exchange" and outcome != "filled":
-            note += " The Exchange closed the order before the deadline."
+            note += " Crypto.com closed the order before the deadline."
         return {
             "outcome": outcome,
             "mode": "maker",
@@ -1831,7 +1831,7 @@ class ExchangeError(ValueError):
 
     def __init__(self, status, code, text):
         super().__init__(
-            f"Crypto.com Exchange rejected the request (HTTP {status}, code {code}"
+            f"Crypto.com rejected the request (HTTP {status}, code {code}"
             + (f": {text}" if text else "")
             + ")"
         )

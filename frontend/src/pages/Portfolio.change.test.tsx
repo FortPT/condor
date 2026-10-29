@@ -63,7 +63,7 @@ const PORTFOLIO: PortfolioResponse = {
   total_usd: 61.87,
   connectors: [
     { connector: "kraken", total_usd: 10.19, balances: [bal("EUR", 10.19)] },
-    { connector: "Crypto.com Exchange", total_usd: 46.93, balances: [bal("USD", 30), bal("HYPE", 16.93)] },
+    { connector: "Crypto.com", total_usd: 46.93, balances: [bal("USD", 30), bal("HYPE", 16.93)] },
     { connector: "Revolut X", total_usd: 4.75, balances: [bal("XRP", 4.75)] },
   ],
 };

@@ -1,7 +1,7 @@
 ---
 name: Crypto.com Risk Reviewer
-description: Independent read-only review of a bounded native Exchange trade intent before the order
-when_to_consult: Review the analyst report, the Exchange preview and the bounded intent; never execute or fetch account data
+description: Independent read-only review of a bounded native Crypto.com trade intent before the order
+when_to_consult: Review the analyst report, the Crypto.com preview and the bounded intent; never execute or fetch account data
 agent_key: claude-acp:sonnet
 server_required: false
 tools:

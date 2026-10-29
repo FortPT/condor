@@ -60,8 +60,8 @@ export function CryptoComExchange({ settings = false }: { settings?: boolean }) 
 
   return <div className="mx-auto max-w-3xl space-y-5">
     <div>
-      <h1 className="text-xl font-semibold">Crypto.com Exchange</h1>
-      <p className="mt-1 text-sm text-[var(--color-text-muted)]">Spot trading on the Crypto.com Exchange order book through your Exchange API key. Claude and agent loops use this same account and its enforced allocation.</p>
+      <h1 className="text-xl font-semibold">Crypto.com</h1>
+      <p className="mt-1 text-sm text-[var(--color-text-muted)]">Spot trading on the Crypto.com order book through your Crypto.com API key. Claude and agent loops use this same account and its enforced allocation.</p>
     </div>
     {error && <p role="alert" className="text-sm text-[var(--color-red)]">{error.message}</p>}
     <section className="space-y-3 rounded-lg border border-[var(--color-border)] p-4">
@@ -70,16 +70,16 @@ export function CryptoComExchange({ settings = false }: { settings?: boolean }) 
       <p className="text-sm">Account: {data?.connected ? `API key saved (${data.environment})` : "not connected"} · Trading: {data?.enabled ? "enabled" : "paused"}</p>
       {ledger && (ledger.synced
         ? <p className="text-sm">Allocated cash: {ledger.cash} {quote} · Open positions: {held.length}{held.length > 0 && ` (${held.join(", ")})`}</p>
-        : <p className="text-sm">The allocation has not been synced from the Exchange account yet. Sync it before enabling trading.</p>)}
-      {uncertain && <p role="alert" className="text-sm text-[var(--color-red)]">An order needs reconciliation. Trading stays paused. Check the Exchange order history before any new submission.</p>}
-      {uncertain && <button className={button} disabled={reconcile.isPending} onClick={() => reconcile.mutate()}>Reconcile from Exchange order history</button>}
+        : <p className="text-sm">The allocation has not been synced from the Crypto.com account yet. Sync it before enabling trading.</p>)}
+      {uncertain && <p role="alert" className="text-sm text-[var(--color-red)]">An order needs reconciliation. Trading stays paused. Check the Crypto.com order history before any new submission.</p>}
+      {uncertain && <button className={button} disabled={reconcile.isPending} onClick={() => reconcile.mutate()}>Reconcile from Crypto.com order history</button>}
       <div className="flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-2 text-sm">Quote currency
           <select className={input + " w-auto"} value={syncQuote || quote} onChange={(event) => setSyncQuote(event.target.value)}>
             {QUOTES.map((value) => <option key={value} value={value}>{value}</option>)}
           </select>
         </label>
-        <button className={button} disabled={!data?.connected || !!data?.enabled || uncertain || sync.isPending} onClick={() => sync.mutate(syncQuote || quote)}>Sync allocation from Exchange account</button>
+        <button className={button} disabled={!data?.connected || !!data?.enabled || uncertain || sync.isPending} onClick={() => sync.mutate(syncQuote || quote)}>Sync allocation from Crypto.com account</button>
       </div>
       {!!data?.enabled && <p className="text-xs text-[var(--color-text-muted)]">Pause trading to sync the allocation again.</p>}
       {synced && <p role="status" className="text-sm">Allocation synced: cash {synced.ledger.cash} {synced.ledger.quote}
@@ -94,8 +94,8 @@ export function CryptoComExchange({ settings = false }: { settings?: boolean }) 
       <p className="text-xs text-[var(--color-text-muted)]">Enabling execution does not start a loop or place an order. Account holdings outside the bot allocation are excluded. Orders are immediate-or-cancel limits, so a fast market can leave them partly filled or unfilled.</p>
     </section>
     {settings ? <form className="space-y-3 rounded-lg border border-[var(--color-border)] p-4" onSubmit={(event) => { event.preventDefault(); save.mutate(); }}>
-      <h2 className="font-semibold">Connect an Exchange API key</h2>
-      <p className="text-sm">On the Crypto.com Exchange site open User Center → API and create a key with trading permission only (no withdrawal), restricted to this server's IP address. Use the uat environment with its own sandbox keys to try the whole path without real money. The key and secret are stored on this Condor host and never returned to the browser or model. Saving or replacing them pauses trading.</p>
+      <h2 className="font-semibold">Connect a Crypto.com API key</h2>
+      <p className="text-sm">On the Crypto.com site open User Center → API and create a key with trading permission only (no withdrawal), restricted to this server's IP address. Use the uat environment with its own sandbox keys to try the whole path without real money. The key and secret are stored on this Condor host and never returned to the browser or model. Saving or replacing them pauses trading.</p>
       <label className="block text-sm">API key<input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} className={input} required /></label>
       <label className="block text-sm">API secret<input type="password" autoComplete="off" value={apiSecret} onChange={(event) => setApiSecret(event.target.value)} className={input} required /></label>
       <label className="block text-sm">Environment
@@ -109,7 +109,7 @@ export function CryptoComExchange({ settings = false }: { settings?: boolean }) 
         <button type="button" className={button} disabled={!data?.connected || disconnect.isPending} onClick={() => disconnect.mutate()}>Disconnect</button>
         <Link className="text-sm underline" to="/trade?workspace=crypto-exchange">Open trading</Link>
       </div>
-    </form> : !data?.connected && <Link className="text-sm underline" to="/settings?tab=crypto-exchange">Connect Crypto.com Exchange</Link>}
+    </form> : !data?.connected && <Link className="text-sm underline" to="/settings?tab=crypto-exchange">Connect Crypto.com</Link>}
     {result !== null && <ExchangeResult value={result} />}
   </div>;
 }
@@ -145,7 +145,7 @@ export function ExchangeResult({ value }: { value: unknown }) {
     <p>Maximum new position: {data.new_position_limit} {data.quote}</p>
   </section>;
   if (data.accounts) return <section className="space-y-3 rounded-lg border border-[var(--color-border)] p-4 text-sm">
-    <h2 className="font-semibold">Exchange account balances</h2>
+    <h2 className="font-semibold">Crypto.com account balances</h2>
     <p className="text-xs text-[var(--color-text-muted)]">Whole account holdings; only the bot allocation may be traded.</p>
     {data.accounts.length ? <div className="max-h-64 overflow-auto"><table className="w-full text-left"><thead><tr><th>Currency</th><th>Balance</th><th>Available</th></tr></thead><tbody>
       {data.accounts.map((row) => <tr key={row.currency}><td>{row.currency}</td><td>{row.balance}</td><td>{row.available}</td></tr>)}
@@ -157,7 +157,7 @@ export function ExchangeResult({ value }: { value: unknown }) {
   </section>;
   const orders: OrderSummary[] = Array.isArray(value) ? value : [];
   return <section className="overflow-auto rounded-lg border border-[var(--color-border)] p-4 text-sm">
-    <h2 className="mb-2 font-semibold">Recent Exchange orders</h2>
+    <h2 className="mb-2 font-semibold">Recent Crypto.com orders</h2>
     {orders.length ? <OrderTable orders={orders} /> : <p>No recent orders</p>}
   </section>;
 }

@@ -8,7 +8,7 @@ feed them fabricated fixtures built from each venue's documentation.
 **Verification status (read docs/native-flows.md before trusting any of this).**
 None of these shapes has been exercised against a live account yet:
 
-* Crypto.com Exchange ``private/get-deposit-history`` / ``get-withdrawal-history``:
+* Crypto.com ``private/get-deposit-history`` / ``get-withdrawal-history``:
   param and field names (``start_ts``/``end_ts``/``page_size`` in milliseconds,
   ``result.deposit_list`` / ``withdrawal_list``, numeric status codes) come from a
   third-party client (ccxt) because the official reference page could not be
@@ -84,7 +84,7 @@ def reason_of(error: BaseException) -> str:
     return type(error).__name__
 
 
-# ── Crypto.com Exchange ──
+# ── Crypto.com ──
 
 CRYPTO_COM_DEPOSIT_STATUS = {"0": "pending", "1": "confirmed", "3": "pending"}
 CRYPTO_COM_WITHDRAWAL_STATUS = {
@@ -135,7 +135,7 @@ def parse_crypto_com(result: Any, deposit: bool) -> list[RawFlow]:
                 currency=currency,
                 amount=amount if deposit else -amount,
                 status=status,
-                note=f"Crypto.com Exchange {kind}"
+                note=f"Crypto.com {kind}"
                 + (" (fee not included)" if not deposit else ""),
             )
         )

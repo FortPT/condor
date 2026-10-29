@@ -2,7 +2,7 @@
 
 Live trading of Kraken's tokenized US stocks (xStocks, pairs like `AAPLxUSD`) through
 Kraken's spot REST API, within an allocation the owner syncs from the Kraken account. It
-mirrors the Crypto.com Exchange service (`condor/crypto_com_exchange.py`); it changes neither.
+mirrors the Crypto.com service (`condor/crypto_com_exchange.py`); it changes neither.
 
 ## Read this first: what is verified and what is not
 

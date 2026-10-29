@@ -353,6 +353,28 @@ def load_full_config(
     return result
 
 
+def save_config_values(agent_dir: Path, values: dict[str, Any]) -> None:
+    """Write only ``values`` into the saved ``config.yml``, never the defaults.
+
+    ``load_full_config`` overlays the saved file on the strategy's defaults, so a
+    file that carries only what someone set keeps the loop's own ``default_config``
+    authoritative. Saving the *merged* dict instead froze every default at the
+    value it had that day: a loop whose default later changed came back after a
+    restart on the old frequency.
+    """
+    saved: dict[str, Any] = {}
+    config_path = agent_dir / "config.yml"
+    if config_path.exists():
+        try:
+            loaded = yaml.safe_load(config_path.read_text()) or {}
+            if isinstance(loaded, dict):
+                saved = loaded
+        except Exception:
+            saved = {}
+    saved.update(values)
+    save_full_config(agent_dir, saved)
+
+
 def save_full_config(agent_dir: Path, config: dict[str, Any]) -> None:
     """Save a raw config dict as YAML (no filtering through AgentConfig)."""
     config_path = agent_dir / "config.yml"

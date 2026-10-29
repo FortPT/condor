@@ -371,7 +371,7 @@ class MakerRefusalTests(MakerBase):
 class MakerUncertainTests(MakerBase):
     async def test_a_cancel_failure_is_uncertain_and_reconcile_cancels_it(self):
         await self.ready()
-        self.svc.cancel_error = ValueError("Crypto.com Exchange unavailable")
+        self.svc.cancel_error = ValueError("Crypto.com unavailable")
         self.svc.cancel_effective = False
         with self.assertRaises(ValueError) as caught:
             await self.buy()
@@ -492,7 +492,7 @@ class MakerPreviewTests(MakerBase):
 
     async def test_the_default_fee_is_labelled_when_the_rate_was_not_read(self):
         await self.ready()
-        self.svc.fee_error = ValueError("Crypto.com Exchange unavailable")
+        self.svc.fee_error = ValueError("Crypto.com unavailable")
         p = await self.svc.preview(1, "buy", "ETH", "8", mode="maker", purpose="entry")
         self.assertEqual(p["maker_fee_pct"], "0.25")
         self.assertEqual(p["maker_fee_source"], "default_estimate_not_read")

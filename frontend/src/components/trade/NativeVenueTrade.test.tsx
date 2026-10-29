@@ -286,6 +286,55 @@ describe.each(["revolut-x", "kraken-xstocks"] as const)("%s panel", (key) => {
   });
 });
 
+describe("an empty chart", () => {
+  const empty = async (market: { open: boolean } | undefined) => {
+    build("kraken-xstocks");
+    if (market) status.market = market;
+    const before = mocks.fetch.getMockImplementation()!;
+    mocks.fetch.mockImplementation((path: string) => path.includes("/candles")
+      ? Promise.resolve({ pair: "AAPLxUSD", timeframe: "1h", candles: [] }) : before(path));
+    await mount("kraken-xstocks");
+    return host.querySelector('section[aria-label="Chart"]')!.textContent!;
+  };
+
+  it("says the US market is closed instead of reporting a failure", async () => {
+    const text = await empty({ open: false });
+    expect(text).toContain("No recent candles: the US market is closed.");
+    expect(text).not.toContain("unavailable");
+  });
+
+  it("names the stock when the market is open and there is still nothing", async () => {
+    const text = await empty({ open: true });
+    expect(text).toContain("No recent candles for TSLA.");
+    expect(host.querySelector('[data-testid="exchange-chart"]')).toBeNull();
+  });
+});
+
+describe("Revolut X recent orders", () => {
+  it("shows the fills-derived price and the fee for a new order, and flags an older rounded one", async () => {
+    build("revolut-x");
+    const ledger = status.ledger as { orders: Record<string, unknown>[] };
+    ledger.orders = [
+      { time: 1_793_219_000, side: "sell", symbol: "BTC", order_id: "new", status: "filled", quantity: "0.0001", value: "7.24", fee: "0.01", fee_currency: "EUR", fills_value: "7.2776", fee_source: "reported" },
+    ];
+    const before = mocks.fetch.getMockImplementation()!;
+    mocks.fetch.mockImplementation((path: string) => path.endsWith("/history")
+      ? Promise.resolve([
+        { order_id: "new", pair: "BTC-EUR", side: "sell", status: "filled", filled_quantity: "0.0001", average_fill_price: "72368.42", filled_amount: "7.24", updated: 1_793_219_900_000 },
+        { order_id: "old", pair: "BTC-EUR", side: "sell", status: "filled", filled_quantity: "0.0001", average_fill_price: "72368.42", filled_amount: "7.24", updated: 1_793_000_000_000 },
+      ]) : before(path));
+    await mount("revolut-x");
+    const rows = Array.from(host.querySelectorAll('section[aria-label="Recent orders"] table')[0].querySelectorAll("tbody tr")).map((tr) => tr.textContent!);
+    expect(rows[0]).toContain("72776");
+    expect(rows[0]).not.toContain("72368.42");
+    expect(rows[0]).not.toContain("rounded");
+    expect(rows[0]).toContain("0.01 EUR");
+    expect(rows[1]).toContain("72368.42");
+    expect(rows[1]).toContain("rounded");
+  });
+});
+
+
 describe("trading212 panel (EUR ledger, USD reference market rows)", () => {
   const venue = NATIVE_VENUES.trading212;
   const rows = [

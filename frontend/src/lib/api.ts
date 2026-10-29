@@ -1279,7 +1279,7 @@ export interface VenueConditions {
  * - `no_server` — its config names no server
  * - `no_access` — the caller may not use the server it names (SEC-334)
  * - `unreachable` — the server is offline or its credentials failed
- * A native crew (Crypto.com Exchange, Kraken xStocks, Revolut X, Trading 212) has no server; its money
+ * A native crew (Crypto.com, Kraken xStocks, Revolut X, Trading 212) has no server; its money
  * is the venue's account equity:
  * - `no_history` — no equity has been recorded for the venue yet
  * Optional on the wire so an older backend reads as `""`.

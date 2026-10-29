@@ -1,4 +1,4 @@
-# Native Crypto.com Exchange crew
+# Native Crypto.com crew
 
 This adapts the research-then-synthesis role separation of
 [Philippe Ostiguy's AITradingCrew](https://github.com/philippe-ostiguy/AITradingCrew)
@@ -55,7 +55,7 @@ ledger. The owner still syncs the allocation, enables trading and starts the
 coordinator loop; its existing restart-on-boot behavior is preserved after that
 explicit start. The helpers are separate identities, not independent trading bots or
 schedulers. Agent workspaces remain visible without Hummingbot credentials, so
-Exchange-only operators can inspect all three roles and the coordinator's loop
+Crypto.com-only operators can inspect all three roles and the coordinator's loop
 directly. Installation-local profile/playbook overrides shadow these stock files and
 must be reviewed by the operator when adopting the crew.
 
@@ -64,5 +64,19 @@ risk-approval protocol. The native service enforces money/account/order guards; 
 does not cryptographically verify an LLM review. No new runtime, package, provider
 credentials or scheduler is needed. There is no TimeGPT, news/sentiment provider or
 fundamental-analysis integration, historical backtest, guaranteed edge or profit
-claim. Candles from other venues are research proxies for the Exchange price;
+claim. Candles from other venues are research proxies for the Crypto.com price;
 unavailable market data results in no trade.
+
+## Loop cadence
+
+The cadence a native loop runs on is the `default_config` in its `loop.md`, and the
+repository is authoritative for it: `crypto_com_exchange_trader` / `daily_spot` and
+`revolut_x_trader` / `intraday` run every 120 s, `kraken_xstocks_trader` / `intraday` every
+300 s (all with `tick_timeout_sec: 600`). A restart on boot rebuilds the loop's config from
+those defaults overlaid with the keys someone saved in the strategy's `config.yml`; a Start
+dialog override lives only in that run's session. Turning on restart-on-boot writes just the
+`restart_on_boot` key to `config.yml`, so it no longer freezes the defaults of that day
+(which brought the Crypto.com loop back at 300 s). A `frequency_sec` that was saved into an
+existing installation's `config.yml` before this change keeps winning until it is removed
+or edited to the intended value.
+

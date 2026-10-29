@@ -1,4 +1,4 @@
-"""Native Exchange account/trading surface, scoped to the authenticated Condor user."""
+"""Native Crypto.com account/trading surface, scoped to the authenticated Condor user."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, SecretStr

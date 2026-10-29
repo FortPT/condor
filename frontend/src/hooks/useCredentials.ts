@@ -42,6 +42,8 @@ export type ExchangeLedger = {
   orders?: {
     time: number; side: string; symbol: string; order_id?: string | null; client_oid?: string | null;
     status: string; quantity: string; value: string; fee: string; fee_currency?: string | null;
+    /** Revolut X: the fills' real value, and whether the fee was read from the order or estimated. */
+    fills_value?: string | null; fee_source?: string | null;
   }[];
   floor?: string;
   synced: boolean;

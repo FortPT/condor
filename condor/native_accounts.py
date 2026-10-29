@@ -1,4 +1,4 @@
-"""One reading of the accounts Condor trades itself (Crypto.com Exchange, Kraken xStocks).
+"""One reading of the accounts Condor trades itself (Crypto.com, Kraken xStocks).
 
 Hummingbot sees none of this money, so three surfaces used to show it as zero or
 not at all. They now share this module, on the venue registry in

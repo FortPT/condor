@@ -236,7 +236,7 @@ def test_the_hummingbot_portfolio_tool_says_it_cannot_see_the_native_accounts():
     description = live_surface(hb_server)["get_portfolio_overview"]["description"]
     assert "only Hummingbot-connected accounts" in description
     assert "native_portfolio" in description
-    assert "Crypto.com Exchange" in description and "Kraken xStocks" in description
+    assert "Crypto.com" in description and "Kraken xStocks" in description
 
 
 def test_instructions_are_handed_to_the_sdk_unchanged():

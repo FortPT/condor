@@ -65,6 +65,9 @@ MATCH_SLACK_SEC = 120
 #: detection is at most this old and within this relative amount.
 SUPERSEDE_WINDOW_SEC = 86400
 SUPERSEDE_REL = 0.05
+#: A detection the owner already confirmed is the same money as a history row only when
+#: the two are stamped this close (it is already counted, so the match is stricter).
+SUPERSEDE_CONFIRMED_SEC = 1800
 MAX_AMOUNT = Decimal("1000000000000")
 FUTURE_SLACK_SEC = 300
 
@@ -186,27 +189,82 @@ def parse_ts(value, now: float | None = None) -> float:
     return ts
 
 
+def _same_money(detected: Decimal, recorded: Decimal) -> bool:
+    """Same sign and within ``SUPERSEDE_REL`` of the recorded (authoritative) amount."""
+    if (detected > 0) != (recorded > 0):
+        return False
+    return abs(detected - recorded) <= abs(recorded) * Decimal(str(SUPERSEDE_REL))
+
+
+def _mark_superseded(conn: sqlite3.Connection, flow_id: str, by: str) -> None:
+    """Dismiss a detection as superseded. Idempotent: a dismissed row is left alone."""
+    conn.execute(
+        "UPDATE flows SET status = 'dismissed', note = note || ? WHERE id = ?"
+        " AND status != 'dismissed'",
+        (f" (superseded by {by})", flow_id),
+    )
+
+
 def _supersede(conn: sqlite3.Connection, row: dict, now: float) -> None:
-    """Dismiss pending detections of the money a new confirmed/pending row already names."""
+    """Dismiss detections of the money a new api/manual row already names.
+
+    A detection is the guess "this balance moved with no order"; the venue's own
+    history (or the owner's entry) is the record of the same deposit. Counting both
+    would double the deposit and inflate the trading result, whether the detection is
+    still pending or the owner already confirmed it.
+    """
     if row["source"] == "detected" or row["status"] == "dismissed":
         return
     amount = Decimal(row["amount"])
+    by = "venue history" if row["source"] == "api" else "your manual entry"
     for other in conn.execute(
-        "SELECT id, amount FROM flows WHERE venue = ? AND currency = ? AND"
-        " source = 'detected' AND status = 'pending' AND id != ? AND ts >= ?",
-        (row["venue"], row["currency"], row["id"], now - SUPERSEDE_WINDOW_SEC),
+        "SELECT id, amount, ts, status FROM flows WHERE venue = ? AND currency = ? AND"
+        " source = 'detected' AND status IN ('pending', 'confirmed') AND id != ?",
+        (row["venue"], row["currency"], row["id"]),
     ).fetchall():
-        theirs = Decimal(other["amount"])
-        if (theirs > 0) != (amount > 0):
-            continue
-        if abs(theirs - amount) <= abs(amount) * Decimal(str(SUPERSEDE_REL)):
-            conn.execute(
-                "UPDATE flows SET status = 'dismissed', note = note || ? WHERE id = ?",
-                (
-                    f" (superseded by {row['source']} entry {row['id'][:8]})",
-                    other["id"],
-                ),
-            )
+        if other["status"] == "pending":
+            near = other["ts"] >= now - SUPERSEDE_WINDOW_SEC
+        else:
+            near = abs(other["ts"] - row["ts"]) <= SUPERSEDE_CONFIRMED_SEC
+        if near and _same_money(Decimal(other["amount"]), amount):
+            _mark_superseded(conn, other["id"], by)
+
+
+def _recorded_twin(conn: sqlite3.Connection, row: Mapping) -> sqlite3.Row | None:
+    """An api/manual row of the same money as a detection, stamped within 30 minutes."""
+    detected = Decimal(row["amount"])
+    for other in conn.execute(
+        "SELECT * FROM flows WHERE venue = ? AND currency = ? AND source IN"
+        " ('api', 'manual') AND status IN ('pending', 'confirmed') AND id != ?"
+        " AND ts BETWEEN ? AND ?",
+        (
+            row["venue"],
+            row["currency"],
+            row["id"],
+            float(row["ts"]) - SUPERSEDE_CONFIRMED_SEC,
+            float(row["ts"]) + SUPERSEDE_CONFIRMED_SEC,
+        ),
+    ).fetchall():
+        if _same_money(detected, Decimal(other["amount"])):
+            return other
+    return None
+
+
+def _supersede_detection(conn: sqlite3.Connection, row: dict) -> dict:
+    """The other direction: a detection that a history row already covers is dismissed.
+
+    Returns the row as it now stands (unchanged when nothing covers it).
+    """
+    if row["source"] != "detected" or row["status"] == "dismissed":
+        return row
+    twin = _recorded_twin(conn, row)
+    if twin is None:
+        return row
+    by = "venue history" if twin["source"] == "api" else "your manual entry"
+    _mark_superseded(conn, row["id"], by)
+    return _row(
+        conn.execute("SELECT * FROM flows WHERE id = ?", (row["id"],)).fetchone()
+    )
 
 
 def add_flow(
@@ -285,6 +343,7 @@ def add_flow(
             conn.execute("SELECT * FROM flows WHERE id = ?", (flow_id,)).fetchone()
         )
         _supersede(conn, created, now)
+        created = _supersede_detection(conn, created)
         conn.commit()
     return created, True
 
@@ -339,6 +398,9 @@ def set_status(
         row = _row(_get(conn, flow_id))
         if status == "confirmed":
             _supersede(conn, row, now)
+            # Confirming a detection the venue's history already records would count
+            # the deposit twice: it is dismissed as superseded instead.
+            row = _supersede_detection(conn, row)
         conn.commit()
     return row
 
@@ -858,13 +920,13 @@ def detect(
                     now,
                 ),
             )
-            created.append(
-                _row(
-                    conn.execute(
-                        "SELECT * FROM flows WHERE id = ?", (flow_id,)
-                    ).fetchone()
-                )
+            row = _row(
+                conn.execute("SELECT * FROM flows WHERE id = ?", (flow_id,)).fetchone()
             )
+            # The venue's history may already record this very deposit (older than the
+            # last reading): then the detection is dismissed on the spot, not offered.
+            if _supersede_detection(conn, row)["status"] != "dismissed":
+                created.append(row)
         conn.commit()
     return created
 

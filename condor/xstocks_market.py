@@ -87,10 +87,22 @@ class XStocksMarket:
                 timeout=aiohttp.ClientTimeout(total=15)
             ) as session:
                 async with session.get(BASE + path, params=query) as response:
-                    raw = await response.content.read(MAX_BYTES + 1)
-                    if len(raw) > MAX_BYTES:
-                        raise ValueError("Kraken response too large")
-                    data = json.loads(raw)
+                    # The whole body, chunk by chunk. ``content.read(n)`` returns only
+                    # what has arrived so far, so a large answer (an OHLC series of
+                    # hundreds of candles) was cut short, failed to parse and surfaced
+                    # as "Kraken public data unavailable" under a chart whose market
+                    # table, a small answer, loaded fine.
+                    chunks, size = [], 0
+                    async for chunk in response.content.iter_chunked(65536):
+                        size += len(chunk)
+                        if size > MAX_BYTES:
+                            raise ValueError("Kraken response too large")
+                        chunks.append(chunk)
+                    if response.status == 429:
+                        raise ValueError(
+                            "Kraken is rate limiting public requests; try again in a moment"
+                        )
+                    data = json.loads(b"".join(chunks))
         except (aiohttp.ClientError, TimeoutError, json.JSONDecodeError):
             raise ValueError("Kraken public data unavailable") from None
         if not isinstance(data, dict) or data.get("error"):

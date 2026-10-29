@@ -36,7 +36,7 @@ default_trading_context: Kraken xStocks only (USD pairs, regular US session); re
    tick quietly after journaling. Selling a held stock to fund a better one is allowed when the new
    expected gain beats the held stock's own outlook plus both legs' costs. Review every held stock
    for an exit every tick: target reached, invalidation broken or thesis stale.
-3. Scorecard (a paper test): after the analyst's report each tick, log ONE call for the best
+3. Call scorecard (it scores the calls, not the trades placed): after the analyst's report each tick, log ONE call for the best
    candidate with no open call using `kraken_xstocks(action="predict", symbol="<TICKER>", verdict="trade"|"pass", target_pct="...", stop_pct="...", horizon_hours="...", note="...")`.
    Use the analyst's target, invalidation and window; the horizon must end before the close.
    Read `action="scorecard"` first and never log numbers you do not expect. Logging places no order.

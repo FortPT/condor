@@ -287,3 +287,44 @@ def test_a_server_that_does_not_say_so_reads_as_no_restart_needed(
     connector_write.accounts.result = result
 
     assert _add(connector_write).json()["restart_required"] is False
+
+
+def test_restart_on_boot_writes_only_the_flag_so_the_loops_defaults_stay_authoritative(
+    strategy, monkeypatch
+):
+    """The Crypto.com loop came back after a restart on 300 s instead of 120 s.
+
+    The route saved the *merged* config, freezing every default at the value it had that
+    day. Only the flag is written now; the defaults come from the loop's own file.
+    """
+    import yaml
+
+    from condor.agents.config import load_full_config
+
+    _with_engines(monkeypatch)
+
+    res = _client().post(
+        "/agents/brigado/strategies/mm/restart-on-boot", json={"enabled": True}
+    )
+
+    assert res.status_code == 200
+    saved = yaml.safe_load((strategy.home / "config.yml").read_text())
+    assert saved == {"restart_on_boot": True}
+    # What a restart rebuilds: the loop's defaults, overlaid with only what was saved.
+    old = {"frequency_sec": 300, "tick_timeout_sec": 600}
+    new = {"frequency_sec": 120, "tick_timeout_sec": 600}
+    assert load_full_config(strategy.home, old)["frequency_sec"] == 300
+    assert load_full_config(strategy.home, new)["frequency_sec"] == 120
+    assert load_full_config(strategy.home, new)["restart_on_boot"] is True
+
+
+def test_restart_on_boot_keeps_what_the_owner_saved_deliberately(strategy, monkeypatch):
+    import yaml
+
+    _with_engines(monkeypatch)
+    assert _put_config({"frequency_sec": 45}).status_code == 200
+    _client().post(
+        "/agents/brigado/strategies/mm/restart-on-boot", json={"enabled": False}
+    )
+    saved = yaml.safe_load((strategy.home / "config.yml").read_text())
+    assert saved["frequency_sec"] == 45 and saved["restart_on_boot"] is False

@@ -1,6 +1,6 @@
 """Value history for the accounts Condor reads itself.
 
-Hummingbot records its own portfolio history, but the Crypto.com Exchange, the Kraken
+Hummingbot records its own portfolio history, but Crypto.com, the Kraken
 xStocks account and Revolut X are read by Condor's native modules, so the dashboard's
 Portfolio Evolution chart used to leave them out. This keeps one small value
 sample per account every few minutes (USD, whole account at the last traded
@@ -29,6 +29,12 @@ EXCHANGE = native_venues.get("crypto_com_exchange").label
 KRAKEN = native_venues.get("kraken_xstocks").label
 REVOLUT = native_venues.get("revolut_x").label
 SOURCES = tuple(v.label for v in native_venues.account_venues())
+# What is stored in the ``source`` column when it differs from the name shown to the
+# owner. The Crypto.com history was recorded under its old name, "Crypto.com Exchange";
+# renaming the stored value would orphan it (and a rollback would lose it), so the
+# display name is mapped to the stored one at the edge of this module and back.
+_STORED_AS = {native_venues.get("crypto_com_exchange").label: "Crypto.com Exchange"}
+_SHOWN_AS = {stored: shown for shown, stored in _STORED_AS.items()}
 SAMPLE_EVERY_SEC = 300
 # A second sample inside this gap (an open dashboard plus the timer) is dropped.
 MIN_GAP_SEC = 240
@@ -43,6 +49,14 @@ def _db(user_id: int) -> Path:
     if not isinstance(user_id, int) or user_id <= 0:
         raise ValueError("Invalid account owner")
     return data_dir() / "portfolio_history" / f"{user_id}.db"
+
+
+def _stored(source: str) -> str:
+    return _STORED_AS.get(source, source)
+
+
+def _shown(source: str) -> str:
+    return _SHOWN_AS.get(source, source)
 
 
 def _connect(user_id: int) -> sqlite3.Connection:
@@ -68,6 +82,7 @@ def record(user_id: int, source: str, total_usd, now: float | None = None) -> bo
     if not total == total or total < 0:  # NaN or negative
         return False
     stamp = int(now if now is not None else time.time())
+    source = _stored(source)
     with closing(_connect(user_id)) as conn:
         last = conn.execute(
             "SELECT MAX(ts) FROM samples WHERE source = ?", (source,)
@@ -95,7 +110,7 @@ def series(
             (int(since), end),
         ).fetchall()
     for source, ts, total in rows:
-        out.setdefault(source, []).append((ts, total))
+        out.setdefault(_shown(source), []).append((ts, total))
     return out
 
 
@@ -110,6 +125,7 @@ def nearest(
     stamps = [int(s) for s in stamps]
     if not _db(user_id).exists():
         return [(None, None) for _ in stamps]
+    source = _stored(source)
     out = []
     with closing(_connect(user_id)) as conn:
         for stamp in stamps:
@@ -133,6 +149,7 @@ def bounds(
     """``(first sample, latest sample)`` of one source; ``(None, None)`` without history."""
     if not _db(user_id).exists():
         return None, None
+    source = _stored(source)
     with closing(_connect(user_id)) as conn:
         first = conn.execute(
             "SELECT ts, total_usd FROM samples WHERE source = ? ORDER BY ts ASC LIMIT 1",

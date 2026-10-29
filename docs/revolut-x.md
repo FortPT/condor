@@ -2,7 +2,7 @@
 
 Live trading of crypto on the Revolut X exchange through its REST API, in euros, within an
 allocation the owner syncs from the Revolut X account. It mirrors the Kraken xStocks service
-(`condor/kraken_xstocks.py`) and the Crypto.com Exchange service
+(`condor/kraken_xstocks.py`) and the Crypto.com service
 (`condor/crypto_com_exchange.py`); it changes neither. The ledger quote currency is EUR: the
 owner's money is euros, so nothing is converted and only `<COIN>-EUR` pairs are traded
 (USD, USDC and GBP pairs exist on Revolut X and are refused).
@@ -217,7 +217,7 @@ The crew is `revolut_x_trader` (loop `intraday`, every 2 minutes), `revolut_x_an
 `revolut_x_risk_reviewer`, with the same bounded-intent protocol as the other crews (analyst,
 then preview, then reviewer, then a fresh preview, then one order). The analyst and reviewer
 have only the journal; the trader reads the candles and passes the analyst a summary. The
-style is the Exchange crew's tuned intraday style with the cost taken from the preview: a
+style is the Crypto.com crew's tuned intraday style with the cost taken from the preview: a
 target of at least 1.5 times the preview's `estimated_round_trip_pct` and at least 0.8%, gross
 reward-to-risk of at least 1.5:1, a 1 to 24 hour window, entries of 15-25% of equity but of at
 least 10 EUR when equity allows (a smaller entry is too expensive after cent rounding, so the crew

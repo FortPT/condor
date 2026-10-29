@@ -65,7 +65,7 @@ def test_only_coordinator_owns_a_loop_and_existing_scheduler_defaults_survive(re
     loop = loops.get(COORDINATOR, "daily_spot")
     assert loop is not None
     assert loop.default_config == {
-        "frequency_sec": 300,
+        "frequency_sec": 120,
         "tick_timeout_sec": 600,
         "execution_mode": "loop",
         "total_amount_quote": 30,
@@ -250,7 +250,7 @@ def test_cheap_idle_ticks_say_when_they_apply_and_what_they_still_check(registry
             "stop being cheap and continue as a full tick",
             "a cheap tick itself stays quiet",
             "one log per tick is waived for cheap idle ticks only",
-            "at least one call, so the paper test continues",
+            "at least one call, so the call scorecard continues",
             "do not change the loop's frequency",
         ):
             assert phrase in flat, (where, phrase)
@@ -279,7 +279,7 @@ def test_rotation_and_cheap_ticks_leave_the_review_protocol_and_cadence_alone(re
         assert not re.search(r"EUR (?:30|26|5)\b", text)
     loop = StrategyStore().get(COORDINATOR, "daily_spot")
     # The cadence is configured outside the prompt and is untouched.
-    assert loop.default_config["frequency_sec"] == 300
+    assert loop.default_config["frequency_sec"] == 120
     assert "frequency_sec" not in loop.instructions
 
 

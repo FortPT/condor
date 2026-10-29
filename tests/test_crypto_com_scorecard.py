@@ -141,6 +141,29 @@ class ScorecardTests(unittest.TestCase):
         cheaper = sc.report(1, now=T0 + 25 * HOUR, cost_pct=2)
         self.assertAlmostEqual(cheaper["trade_calls"]["avg_net_pct"], 8.0)
 
+    def test_the_reported_cost_has_at_most_two_decimals_and_scoring_keeps_the_exact_one(
+        self,
+    ):
+        # 0.1 + 0.11 is 0.21000000000000002 as a float; that must never reach the screen.
+        noisy = 0.1 + 0.11
+        self.assertNotEqual(noisy, 0.21)
+        report = sc.report(1, now=T0, cost_pct=noisy, venue="kraken_xstocks")
+        self.assertEqual(report["assumptions"]["round_trip_cost_pct"], 0.21)
+        self.assertEqual(repr(report["assumptions"]["round_trip_cost_pct"]), "0.21")
+        self.assertEqual(
+            sc.report(1, now=T0, cost_pct=1.25)["assumptions"]["round_trip_cost_pct"],
+            1.25,
+        )
+        for bucket in report["by_cost_multiple"]:
+            self.assertLessEqual(len(repr(bucket["min_target_pct"]).split(".")[-1]), 4)
+
+    def test_the_basis_names_the_venue_it_describes(self):
+        crypto = sc.report(1, now=T0)["assumptions"]["basis"]
+        self.assertTrue(crypto.startswith("Crypto.com estimate"))
+        self.assertNotIn("Exchange", crypto)
+        other = sc.report(1, now=T0, venue="revolut_x")["assumptions"]["basis"]
+        self.assertNotIn("Crypto.com", other)
+
     def test_default_cost_is_the_exchange_round_trip_estimate(self):
         self.assertEqual(sc.ROUND_TRIP_COST_PCT, 1.2)
 

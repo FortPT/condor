@@ -1,7 +1,7 @@
 """The change in the portfolio's value over a history window, or an honest "unknown".
 
 The Portfolio Evolution chart is the Hummingbot history plus the samples Condor
-records itself for the Crypto.com Exchange, Kraken xStocks and Revolut X accounts.
+records itself for Crypto.com, Kraken xStocks and Revolut X accounts.
 Those two start at different times and deposits are not in either, so the first and
 last point of the merged series are not a gain: an account that was connected three
 hours ago reads as growth from nothing, and a deposit reads as profit.
