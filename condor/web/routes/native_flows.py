@@ -50,11 +50,6 @@ def _venues(key: str | None) -> list[native_venues.NativeVenue]:
             venue = native_venues.get(key)
         except KeyError:
             raise HTTPException(status_code=404, detail="Unknown venue") from None
-        if not venue.account or venue.paper:
-            raise HTTPException(
-                status_code=400,
-                detail="This venue holds no account, so it has no deposits",
-            )
         return [venue]
     return list(native_venues.account_venues())
 

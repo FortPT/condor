@@ -23,7 +23,6 @@ T0 = 1_790_000_000
 EXCHANGE = native_venues.get("crypto_com_exchange")
 KRAKEN = native_venues.get("kraken_xstocks")
 REVOLUT = native_venues.get("revolut_x")
-PAPER = native_venues.get("xstocks_paper")
 USER = 1
 
 
@@ -88,8 +87,6 @@ def test_input_is_validated_and_the_usd_value_takes_the_amounts_sign():
             add(amount=bad)
     with pytest.raises(ValueError):
         add(currency="not a code")
-    with pytest.raises(ValueError):
-        add("xstocks_paper")
     with pytest.raises(ValueError):
         add("nope")
     out, _ = add(amount="-3", usd="3.5")
@@ -533,8 +530,6 @@ def test_revolut_asks_in_windows_no_longer_than_thirty_days():
 
 def test_a_venue_without_a_fetcher_or_without_private_reads_is_unavailable():
     with pytest.raises(fetchers.FetchUnavailable):
-        run(fetchers.fetch("xstocks_paper", object(), USER, T0, T0))
-    with pytest.raises(fetchers.FetchUnavailable):
         run(fetchers.fetch("revolut_x", object(), USER, T0, T0))
 
 
@@ -574,9 +569,8 @@ def test_sync_failures_degrade_to_an_unavailable_reason_and_never_raise():
     info = nf.summary(USER, "revolut_x", now=T0)
     assert info["tracked"] is False
     assert info["fetch"]["reason"].startswith("unavailable: ")
-    # A venue the registry does not know, or one with no account, is a plain answer.
+    # A venue the registry does not know is a plain answer.
     assert run(nf.sync(USER, "nope", FakeRevolut(), now=T0))["ok"] is False
-    assert run(nf.sync(USER, "xstocks_paper", FakeRevolut(), now=T0))["ok"] is False
 
 
 def test_a_partial_history_is_saved_but_does_not_claim_the_venue_is_tracked():
@@ -806,11 +800,6 @@ def test_an_uncertain_order_pauses_detection_without_losing_the_reference():
     )
     created = detect(view_of(USD=(5, 5)), now=T0 + 600)
     assert [f["amount"] for f in created] == ["-15"]
-
-
-def test_detection_never_runs_for_a_venue_without_an_account():
-    with pytest.raises(ValueError):
-        detect(view_of(USD=(1, 1)), venue="xstocks_paper")
 
 
 def test_observe_swallows_every_failure():

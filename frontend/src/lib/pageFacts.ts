@@ -36,7 +36,6 @@ import {
 } from "./formatters";
 import { ownerRowLabel, type FleetOwner } from "./agent-attribution";
 import { historyChange } from "./portfolio-change";
-import { realConnectors, realTokenCount, realTokenTotals } from "./portfolio-paper";
 import { runStatus } from "./perf-tree";
 import { formatWithRate, type RateTable } from "./rates";
 import type { ViewFacts } from "./viewFacts";
@@ -562,15 +561,20 @@ const ROUTES: {
       // read. Label and subject alone are the honest answer until data lands.
       if (!data && !history && !held) return undefined;
 
-      // A simulated (paper) account is not money: it is in none of these figures.
-      const connectors = realConnectors(data?.connectors ?? []);
+      const connectors = data?.connectors ?? [];
       const venues = [...connectors]
         .sort((a, b) => b.total_usd - a.total_usd)
         .slice(0, 3)
         .map((c) => `${c.connector} ${m.value(c.total_usd) ?? "—"}`);
 
       // One token can sit on three venues; what the user holds is the sum.
-      const held_by_token = realTokenTotals(connectors);
+      const held_by_token = new Map<string, number>();
+      for (const c of connectors) {
+        for (const b of c.balances ?? []) {
+          if (!b.token || !Number.isFinite(b.usd_value)) continue;
+          held_by_token.set(b.token, (held_by_token.get(b.token) ?? 0) + b.usd_value);
+        }
+      }
       const total = data?.total_usd ?? 0;
       const holdings = [...held_by_token.entries()]
         .sort((a, b) => b[1] - a[1])
@@ -604,7 +608,7 @@ const ROUTES: {
         total: m.value(data?.total_usd),
         [window ? `change (${window})` : "change"]: m.pnl(change),
         currency: data ? m.currency : undefined,
-        assets: data ? realTokenCount(data.connectors) : undefined,
+        assets: data?.connectors.reduce((n, c) => n + c.balances.length, 0),
         venues: names(venues),
         "top holdings": names(holdings),
         [window ? `worst mover (${window})` : "worst mover"]: worst,

@@ -13,10 +13,6 @@ describe("unavailableLabel", () => {
     expect(unavailableLabel("no_history")).toBe("No equity history yet");
   });
 
-  it("says a paper-only crew holds no account", () => {
-    expect(unavailableLabel("no_ledger")).toBe("Paper test only: no account equity");
-  });
-
   it("is empty for a priced loop", () => {
     expect(unavailableLabel("")).toBe("");
     expect(unavailableLabel(undefined)).toBe("");

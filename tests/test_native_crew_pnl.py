@@ -142,15 +142,6 @@ def test_the_revolut_x_crew_reads_its_usd_account_equity_change(tmp_path, monkey
     assert totals["open_positions"] == 1.0
 
 
-def test_the_paper_crew_without_an_equity_history_says_so(tmp_path):
-    make_session(tmp_path, 1, T0, state="running")
-    _, totals, unavailable = compute(
-        tmp_path, run_key="xstocks_paper_trader.paper_session"
-    )
-    assert unavailable == "no_history"
-    assert totals["total_pnl"] == 0.0
-
-
 def test_a_stopped_session_without_a_recorded_end_has_no_figure(tmp_path, monkeypatch):
     make_session(tmp_path, 1, T0)
     ph.record(7, ph.EXCHANGE, 100.0, now=T0)

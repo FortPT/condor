@@ -1,10 +1,8 @@
 /**
  * The desk's Portfolio summary beside the chat.
  *
- * Two live defects pinned here. The simulated (paper) account is not money: it was
- * summed into "By asset"/"By venue" (USD read 70% of a 146 EUR desk whose real total
- * was 55 EUR). And the change beside the total was the first point of the history
- * against the last, which mixed sources that start at different times (+491%).
+ * The change beside the total used to be the first point of the history against the
+ * last, which mixed sources that start at different times (+491% on a 55 EUR desk).
  *
  * @vitest-environment jsdom
  */
@@ -48,7 +46,7 @@ const bal = (token: string, usd: number) => ({
   usd_value: usd,
 });
 
-/** The live desk: three real accounts (61.87 USD) and a 100 USD paper account. */
+/** The live desk: three real accounts (61.87 USD). */
 const PORTFOLIO: PortfolioResponse = {
   server: "FortPT VM-08",
   total_usd: 61.87,
@@ -61,12 +59,6 @@ const PORTFOLIO: PortfolioResponse = {
       balances: [bal("USD", 30), bal("HYPE", 9.4), bal("SOL", 7.53)],
     },
     { connector: "Revolut X", total_usd: 4.75, balances: [bal("XRP", 4.75)] },
-    {
-      connector: "Kraken xStocks (paper)",
-      total_usd: 100,
-      paper: true,
-      balances: [bal("USD", 100)],
-    },
   ],
 };
 
@@ -103,16 +95,6 @@ async function render() {
   }
 }
 
-async function pick(label: RegExp) {
-  const button = [...container.querySelectorAll("button")].find((b) => label.test(b.textContent ?? ""));
-  await act(async () => {
-    button!.click();
-  });
-}
-
-const rows = () =>
-  [...container.querySelectorAll('[data-testid="portfolio-breakdown"] li')].map((li) => li.textContent ?? "");
-
 /** The printed share of each breakdown row (its last cell). */
 const shares = () =>
   [...container.querySelectorAll('[data-testid="portfolio-breakdown"] li')].map((li) =>
@@ -136,38 +118,12 @@ afterEach(async () => {
   qc.clear();
 });
 
-describe("DockPortfolio and the simulated account", () => {
-  it("leaves the paper account out of the asset split and shares", async () => {
-    await render();
-    const text = rows().join("|");
-    // USD is 30 of the real 61.87 (its own share of the real assets), never the 130 it
-    // would be with the paper 100 added, and never 70%.
-    expect(text).toContain("USD$30.00");
-    expect(text).not.toContain("$130.00");
-    expect(text).not.toContain("70%");
-    // The listed shares are of the real assets only and add up to them.
-    expect(sum(shares())).toBeGreaterThanOrEqual(99);
-    expect(sum(shares())).toBeLessThanOrEqual(101);
-    expect(container.querySelector('[data-testid="portfolio-paper"]')).toBeNull();
-  });
-
-  it("shows it in the venue split only as its own badged row, with no share", async () => {
-    await render();
-    await pick(/By venue/i);
-    const paper = container.querySelector('[data-testid="portfolio-paper"]');
-    expect(paper).not.toBeNull();
-    expect(paper!.textContent).toMatch(/xstocks \(paper\)/i);
-    expect(paper!.textContent).toContain("Simulated - not in total");
-    expect(paper!.textContent).not.toContain("%");
-    // And it is not one of the breakdown rows the bar and the shares are made of.
-    expect(rows().join("|")).not.toContain("paper");
-    expect(sum(shares())).toBeGreaterThanOrEqual(99);
-    expect(sum(shares())).toBeLessThanOrEqual(101);
-  });
-
-  it("prints the server's real total", async () => {
+describe("DockPortfolio breakdown", () => {
+  it("prints the server's real total and shares that add up", async () => {
     await render();
     expect(container.textContent).toContain("$61.87");
+    expect(sum(shares())).toBeGreaterThanOrEqual(99);
+    expect(sum(shares())).toBeLessThanOrEqual(101);
   });
 });
 

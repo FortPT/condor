@@ -109,8 +109,6 @@ def _venue(key: str) -> native_venues.NativeVenue:
         venue = native_venues.get(key)
     except KeyError:
         raise ValueError("Unknown venue") from None
-    if not venue.account or venue.paper:
-        raise ValueError("This venue holds no account, so it has no deposits")
     return venue
 
 

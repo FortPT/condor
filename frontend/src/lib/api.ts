@@ -385,8 +385,6 @@ export interface ConnectorBalance {
   balances: BalanceItem[];
   total_usd: number;
   note?: string | null;
-  /** A simulated account (Kraken xStocks paper): listed, but never part of the real total. */
-  paper?: boolean;
 }
 
 export interface PortfolioResponse {
@@ -1219,8 +1217,6 @@ export interface VenueConditions {
  * A native crew (Crypto.com Exchange, Kraken xStocks, Revolut X) has no server; its money
  * is the venue's account equity:
  * - `no_history` — no equity has been recorded for the venue yet
- * - `no_ledger` — the crew's venue holds no account at all (the paper crew now has a
- *   simulated one, so it reads `no_history` until its equity is recorded)
  * Optional on the wire so an older backend reads as `""`.
  */
 export type StrategyUnavailable =
@@ -1228,8 +1224,7 @@ export type StrategyUnavailable =
   | "no_server"
   | "no_access"
   | "unreachable"
-  | "no_history"
-  | "no_ledger";
+  | "no_history";
 
 export interface StrategySummary {
   slug: string;

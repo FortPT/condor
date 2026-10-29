@@ -17,8 +17,6 @@ export function unavailableLabel(reason: StrategyUnavailable | undefined): strin
       return "No server configured";
     case "no_history":
       return "No equity history yet";
-    case "no_ledger":
-      return "Paper test only: no account equity";
     default:
       return "";
   }

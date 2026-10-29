@@ -70,8 +70,6 @@ class ConnectorBalance(BaseModel):
     balances: list[BalanceItem]
     total_usd: float = 0.0
     note: str | None = None
-    #: A simulated account: shown, but never part of the portfolio's real total.
-    paper: bool = False
 
 
 class PortfolioResponse(BaseModel):

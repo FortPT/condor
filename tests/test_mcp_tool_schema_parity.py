@@ -31,7 +31,6 @@ FIELDS = ("name", "description", "inputSchema", "outputSchema")
 POST_V1_TOOLS = {
     "condor": {
         "crypto_com_exchange",
-        "xstocks_paper",
         "kraken_xstocks",
         "revolut_x",
         "native_portfolio",
@@ -136,28 +135,6 @@ def test_crypto_com_exchange_schema_exposes_no_credential_or_enable_arguments():
         "stop_exit",
     }
     assert not {"maker_enabled", "maker_fee_overrides"} & properties.keys()
-
-
-def test_xstocks_paper_schema_has_the_simulated_order_actions_and_no_reset():
-    tool = live_surface(condor_server)["xstocks_paper"]
-    properties = tool["inputSchema"]["properties"]
-    assert set(properties["action"]["enum"]) == {
-        "status",
-        "valuation",
-        "history",
-        "coins",
-        "candles",
-        "preview",
-        "order",
-        "predict",
-        "scorecard",
-    }
-    # Resetting the paper account is an owner REST action, never a tool action.
-    assert "reset" not in properties["action"]["enum"]
-    assert not {"api_key", "api_secret", "enabled", "user_id", "reset"} & (
-        properties.keys()
-    )
-    assert "SIMULATED" in tool["description"]
 
 
 def test_kraken_xstocks_schema_exposes_no_credential_or_enable_arguments():

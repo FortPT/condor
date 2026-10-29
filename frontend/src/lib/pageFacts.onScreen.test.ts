@@ -129,37 +129,6 @@ describe("/portfolio", () => {
     expect(onScreenLine("/portfolio")).not.toContain("change (1W)");
   });
 
-  it("keeps a simulated (paper) account out of the total, assets, venues and shares", () => {
-    qc.setQueryData(["portfolio", SRV], {
-      server: SRV,
-      total_usd: 61.87,
-      connectors: [
-        {
-          connector: "Crypto.com Exchange",
-          total_usd: 46.93,
-          balances: [{ token: "USD", total: 46.93, available: 46.93, usd_value: 46.93 }],
-        },
-        {
-          connector: "kraken",
-          total_usd: 14.94,
-          balances: [{ token: "EUR", total: 12.8, available: 12.8, usd_value: 14.94 }],
-        },
-        {
-          connector: "Kraken xStocks (paper)",
-          total_usd: 100,
-          paper: true,
-          balances: [{ token: "USD", total: 100, available: 100, usd_value: 100 }],
-        },
-      ],
-    });
-    const line = onScreenLine("/portfolio");
-    expect(line).toContain("assets 2");
-    expect(line).not.toContain("paper");
-    expect(line).toContain("venues Crypto.com Exchange $46.93, kraken $14.94");
-    // 46.93 of the real 61.87 is 76%; with the 100 of paper money it would be 32%.
-    expect(line).toContain("USD $46.93 (76%)");
-  });
-
   it("names the venues and the biggest holdings, summed across venues (R4)", () => {
     const line = onScreenLine("/portfolio");
     expect(line).toContain("venues binance $100.4K, kucoin $25.0K");

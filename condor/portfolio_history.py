@@ -28,16 +28,13 @@ log = logging.getLogger(__name__)
 EXCHANGE = native_venues.get("crypto_com_exchange").label
 KRAKEN = native_venues.get("kraken_xstocks").label
 REVOLUT = native_venues.get("revolut_x").label
-#: The real accounts only. A simulated (paper) account is recorded under its own
-#: label, :data:`PAPER_SOURCES`, and is never part of the real series.
 SOURCES = tuple(v.label for v in native_venues.account_venues())
-PAPER_SOURCES = tuple(sorted(native_venues.paper_labels()))
 SAMPLE_EVERY_SEC = 300
 # A second sample inside this gap (an open dashboard plus the timer) is dropped.
 MIN_GAP_SEC = 240
 RETENTION_SEC = 200 * 86400
 INTERVAL_SECONDS = {"5m": 300, "1h": 3600, "4h": 14400, "1d": 86400}
-_SOURCE = re.compile(r"[A-Za-z0-9 ._()-]{1,40}")
+_SOURCE = re.compile(r"[A-Za-z0-9 ._-]{1,40}")
 
 _task: asyncio.Task | None = None
 
@@ -86,16 +83,9 @@ def record(user_id: int, source: str, total_usd, now: float | None = None) -> bo
 
 
 def series(
-    user_id: int,
-    since: float,
-    until: float | None = None,
-    include_paper: bool = False,
+    user_id: int, since: float, until: float | None = None
 ) -> dict[str, list[tuple[int, float]]]:
-    """``{source: [(ts, total_usd), ...]}`` ascending, from ``since`` to ``until``.
-
-    The simulated accounts' samples are left out unless ``include_paper``: this
-    feeds the Portfolio Evolution chart, which must hold real money only.
-    """
+    """``{source: [(ts, total_usd), ...]}`` ascending, from ``since`` to ``until``."""
     end = int(until if until is not None else time.time())
     out: dict[str, list[tuple[int, float]]] = {}
     with closing(_connect(user_id)) as conn:
@@ -105,8 +95,6 @@ def series(
             (int(since), end),
         ).fetchall()
     for source, ts, total in rows:
-        if not include_paper and source in PAPER_SOURCES:
-            continue
         out.setdefault(source, []).append((ts, total))
     return out
 
@@ -165,10 +153,8 @@ def merge(points, native, interval_seconds: int, skip=(), point_type=None):
     joined and every value is carried forward until the next sample, so an
     account never drops to zero between two readings. A source before its first
     sample counts as zero. ``skip`` names sources the Hummingbot history already
-    counts (the same account must not be added twice). A simulated account's source
-    is always dropped: the chart's total is real money only.
+    counts (the same account must not be added twice).
     """
-    skip = (*skip, *PAPER_SOURCES)
     sources = {name: rows for name, rows in native.items() if rows and name not in skip}
     if not sources:
         return list(points)
@@ -217,19 +203,16 @@ async def sample_user(user_id: int, exchange=None, kraken=None, **services) -> N
     """Take one sample of each connected native account for the user.
 
     ``exchange``/``kraken`` (and any other venue key) override that venue's
-    service, which tests use to run without credentials. The simulated paper
-    account is sampled under its own label; it has no deposits to look for.
+    service, which tests use to run without credentials.
     """
     overrides = {"crypto_com_exchange": exchange, "kraken_xstocks": kraken, **services}
-    for venue in native_venues.ledger_venues():
+    for venue in native_venues.account_venues():
         try:
             service = overrides.get(venue.key) or venue.service
             if not service.status(user_id)["connected"]:
                 continue
             data = await service.portfolio(user_id)
             record(user_id, venue.label, data["total_usd"])
-            if venue.paper:
-                continue
             # Deposit/withdrawal upkeep rides the same reading; it never raises.
             await native_flows.observe(user_id, venue.key, service, data)
         except Exception as error:  # noqa: BLE001 - history must never break a read
@@ -242,7 +225,7 @@ async def sample_user(user_id: int, exchange=None, kraken=None, **services) -> N
 
 def _users() -> list[int]:
     found: set[int] = set()
-    for venue in native_venues.ledger_venues():
+    for venue in native_venues.account_venues():
         root = data_dir() / venue.key
         if root.is_dir():
             found.update(int(p.name) for p in root.iterdir() if p.name.isdigit())

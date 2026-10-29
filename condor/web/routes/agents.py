@@ -206,11 +206,8 @@ class RunningInstance(BaseModel):
 #:
 #: A native crew (Crypto.com Exchange, Kraken xStocks) has no Hummingbot server;
 #: its money is the venue's account equity. ``no_history`` — no equity has been
-#: recorded for that venue yet, so a change cannot be stated; ``no_ledger`` — the
-#: crew's venue holds no account (the paper crew's simulated account counts).
-Unavailable = Literal[
-    "", "no_server", "no_access", "unreachable", "no_history", "no_ledger"
-]
+#: recorded for that venue yet, so a change cannot be stated.
+Unavailable = Literal["", "no_server", "no_access", "unreachable", "no_history"]
 
 #: ``pnl_basis`` of a figure that is the change in a native venue's account
 #: equity, not executor PnL. Empty means Hummingbot executors.
@@ -1855,7 +1852,7 @@ async def _build_strategy_summary(strategy, user: WebUser) -> StrategySummary:
         if latest:
             latest_session_pnl = latest.total_pnl
     native = native_venues.for_agent(strategy.agent_slug)
-    equity_basis = native is not None and native.account
+    equity_basis = native is not None
     if equity_basis and latest is not None and latest.reading == "missing":
         # A session whose start has no equity to compare with is not a $0.00.
         unavailable = unavailable or "no_history"

@@ -2,17 +2,16 @@
 
 Live trading of Kraken's tokenized US stocks (xStocks, pairs like `AAPLxUSD`) through
 Kraken's spot REST API, within an allocation the owner syncs from the Kraken account. It
-mirrors the Crypto.com Exchange service (`condor/crypto_com_exchange.py`) and sits beside
-the paper test (`docs/xstocks-paper.md`); it changes neither.
+mirrors the Crypto.com Exchange service (`condor/crypto_com_exchange.py`); it changes neither.
 
 ## Read this first: what is verified and what is not
 
-**Verified** (by the paper test, on Kraken's public data, no key involved):
+**Verified** (on Kraken's public data, no key involved; `condor/xstocks_market.py`):
 
 * The pair list: `AssetPairs` with `aclass_base=tokenized_asset`, about 177 online
   `<TICKER>xUSD` pairs (the `...SPVUSD` pairs are ignored).
 * `Ticker`, `OHLC` and `Depth` with `asset_class=tokenized_asset`.
-* The regular-session clock and the paper scorecard.
+* The regular-session clock (`GET /api/v1/kraken-xstocks/market`) and the scorecard.
 * The request signature formula, against the vector published in Kraken's own docs
   (`tests/test_kraken_xstocks.py`). The formula is verified; that Kraken accepts the
   Condor request built from it has not been.
@@ -145,7 +144,7 @@ starts only by an explicit owner action.
 
 The live scorecard (`predict` / `scorecard`) keeps its own database
 (`CONDOR_DATA_DIR/kraken_xstocks/<user>/scorecard.db`, venue `kraken_xstocks`) apart from the
-Crypto.com one and the paper test's. It scores at `2 x taker fee + 0.05%` when `TradeVolume`
+Crypto.com one. It scores at `2 x taker fee + 0.05%` when `TradeVolume`
 answers, otherwise at 0.85%.
 
 ## Portfolio dashboard
@@ -160,5 +159,4 @@ The whole-account balance does not increase the bot's allocation.
 Only the synced allocation and its confirmed proceeds are tracked; outside trades and
 transfers are not imported. `history` and `reconcile` read the latest 50 closed orders per page
 (up to four pages for reconcile). Stocks that stop trading, corporate actions and exchange
-holidays are not modelled. The paper test (`docs/xstocks-paper.md`) says whether such a strategy
-beats its costs on paper; this module does not.
+holidays are not modelled.

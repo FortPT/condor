@@ -12,7 +12,6 @@ import {
   pnlColor,
 } from "@/lib/formatters";
 import { historyChange } from "@/lib/portfolio-change";
-import { paperConnectors, realConnectors, realTokenTotals } from "@/lib/portfolio-paper";
 
 /**
  * The window the change beside the total is measured over.
@@ -136,17 +135,10 @@ export function DockPortfolio({ server }: { server: string }) {
   const { convert, currencySymbol } = useRates(TOTAL_QUOTES);
   const fromUsd = (val: number) => convert(val, "USDT").value;
 
-  // The desk is what is real. A simulated (paper) account is never part of the
-  // total, the asset split, the venue split or a share: the server leaves it out of
-  // `total_usd` and so does every figure here. It is listed on its own, badged.
   const connectors = useMemo(
-    () =>
-      [...realConnectors(data?.connectors ?? [])].sort(
-        (a, b) => b.total_usd - a.total_usd,
-      ),
+    () => [...(data?.connectors ?? [])].sort((a, b) => b.total_usd - a.total_usd),
     [data],
   );
-  const paper = useMemo(() => paperConnectors(data?.connectors ?? []), [data]);
 
   /**
    * What you hold, by token rather than by venue.
@@ -158,14 +150,16 @@ export function DockPortfolio({ server }: { server: string }) {
    * connector reports every token it has ever seen, and a distribution whose
    * bottom half rounds to 0% is a list, not a distribution.
    */
-  const assets = useMemo(
-    () =>
-      [...realTokenTotals(data?.connectors ?? []).entries()]
-        .map(([token, usd]) => ({ key: token, label: token, usd }))
-        .filter((a) => a.usd > 0)
-        .sort((a, b) => b.usd - a.usd),
-    [data],
-  );
+  const assets = useMemo(() => {
+    const byToken = new Map<string, number>();
+    for (const c of data?.connectors ?? [])
+      for (const b of c.balances ?? [])
+        byToken.set(b.token, (byToken.get(b.token) ?? 0) + (b.usd_value ?? 0));
+    return [...byToken.entries()]
+      .map(([token, usd]) => ({ key: token, label: token, usd }))
+      .filter((a) => a.usd > 0)
+      .sort((a, b) => b.usd - a.usd);
+  }, [data]);
 
   /**
    * Which breakdown is actually drawn.
@@ -250,7 +244,7 @@ export function DockPortfolio({ server }: { server: string }) {
 
   // No connector has ever reported: an empty desk and a desk whose keys are
   // missing look identical from here, so it says which it cannot tell.
-  if (!connectors.length && !paper.length) {
+  if (!connectors.length) {
     return (
       <div className="flex flex-col">
         <p className="px-3 py-2 text-[11px] text-[var(--color-text-muted)]">
@@ -361,35 +355,6 @@ export function DockPortfolio({ server }: { server: string }) {
           </li>
         ))}
       </ul>
-
-      {/* The simulated account, where venues are listed: shown so it is not
-          lost, badged so it is not read as money, and with no bar segment, no
-          share and no part in the total above. */}
-      {effectiveSplit === "venue" && paper.length > 0 && (
-        <ul className="px-1 pb-1" data-testid="portfolio-paper">
-          {paper.map((c) => (
-            <li
-              key={c.connector}
-              className="flex items-center gap-2 rounded px-2 py-0.5 text-[11px] text-[var(--color-text-muted)]"
-            >
-              <span className="h-2 w-2 shrink-0 rounded-full border border-[var(--color-red)]" />
-              <span className="min-w-0 flex-1 truncate">
-                {formatConnectorName(c.connector)}
-              </span>
-              <span
-                title="Simulated account: no real money, not included in the total"
-                data-paper-connector
-                className="shrink-0 rounded border border-[var(--color-red)] px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-[var(--color-red)]"
-              >
-                Simulated - not in total
-              </span>
-              <span className="shrink-0 font-mono tabular-nums">
-                {formatCurrency(fromUsd(c.total_usd), currencySymbol)}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
 
       {footer}
     </div>

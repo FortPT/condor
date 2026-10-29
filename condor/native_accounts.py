@@ -13,12 +13,6 @@ Values are whole-account USD at the last traded price, the same figure the
 recorder in :mod:`condor.portfolio_history` samples every five minutes. Nothing
 here moves money.
 
-The paper xStocks crew has a simulated account (:mod:`condor.xstocks_paper_ledger`)
-that is valued, recorded and given a PnL by the same code, but it is flagged
-``paper``: it is never added to a real total, has no deposits or withdrawals (a
-reset of the account is a logged baseline change, see ``_paper_window``) and its
-numbers say they are simulated.
-
 **What "PnL" means here.** It is the change in account equity between two
 readings, net of the deposits and withdrawals recorded in
 :mod:`condor.native_flows` (confirmed rows only, in the window between the two
@@ -124,16 +118,13 @@ async def collect_views(
 ) -> NativeViews:
     """Each connected account's dashboard view, in registry order.
 
-    A simulated (paper) account is included, flagged ``paper: True`` on its view:
-    the caller must not add it to a real total.
-
     The samples the history chart reads are recorded as a side effect (the
     recorder throttles). ``skip`` names venue keys already counted elsewhere
     (Hummingbot's own ``kraken`` connector values the same account). One venue
     failing becomes a note and never hides another.
     """
     result = NativeViews()
-    for venue in native_venues.ledger_venues():
+    for venue in native_venues.account_venues():
         if venue.key in skip:
             continue
         service = _service(venue, services)
@@ -143,13 +134,8 @@ async def collect_views(
             # Credentials belong to the user, never the shared server cache.
             view = await value_account(venue, user_id, services=services, max_age=0)
             portfolio_history.record(user_id, venue.label, view["total_usd"])
-            if venue.paper:
-                view = {**view, "paper": True}
-            else:
-                # Detection only: the dashboard read makes no private history call.
-                await native_flows.observe(
-                    user_id, venue.key, service, view, fetch=False
-                )
+            # Detection only: the dashboard read makes no private history call.
+            await native_flows.observe(user_id, venue.key, service, view, fetch=False)
             result.views.append(view)
         except Exception as error:  # noqa: BLE001 - one venue never hides another
             log.warning(
@@ -247,7 +233,7 @@ class NativePerformance:
     estimated: bool = False
     note: str = ""
     open_positions: int = 0
-    #: ``""`` when priced; ``no_history``, ``unreachable`` or ``no_ledger``.
+    #: ``""`` when priced; ``no_history`` or ``unreachable``.
     unavailable: str = ""
     #: Net confirmed flows (USD) taken out of ``total_pnl``.
     flows_usd: float = 0.0
@@ -259,33 +245,8 @@ class NativePerformance:
     pending_usd: float = 0.0
 
 
-PAPER_NOTE = "Paper test only: simulated account, no real money."
-PAPER_FLOWS = "No deposits or withdrawals by design; a reset starts a new baseline."
-
-
-def _paper(venue_key: str) -> native_venues.NativeVenue | None:
-    """The venue when it is a simulated one, else ``None`` (unknown keys too)."""
-    try:
-        venue = native_venues.get(venue_key)
-    except KeyError:
-        return None
-    return venue if venue.paper else None
-
-
 def _flow_state(user_id: int, venue_key: str) -> dict:
     """The venue's flow summary, or an untracked, empty one when the store cannot be read."""
-    if _paper(venue_key):
-        # Nothing crosses a simulated account's boundary, so its flows are tracked
-        # (known to be none) and there is nothing to confirm.
-        return {
-            "tracked": True,
-            "pending_count": 0,
-            "pending_net_usd": 0.0,
-            "recorded_net_flows_usd": 0.0,
-            "confirmed_count": 0,
-            "fetch": None,
-            "paper": True,
-        }
     try:
         return native_flows.summary(user_id, venue_key)
     except Exception as error:  # noqa: BLE001 - flows never break the PnL
@@ -294,24 +255,8 @@ def _flow_state(user_id: int, venue_key: str) -> dict:
 
 
 def _flows_between(
-    user_id: int,
-    venue_key: str,
-    start: float,
-    end: float,
-    services: Mapping[str, Any] | None = None,
+    user_id: int, venue_key: str, start: float, end: float
 ) -> native_flows.FlowWindow:
-    paper = _paper(venue_key)
-    if paper:
-        # The only thing that moves a paper account's equity without trading is a
-        # reset (a new baseline); the account logs it as an adjustment.
-        try:
-            service = _service(paper, services)
-            return native_flows.FlowWindow(
-                net_usd=float(service.adjustments(user_id, start, end))
-            )
-        except Exception as error:  # noqa: BLE001
-            log.warning("%s resets unreadable (%s)", venue_key, type(error).__name__)
-            return native_flows.FlowWindow(failed=True)
     try:
         return native_flows.window_net(user_id, venue_key, start, end)
     except Exception as error:  # noqa: BLE001
@@ -349,14 +294,10 @@ async def performance(
     minus the equity at its start, both from the value history; the start is the
     latest sample at-or-before it, or, when none is that close, the nearest
     sample, flagged as an estimate. No history at all is ``no_history``, never a
-    made-up zero. A venue with no account at all has no equity: ``no_ledger``
-    (the paper crew's simulated account has one, so it is measured like the rest).
+    made-up zero.
     """
     now = time.time() if now is None else now
     out = NativePerformance()
-    if not venue.account:
-        out.unavailable = "no_ledger"
-        return out
     service = _service(venue, services)
     out.open_positions = _ledger_positions(service, user_id)
     state = _flow_state(user_id, venue.key)
@@ -366,7 +307,6 @@ async def performance(
     first, last = portfolio_history.bounds(user_id, venue.label)
     if first is None or last is None:
         out.unavailable = "no_history"
-        out.note = PAPER_NOTE if venue.paper else ""
         return out
 
     # "Now": the live account when it can be read, else the newest sample.
@@ -432,10 +372,8 @@ async def performance(
             continue
         # The equity change is between the two readings actually compared, so the
         # flows taken out are those stamped in (begin.ts, finish.ts].
-        window = _flows_between(user_id, venue.key, begin.ts, finish.ts, services)
+        window = _flows_between(user_id, venue.key, begin.ts, finish.ts)
         notes.append(_unpriced_note(window))
-        if venue.paper:
-            notes.insert(0, PAPER_NOTE)
         out.sessions.append(
             SessionPnl(
                 span.num,
@@ -458,19 +396,12 @@ async def performance(
         out.since = float(first[0])
         origin = Reading(float(first[1]), float(first[0]), 0.0)
         total_note = "Since the first recorded equity sample."
-    total_flows = _flows_between(user_id, venue.key, origin.ts, live.ts, services)
+    total_flows = _flows_between(user_id, venue.key, origin.ts, live.ts)
     out.flows_usd = total_flows.net_usd
     out.total_pnl = live.total - origin.total - total_flows.net_usd
     out.estimated = not origin.exact or stale_now
     out.note = " ".join(
-        n
-        for n in (
-            PAPER_NOTE if venue.paper else "",
-            total_note,
-            now_note,
-            _unpriced_note(total_flows),
-        )
-        if n
+        n for n in (total_note, now_note, _unpriced_note(total_flows)) if n
     )
     return out
 
@@ -483,12 +414,7 @@ def _round(value: float) -> float:
 
 
 def _equity_change(
-    user_id: int,
-    label: str,
-    total_now: float,
-    now: float,
-    venue_key: str = "",
-    services: Mapping[str, Any] | None = None,
+    user_id: int, label: str, total_now: float, now: float, venue_key: str = ""
 ) -> dict:
     """Equity change per window, net of confirmed flows when the venue's are tracked.
 
@@ -510,7 +436,7 @@ def _equity_change(
 
     def window(from_ts: float, from_total: float) -> dict:
         flows = (
-            _flows_between(user_id, venue_key, from_ts, now, services)
+            _flows_between(user_id, venue_key, from_ts, now)
             if venue_key
             else native_flows.FlowWindow()
         )
@@ -549,16 +475,13 @@ async def overview(
     positions, the bot allocation's ledger (cash, positions at cost, synced,
     enabled, uncertain order) and the equity change from the value history. A
     venue that is not connected or cannot be valued says so instead of reading
-    as zero. The simulated paper account is listed too, flagged ``paper: true``
-    and kept out of ``total_usd``.
+    as zero.
     """
     now = time.time() if now is None else now
     venues, total = [], 0.0
-    for venue in native_venues.ledger_venues():
+    for venue in native_venues.account_venues():
         service = _service(venue, services)
         entry: dict[str, Any] = {"venue": venue.key, "connector": venue.label}
-        if venue.paper:
-            entry["paper"] = True
         try:
             status = service.status(user_id)
         except Exception as error:  # noqa: BLE001
@@ -567,12 +490,7 @@ async def overview(
             continue
         entry["connected"] = bool(status["connected"])
         if not entry["connected"]:
-            entry["note"] = (
-                "The paper account has not been opened yet; it starts when the "
-                "paper crew first values it."
-                if venue.paper
-                else "Not connected; the owner adds the API key in Settings."
-            )
+            entry["note"] = "Not connected; the owner adds the API key in Settings."
             venues.append(entry)
             continue
         ledger = status.get("ledger") or {}
@@ -602,8 +520,7 @@ async def overview(
         cash = [b for b in balances if b.get("token") in CASH_TOKENS]
         held = [b for b in balances if b.get("token") not in CASH_TOKENS]
         value = float(view["total_usd"])
-        if not venue.paper:
-            total += value
+        total += value
         entry["account"] = {
             "total_usd": _round(value),
             "cash_usd": _round(sum(b["usd_value"] for b in cash)),
@@ -621,7 +538,7 @@ async def overview(
         }
         try:
             entry["equity_change"] = _equity_change(
-                user_id, venue.label, value, now, venue.key, services
+                user_id, venue.label, value, now, venue.key
             )
         except Exception as error:  # noqa: BLE001 - history never blocks the balances
             entry["equity_change"] = {
@@ -639,17 +556,11 @@ async def overview(
         }
         if info.get("pending_count"):
             entry["flows"]["note"] = native_flows.pending_note(info)
-        if venue.paper:
-            entry["flows"]["note"] = PAPER_FLOWS
-            entry["account"]["note"] = (
-                PAPER_NOTE + " Not included in total_usd. " + entry["account"]["note"]
-            ).strip()
         venues.append(entry)
     return {
         "venues": venues,
         "total_usd": _round(total),
         "notes": [
-            "A venue flagged paper is a simulation: its numbers are not money and are never part of total_usd.",
             "Whole accounts at the last traded price, in USD. Only the bot allocation (ledger) may be traded.",
             "Hummingbot-connected accounts are not included; get_portfolio_overview covers those.",
             "Kraken xStocks is the same Kraken account that Hummingbot's `kraken` connector may also report; do not add both.",

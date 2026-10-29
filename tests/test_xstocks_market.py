@@ -1,4 +1,4 @@
-"""Paper xStocks: market hours, public-data parsing, paper calls. No network, no money."""
+"""Kraken xStocks public data: US session clock and public-data parsing. No network, no money."""
 
 import os
 import tempfile
@@ -6,8 +6,7 @@ import unittest
 from datetime import datetime, timezone
 from unittest.mock import patch
 
-from condor import crypto_com_scorecard as sc
-from condor import xstocks_paper as xs
+from condor import xstocks_market as xs
 
 
 def utc(*args):
@@ -44,7 +43,7 @@ TICKERS = {
 }
 
 
-class FakeXStocks(xs.XStocksPaper):
+class FakeXStocks(xs.XStocksMarket):
     def __init__(self):
         super().__init__()
         self.calls = []
@@ -112,17 +111,14 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
             pairs, {"AAPL": "AAPLxUSD", "TSLA": "TSLAxUSD", "SPY": "SPYxUSD"}
         )
 
-    async def test_coins_are_ranked_by_dollar_volume_with_spread_and_range(self):
-        data = await self.svc.coins("")
-        symbols = [row["symbol"] for row in data["stocks"]]
-        self.assertEqual(symbols[0], "TSLA")
-        tsla = data["stocks"][0]
+    def test_a_ticker_row_has_spread_range_and_change_since_open(self):
+        tsla = self.svc._row("TSLA", "TSLAxUSD", TICKERS["TSLAxUSD"])
+        self.assertEqual(tsla["symbol"], "TSLA")
         self.assertEqual(tsla["spread_pct"], "0.005")
         self.assertEqual(tsla["range_24h_pct"], "3.61")
         self.assertEqual(tsla["change_since_open_pct"], "0.87")
-        self.assertIn("open", data["market"])
-        found = await self.svc.coins("aa")
-        self.assertEqual([r["symbol"] for r in found["stocks"]], ["AAPL"])
+        self.assertIsNone(self.svc._row("", "TSLAxUSD", TICKERS["TSLAxUSD"]))
+        self.assertIsNone(self.svc._row("TSLA", "TSLAxUSD", {}))
 
     async def test_candles_map_the_interval_and_shape(self):
         data = await self.svc.candles("aapl", "15m", 3)
@@ -136,29 +132,37 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await self.svc.candles("ZZZZ", "15m")
 
-    async def test_a_paper_call_is_recorded_and_scored_apart_from_crypto(self):
-        result = await self.svc.predict(1, "tsla", "trade", "2", "1", "3", "breakout")
-        self.assertTrue(result["recorded"])
-        again = await self.svc.predict(1, "TSLA", "pass", "2", "1", "3")
-        self.assertFalse(again["recorded"])
-        report = self.svc.scorecard(1)
-        self.assertEqual(report["trade_calls"]["total"], 1)
-        self.assertEqual(
-            report["assumptions"]["round_trip_cost_pct"], xs.ROUND_TRIP_COST_PCT
-        )
-        crypto = sc.report(1)
-        self.assertEqual(crypto["trade_calls"]["total"], 0)
-
-    async def test_status_says_paper_and_reports_the_market(self):
-        status = await self.svc.status()
-        self.assertTrue(status["paper_only"])
-        self.assertIn("open", status["market"])
-
     def test_symbols_are_validated(self):
         for bad in ("", "A B", "AAPL;x", "A" * 13):
             with self.assertRaises(ValueError):
                 xs.symbol_of(bad)
         self.assertEqual(xs.symbol_of("nvda"), "NVDA")
+
+
+class SessionClockRouteTests(unittest.IsolatedAsyncioTestCase):
+    """The stock scheduler reads ``market.open`` from the old path and the new one."""
+
+    async def test_both_paths_answer_the_session_clock_without_any_account(self):
+        from condor.web.models import WebUser
+        from condor.web.routes import kraken_xstocks as route
+
+        user = WebUser(id=1, role="admin")
+        new = await route.market(user)
+        old = await route.legacy_status(user)
+        for body in (new, old):
+            self.assertIn("open", body["market"])
+            self.assertIn("minutes_to_close", body["market"])
+            self.assertEqual(body["quote"], "USD")
+        self.assertEqual(new["market"]["open"], old["market"]["open"])
+
+    def test_the_old_path_is_still_registered_next_to_the_new_one(self):
+        from condor.web.routes import kraken_xstocks as route
+
+        paths = {r.path for r in route.router.routes} | {
+            r.path for r in route.legacy_router.routes
+        }
+        self.assertIn("/kraken-xstocks/market", paths)
+        self.assertIn("/xstocks-paper/status", paths)
 
 
 if __name__ == "__main__":

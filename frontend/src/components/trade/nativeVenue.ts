@@ -1,11 +1,11 @@
-/** Configuration and pure helpers for the Kraken xStocks, Kraken xStocks (paper) and Revolut X Trade panels. */
+/** Configuration and pure helpers for the read-only Kraken xStocks and Revolut X Trade panels. */
 import { useQuery } from "@tanstack/react-query";
 
 import type { ExchangeLedger } from "@/hooks/useCredentials";
 import { apiFetch } from "@/lib/api";
 import { num } from "./tradeFormat";
 
-export type NativeVenueKey = "kraken-xstocks" | "xstocks-paper" | "revolut-x";
+export type NativeVenueKey = "kraken-xstocks" | "revolut-x";
 
 export type NativeVenue = {
   key: NativeVenueKey;
@@ -23,12 +23,7 @@ export type NativeVenue = {
   changeLabel: string;
   volumeKey: string;
   volumeLabel: string;
-  /** A simulated account: no real money, no Settings, and the owner can reset it. */
-  paper?: boolean;
 };
-
-/** The line every paper panel shows above everything else. */
-export const PAPER_BANNER = "SIMULATED - no real money";
 
 export const NATIVE_VENUES: Record<NativeVenueKey, NativeVenue> = {
   "kraken-xstocks": {
@@ -42,19 +37,6 @@ export const NATIVE_VENUES: Record<NativeVenueKey, NativeVenue> = {
     changeLabel: "Since open",
     volumeKey: "volume_24h_usd",
     volumeLabel: "24h volume",
-  },
-  "xstocks-paper": {
-    key: "xstocks-paper",
-    title: "Kraken xStocks (paper)",
-    base: "/api/v1/xstocks-paper",
-    quote: "USD",
-    noun: "stocks",
-    listKey: "stocks",
-    changeKey: "change_since_open_pct",
-    changeLabel: "Since open",
-    volumeKey: "volume_24h_usd",
-    volumeLabel: "24h volume",
-    paper: true,
   },
   "revolut-x": {
     key: "revolut-x",
@@ -71,7 +53,7 @@ export const NATIVE_VENUES: Record<NativeVenueKey, NativeVenue> = {
 };
 
 export const isNativeVenueKey = (value: string | null): value is NativeVenueKey =>
-  value === "kraken-xstocks" || value === "xstocks-paper" || value === "revolut-x";
+  value === "kraken-xstocks" || value === "revolut-x";
 
 /** What both native services answer on `/status` (a subset of their own status types). */
 export type NativeStatus = {
@@ -80,11 +62,6 @@ export type NativeStatus = {
   quote?: string;
   ledger: ExchangeLedger;
   market?: { open: boolean; new_york_time?: string; minutes_to_close?: number; note?: string };
-  /** Only the paper account answers these: it is simulated, and `connected` means it has been opened. */
-  paper?: boolean;
-  simulated?: boolean;
-  banner?: string;
-  assumptions?: { taker_fee_pct?: string; slippage_allowance_pct?: string; start_cash?: string };
 };
 
 /** Same key and URL as the Settings hooks, so the cache is shared and the poll runs once. */
@@ -181,7 +158,7 @@ export function accountsOf(payload: unknown): AccountRow[] {
 /** Kraken names its dollar balance ZUSD. */
 export const isQuoteCurrency = (venue: NativeVenue, currency: string) => {
   const upper = currency.toUpperCase();
-  return upper === venue.quote || (venue.noun === "stocks" && upper === "ZUSD");
+  return upper === venue.quote || (venue.key === "kraken-xstocks" && upper === "ZUSD");
 };
 
 /** A balance in the quote currency at the best bid, or null when the asset has no live price here. */
@@ -191,7 +168,7 @@ export function accountValue(venue: NativeVenue, currency: string, balance: stri
   if (isQuoteCurrency(venue, currency)) return amount;
   const upper = currency.toUpperCase();
   // Kraken writes a tokenised stock as AAPLx.
-  const row = known.get(upper) ?? (venue.noun === "stocks" && upper.endsWith("X") ? known.get(upper.slice(0, -1)) : undefined);
+  const row = known.get(upper) ?? (venue.key === "kraken-xstocks" && upper.endsWith("X") ? known.get(upper.slice(0, -1)) : undefined);
   const bid = num(row?.bid);
   return bid === null ? null : amount * bid;
 }

@@ -43,7 +43,6 @@ def canonical_tool_name(name: str) -> str:
 #: is written for the model.
 TOOL_DESCRIPTIONS: dict[str, str] = {
     "crypto_com_exchange": "Trade the Crypto.com Exchange within the owner's bot allocation",
-    "xstocks_paper": "Paper-trade tokenized US stocks on a simulated account (no real money)",
     "kraken_xstocks": "Trade Kraken xStocks (tokenized US stocks) within the owner's bot allocation",
     "revolut_x": "Trade crypto on Revolut X (EUR pairs) within the owner's bot allocation",
     "native_portfolio": "Read the Crypto.com Exchange, Kraken xStocks and Revolut X balances (Hummingbot cannot see them)",
@@ -71,7 +70,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
 #: ``delegate(action="start")`` refused in code rather than by omission.
 COMMON_TOOLS: tuple[str, ...] = (
     "crypto_com_exchange",
-    "xstocks_paper",
     "kraken_xstocks",
     "revolut_x",
     "native_portfolio",

@@ -95,7 +95,6 @@ def test_a_currency_that_cannot_be_priced_asks_for_the_usd_value(client):
         {"currency": "no good"},
         {"ts": "yesterday-ish"},
         {"ts": "2099-01-01"},
-        {"venue": "xstocks_paper", "usd_value": 1},
     ],
 )
 def test_bad_input_is_a_400_with_a_reason(client, body):

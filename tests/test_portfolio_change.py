@@ -13,7 +13,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from condor import native_flows, native_venues
+from condor import native_flows
 from condor import portfolio_change as pc
 from condor import portfolio_history as ph
 from condor.web.models import WebUser
@@ -23,7 +23,6 @@ USER = 1
 DAY = 86400
 NOW = 1_800_000_000.0
 SINCE = NOW - DAY
-PAPER = native_venues.get("xstocks_paper")
 
 
 def hb(*rows):
@@ -122,16 +121,6 @@ class ChangeTests(Base):
         self.assertTrue(out["available"])
         self.assertEqual(out["change_usd"], 20.0)
 
-    def test_the_paper_account_is_never_part_of_it(self):
-        out = self.compute(
-            hb((SINCE + 60, 9.0), (NOW, 9.5)),
-            {PAPER.label: [(SINCE + 60, 100.0), (NOW - 60, 40.0)]},
-        )
-        self.assertTrue(out["available"])
-        self.assertEqual(out["sources"], ["Hummingbot"])
-        self.assertEqual(out["end_usd"], 9.5)
-        self.assertEqual(out["change_usd"], 0.5)
-
     def test_a_source_hummingbot_already_counts_is_skipped(self):
         out = self.compute(
             hb((SINCE + 60, 9.0), (NOW, 9.5)),
@@ -162,14 +151,16 @@ class ChangeTests(Base):
 
 
 class HistoryRouteTests(Base):
-    """The real route: the paper account is out of the series and the figure."""
+    """The real route: the figure is the server's, never first-vs-last."""
 
     def setUp(self):
         super().setUp()
         self.now = time.time()
         self.since = self.now - DAY
         sds = SimpleNamespace(get_or_fetch=AsyncMock(return_value=self.history()))
-        self.patch = patch.object(portfolio_route, "get_server_data_service", lambda: sds)
+        self.patch = patch.object(
+            portfolio_route, "get_server_data_service", lambda: sds
+        )
         self.patch.start()
 
     def tearDown(self):
@@ -193,15 +184,14 @@ class HistoryRouteTests(Base):
             user=WebUser(id=USER, role="admin"),
         )
 
-    async def test_a_paper_sample_is_not_in_the_points_or_the_figure(self):
-        ph.record(USER, PAPER.label, 100.0, now=self.since + 600)
-        ph.record(USER, PAPER.label, 40.0, now=self.now - 300)
+    async def test_a_hummingbot_only_window_is_a_figure_with_the_caveat(self):
         out = await self.get()
         self.assertEqual([round(p.total_usd, 2) for p in out.points], [9.0, 9.6])
         self.assertTrue(out.change.available)
         self.assertEqual(out.change.sources, ["Hummingbot"])
         self.assertEqual(out.change.end_usd, 9.6)
         self.assertEqual(out.change.change_usd, 0.6)
+        self.assertEqual(out.change.flows_not_netted, ["Hummingbot"])
 
     async def test_a_late_native_account_gives_a_dash_not_a_gain(self):
         ph.record(USER, ph.EXCHANGE, 46.0, now=self.since + 36000)

@@ -31,7 +31,6 @@ import {
 } from "@/lib/api";
 import { formatCurrency, formatCurrencyPnl, formatCurrencyVolume, isExecutorActive } from "@/lib/formatters";
 import { historyChange } from "@/lib/portfolio-change";
-import { realConnectors, realShare, realTokenCount } from "@/lib/portfolio-paper";
 import { agentsQuery, EXECUTORS_REFETCH_MS, executorsQuery } from "@/lib/queryClient";
 import { ACCOUNT_EQUITY } from "@/lib/strategy-unavailable";
 import { getThemeColors } from "@/lib/theme-colors";
@@ -367,8 +366,7 @@ function ConnectorRow({
 }) {
   const [expanded, setExpanded] = useState(true);
   const Chevron = expanded ? ChevronDown : ChevronRight;
-  // A simulated account is not part of the real total, so it has no share of it.
-  const pct = realShare(connector, totalPortfolio);
+  const pct = totalPortfolio > 0 ? (connector.total_usd / totalPortfolio) * 100 : 0;
 
   return (
     <>
@@ -383,16 +381,7 @@ function ConnectorRow({
             <span className="text-xs text-[var(--color-text-muted)]">
               {connector.balances.length} token{connector.balances.length !== 1 ? "s" : ""}
             </span>
-            {connector.paper && (
-              <span
-                title="Simulated account: no real money, not included in the total"
-                data-paper-connector
-                className="rounded border border-[var(--color-red)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-red)]"
-              >
-                Simulated - not in total
-              </span>
-            )}
-            {connector.note && !connector.paper && (
+            {connector.note && (
               <span
                 title={connector.note}
                 className="rounded bg-[var(--color-surface-hover)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]"
@@ -409,7 +398,7 @@ function ConnectorRow({
         </td>
         <td className="px-4 py-3">
           <span className="text-sm tabular-nums text-[var(--color-text-muted)]">
-            {connector.paper ? "—" : `${pct.toFixed(1)}%`}
+            {pct.toFixed(1)}%
           </span>
         </td>
       </tr>
@@ -422,7 +411,7 @@ function ConnectorRow({
       )}
       {expanded &&
         connector.balances.map((b) => (
-          <TokenRow key={b.token} b={b} totalPortfolio={connector.paper ? 0 : totalPortfolio} convertFromUsd={convertFromUsd} currencySymbol={currencySymbol} />
+          <TokenRow key={b.token} b={b} totalPortfolio={totalPortfolio} convertFromUsd={convertFromUsd} currencySymbol={currencySymbol} />
         ))}
     </>
   );
@@ -978,8 +967,6 @@ export function Portfolio() {
 
   const totalUsd = data?.total_usd ?? 0;
   const connectors = data?.connectors ?? [];
-  // Simulated (paper) connectors are listed below but never counted in the figures above them.
-  const realOnly = realConnectors(connectors);
   const hasExchange = connectors.some((connector) => connector.connector === "Crypto.com Exchange");
 
   // The portfolio's change over the period (follows the period selector), as the
@@ -991,7 +978,7 @@ export function Portfolio() {
   const portfolioPnl = portfolioChange.known ? portfolioChange.abs : null;
 
   // Compute aggregate stats
-  const totalTokens = realTokenCount(connectors);
+  const totalTokens = connectors.reduce((s, c) => s + c.balances.length, 0);
   const botsList = bots?.bots ?? [];
   const controllerCount = controllers.length;
   const activeExecutorCount = executorsList.filter((e) => isExecutorActive(e.status)).length;
@@ -1006,7 +993,7 @@ export function Portfolio() {
   }
 
   // Flatten all tokens for top holdings
-  const allTokens = realOnly.flatMap((c) =>
+  const allTokens = connectors.flatMap((c) =>
     c.balances.map((b) => ({ token: b.token, usd_value: b.usd_value, connector: c.connector })),
   );
   allTokens.sort((a, b) => b.usd_value - a.usd_value);
@@ -1018,7 +1005,7 @@ export function Portfolio() {
       <DashboardStrip
         totalUsd={totalUsd}
         totalTokens={totalTokens}
-        connectorCount={realOnly.length}
+        connectorCount={connectors.length}
         portfolioPnl={portfolioPnl}
         portfolioPnlTitle={
           portfolioChange.known

@@ -17,7 +17,6 @@ T0 = 1_790_000_000
 EXCHANGE = native_venues.get("crypto_com_exchange")
 KRAKEN = native_venues.get("kraken_xstocks")
 REVOLUT = native_venues.get("revolut_x")
-PAPER = native_venues.get("xstocks_paper")
 
 
 class FakeService:
@@ -87,7 +86,6 @@ def test_agents_map_to_their_venue_and_others_to_none():
     assert native_venues.for_agent("crypto_com_exchange_trader") is EXCHANGE
     assert native_venues.for_agent("kraken_xstocks_trader") is KRAKEN
     assert native_venues.for_agent("revolut_x_trader") is REVOLUT
-    assert native_venues.for_agent("xstocks_paper_trader") is PAPER
     assert native_venues.for_agent("adaptive_grid_trader") is None
 
 
@@ -170,12 +168,6 @@ def test_no_history_is_unavailable_not_a_made_up_zero():
     )
     assert out.unavailable == "no_history"
     assert out.sessions == []
-
-
-def test_the_paper_crew_has_an_equity_but_no_history_yet():
-    out = perf(PAPER, [na.SessionSpan(1, T0, live=True)], FakeService(), now=T0)
-    assert out.unavailable == "no_history"
-    assert "Paper test only" in out.note
 
 
 def test_venues_read_their_own_history_only():
@@ -318,9 +310,8 @@ def test_overview_reports_each_account_with_cash_positions_ledger_and_equity_cha
     }
     out = run(na.overview(1, services=services, now=T0))
     assert out["total_usd"] == 48.0
-    exchange, kraken, revolut, paper = out["venues"]
+    exchange, kraken, revolut = out["venues"]
     assert revolut["connected"] is False and revolut["connector"] == "Revolut X"
-    assert paper["paper"] is True and paper["connected"] is False
     assert exchange["connected"] is True
     assert exchange["account"]["total_usd"] == 48.0
     assert exchange["account"]["cash_usd"] == 20.0
@@ -349,7 +340,7 @@ def test_overview_says_so_when_a_venue_cannot_be_valued_and_leaves_it_out_of_the
         "revolut_x": FakeService(connected=False),
     }
     out = run(na.overview(1, services=services, now=T0))
-    exchange, kraken, _revolut, _paper = out["venues"]
+    exchange, kraken, _revolut = out["venues"]
     assert "Could not be valued" in exchange["error"]
     assert "account" not in exchange
     assert out["total_usd"] == 9.0

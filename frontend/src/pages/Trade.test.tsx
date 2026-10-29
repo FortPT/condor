@@ -13,8 +13,6 @@ vi.mock("@/pages/CreateExecutor", () => ({ CreateExecutor: () => {
   const location = useLocation();
   return <div data-workspace="exchange">Exchange workspace{location.search}</div>;
 } }));
-// The paper workspace's owner-only reset control asks whether this seat is an admin.
-vi.mock("@/hooks/useIsAdmin", () => ({ useIsAdmin: () => false }));
 vi.mock("@/components/ConnectKeysOverlay", () => ({ ConnectKeysOverlay: () => <div data-gate>Connect Exchange keys</div> }));
 
 const exchangeStatus = { connected: true, environment: "production", enabled: false, ledger: { quote: "USD", cash: "26", positions: {}, uncertain_order: null, synced: true } };
@@ -128,20 +126,6 @@ it.each([
   await render(url);
   expect(host.querySelector(`[data-native-flows="${venue}"]`)).not.toBeNull();
   expect(request.fetch.mock.calls.some(([path]) => path === `/api/v1/native-flows?venue=${venue}`)).toBe(true);
-});
-it("opens the simulated Kraken xStocks (paper) workspace with its banner, on its own routes and with no deposits panel", async () => {
-  await render("/trade?workspace=xstocks-paper");
-  expect(host.querySelector("h1")?.textContent).toBe("Kraken xStocks (paper)");
-  expect(host.querySelector("[data-paper-banner]")?.textContent).toContain("SIMULATED - no real money");
-  expect(host.querySelector('[data-venue="xstocks-paper"]')).not.toBeNull();
-  // a simulated account has no deposits or withdrawals, so there is nothing to record
-  expect(host.querySelector("[data-native-flows]")).toBeNull();
-  expect(request.fetch.mock.calls.some(([path]) => String(path).startsWith("/api/v1/native-flows"))).toBe(false);
-  expect(request.fetch.mock.calls.some(([path]) => String(path).startsWith("/api/v1/xstocks-paper/status"))).toBe(true);
-  expect(request.fetch.mock.calls.every(([path, init]) => !init && (String(path).startsWith("/api/v1/xstocks-paper/") || String(path).startsWith("/api/v1/crypto-exchange/")))).toBe(true);
-  const pressed = Array.from(host.querySelectorAll("button[aria-pressed='true']")).map((b) => b.textContent);
-  expect(pressed).toContain("Kraken xStocks (paper)");
-  expect(pressed).not.toContain("Kraken xStocks");
 });
 it("shows no deposits panel on the Hummingbot tab", async () => {
   await render("/trade?workspace=hummingbot");

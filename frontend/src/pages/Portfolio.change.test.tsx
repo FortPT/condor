@@ -3,8 +3,7 @@
  *
  * The page KPI used to be the first point of the history against the last, which mixes
  * accounts that start at different times (and deposits): a 55 EUR desk read +491%. It is
- * now the server's net-of-flows figure, or a dash with the reason. The simulated (paper)
- * account is listed, badged, and in none of the counts.
+ * now the server's net-of-flows figure, or a dash with the reason.
  *
  * @vitest-environment jsdom
  */
@@ -66,12 +65,6 @@ const PORTFOLIO: PortfolioResponse = {
     { connector: "kraken", total_usd: 10.19, balances: [bal("EUR", 10.19)] },
     { connector: "Crypto.com Exchange", total_usd: 46.93, balances: [bal("USD", 30), bal("HYPE", 16.93)] },
     { connector: "Revolut X", total_usd: 4.75, balances: [bal("XRP", 4.75)] },
-    {
-      connector: "Kraken xStocks (paper)",
-      total_usd: 100,
-      paper: true,
-      balances: [bal("USD", 100)],
-    },
   ],
 };
 
@@ -142,16 +135,5 @@ describe("Portfolio page headline", () => {
     await render();
     expect(container.querySelector('[data-testid="portfolio-change-unknown"]')).toBeNull();
     expect(container.textContent).toContain("+$0.62");
-  });
-
-  it("counts only the real accounts and badges the simulated one, with no share", async () => {
-    getPortfolioHistory.mockResolvedValue(history({ available: false, reason: "different_start" }));
-    await render();
-    // 4 real balances over 3 real connectors; the paper USD 100 is in neither.
-    expect(container.textContent).toContain("4 assets · 3 connectors");
-    expect(container.textContent).toContain("$61.87");
-    const badge = container.querySelector("[data-paper-connector]");
-    expect(badge).not.toBeNull();
-    expect(badge!.textContent).toContain("Simulated - not in total");
   });
 });

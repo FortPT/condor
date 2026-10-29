@@ -1,10 +1,10 @@
-"""Paper-only xStocks test on Kraken's public market data.
+"""Kraken's public market data for the tokenized US stocks (xStocks), and the US session clock.
 
-No exchange account, no key and no real orders: this reads Kraken's public
-endpoints for the tokenized US stocks (xStocks, quoted in USD), lets an agent log
-paper calls, and scores them against later prices after a conservative round-trip
-cost. The simulated account that fills paper orders on the live order book is in
-:mod:`condor.xstocks_paper_ledger`. Nothing here can move money.
+No exchange account, no key and no order: this reads Kraken's public endpoints (asset
+pairs, ticker, OHLC) and answers whether the regular US session is open. The live
+Kraken xStocks service (:mod:`condor.kraken_xstocks`) uses it for pair rules, prices
+and candles, and the stock scheduler reads the session clock through the
+``/kraken-xstocks/market`` route. Nothing here can move money.
 """
 
 from __future__ import annotations
@@ -15,18 +15,9 @@ import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
-from condor import crypto_com_scorecard as scorecard
-
-VENUE = "xstocks_paper"
 BASE = "https://api.kraken.com/0/public/"
 ASSET_CLASS = "tokenized_asset"
 QUOTE = "USD"
-# A taker fee of 0.40% each way (per Kraken Pro's schedule as reported by a support
-# article, not verified) plus a little spread. The multiples in the scorecard
-# re-score the history at 1.5x, 2x and 3x this cost.
-ROUND_TRIP_COST_PCT = 0.85
-TOP_COINS = 40
-MIN_VOLUME_USD = 50_000
 INTERVALS = {"5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240, "1D": 1440}
 TICKER_CHUNK = 40
 MAX_BYTES = 4 * 1024 * 1024
@@ -81,7 +72,7 @@ def us_market_open(now: float | None = None) -> dict:
     }
 
 
-class XStocksPaper:
+class XStocksMarket:
     def __init__(self):
         self._pairs = (0.0, {})
 
@@ -140,41 +131,6 @@ class XStocksPaper:
             for name, row in (await self.pair_rows()).items()
         }
 
-    async def status(self) -> dict:
-        return {
-            "paper_only": True,
-            "venue": "Kraken xStocks (public data)",
-            "quote": QUOTE,
-            "round_trip_cost_pct": ROUND_TRIP_COST_PCT,
-            "market": us_market_open(),
-            "note": (
-                "No exchange account, no key and no real orders: every call is "
-                "paper, and orders fill on a simulated account."
-            ),
-        }
-
-    async def coins(self, keyword: str = "", user_id: int = 1) -> dict:
-        if not isinstance(keyword, str) or len(keyword) > 40:
-            raise ValueError("Enter a stock symbol")
-        pairs = await self.pairs()
-        key = keyword.strip().upper()
-        wanted = {s: p for s, p in pairs.items() if not key or key in s}
-        names = list(wanted.values())
-        rows = []
-        for start in range(0, len(names), TICKER_CHUNK):
-            chunk = names[start : start + TICKER_CHUNK]
-            tickers = await self._get("Ticker", {"pair": ",".join(chunk)})
-            by_pair = {pair: symbol for symbol, pair in wanted.items()}
-            for pair, t in tickers.items():
-                symbol = by_pair.get(pair) or by_pair.get(pair.replace("/", ""))
-                row = self._row(symbol, pair, t)
-                if row:
-                    rows.append(row)
-        rows.sort(key=lambda r: r["volume_24h_usd"], reverse=True)
-        rows = rows[: 10 if key else TOP_COINS]
-        self._record(rows, user_id)
-        return {"quote": QUOTE, "market": us_market_open(), "stocks": rows}
-
     @staticmethod
     def _row(symbol, pair, t):
         if not symbol:
@@ -204,21 +160,6 @@ class XStocksPaper:
             ),
         }
 
-    @staticmethod
-    def _record(rows, user_id):
-        """Feed the scorecard; it must never be able to break a market read."""
-        try:
-            scorecard.record_snapshot(
-                user_id,
-                [
-                    {"symbol": r["symbol"], "price_native": {"amount": r["price"]}}
-                    for r in rows
-                ],
-                venue=VENUE,
-            )
-        except Exception:  # noqa: BLE001 - analytics only
-            pass
-
     async def candles(self, symbol: str, timeframe: str = "15m", count: int = 96):
         symbol = symbol_of(symbol)
         if timeframe not in INTERVALS:
@@ -247,25 +188,5 @@ class XStocksPaper:
             ],
         }
 
-    async def predict(
-        self, user_id, symbol, verdict, target_pct, stop_pct, horizon_hours, note=""
-    ):
-        symbol = symbol_of(symbol)
-        if scorecard.latest_price(user_id, symbol, venue=VENUE) is None:
-            await self.coins(symbol, user_id)
-        return scorecard.record_prediction(
-            user_id,
-            symbol,
-            verdict,
-            target_pct,
-            stop_pct,
-            horizon_hours,
-            note,
-            venue=VENUE,
-        )
 
-    def scorecard(self, user_id) -> dict:
-        return scorecard.report(user_id, cost_pct=ROUND_TRIP_COST_PCT, venue=VENUE)
-
-
-service = XStocksPaper()
+service = XStocksMarket()

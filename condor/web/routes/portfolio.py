@@ -146,8 +146,7 @@ async def get_portfolio(
     native = await native_accounts.collect_views(user.id, skip=skip)
     connectors.extend(ConnectorBalance(**view) for view in native.views)
     notes = list(native.notes)
-    # A simulated (paper) account is listed but is not money: keep it out of the total.
-    total_usd = sum(c.total_usd for c in connectors if not c.paper)
+    total_usd = sum(c.total_usd for c in connectors)
     return PortfolioResponse(
         server=name, connectors=connectors, total_usd=total_usd, notes=notes
     )
@@ -158,9 +157,7 @@ async def get_native_portfolio(user: WebUser = Depends(get_current_user)):
     """Crypto.com Exchange, Kraken xStocks and Revolut X for the caller, read-only.
 
     What the chat agent's ``native_portfolio`` tool returns: Hummingbot cannot see
-    these accounts, so its own portfolio tool reads as empty without them. The
-    simulated Kraken xStocks paper account is listed with ``paper: true`` and is not
-    part of ``total_usd``.
+    these accounts, so its own portfolio tool reads as empty without them.
     """
     return await native_accounts.overview(user.id)
 
@@ -264,9 +261,7 @@ async def get_portfolio_history(
         )
     except Exception as error:  # noqa: BLE001 - never lose the chart over a figure
         logger.warning("Portfolio change skipped (%s)", type(error).__name__)
-        change = PortfolioHistoryChange(
-            **portfolio_change.unavailable("error")
-        )
+        change = PortfolioHistoryChange(**portfolio_change.unavailable("error"))
 
     return PortfolioHistoryResponse(
         server=name,

@@ -11,8 +11,6 @@ have a value at the start of the window and whose deposits and withdrawals are
 known: current value minus value at the start minus the net confirmed flows
 recorded in :mod:`condor.native_flows`. Anything else is reported as unavailable,
 with the reason, and the page shows a dash instead of a number.
-
-A simulated (paper) account is never part of it.
 """
 
 from __future__ import annotations
@@ -21,7 +19,7 @@ import logging
 import time
 from typing import Any, Iterable, Mapping, Sequence
 
-from condor import native_flows, native_venues, portfolio_history
+from condor import native_flows, native_venues
 
 log = logging.getLogger(__name__)
 
@@ -96,7 +94,7 @@ def compute(
         START_TOLERANCE_FRACTION * (now - since),
     )
     deadline = since + tolerance
-    excluded = {*skip, *portfolio_history.PAPER_SOURCES}
+    excluded = set(skip)
     start = end = flows = 0.0
     sources: list[str] = []
     not_netted: list[str] = []
@@ -150,9 +148,7 @@ def compute(
 
     change = end - start - flows
     pct = (
-        change / start * 100
-        if start >= MIN_BASE_USD and abs(flows) <= start
-        else None
+        change / start * 100 if start >= MIN_BASE_USD and abs(flows) <= start else None
     )
     out: dict[str, Any] = {
         "available": True,
