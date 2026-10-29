@@ -84,7 +84,38 @@ What Condor does with this:
   fills' value) and `realised_cost_eur` (that plus the fee). The ledger itself still moves by the
   EUR amounts Revolut X reports, because those are what the balance really did.
 
+**VERIFIED live on 2026-10-29: a BUY's taker fee is charged in the BASE currency, a SELL's in
+EUR.** A BTC buy paid 0.00000002 BTC and an XRP buy 0.01242 XRP, and the real balance was the
+filled quantity minus that fee. The order object may NOT carry `total_fee` immediately: the ETH/EUR
+buy of 14:22 UTC was read back without one, the estimate was booked in EUR against cash and the
+position kept the full filled quantity (0.00573246 ETH), while the account held 0.0057273 ETH (the
+0.09% fee, 5.16e-6 ETH, was taken from the coin). A full-position sale then asked for more ETH than
+was available and Revolut X refuses that, which could have blocked a stop-loss exit. Condor now:
+
+* books an estimated BUY fee in the base currency (quantity times the taker rate, rounded UP to the
+  pair's `base_step`, `fee_source: "estimate"`, `fee_currency` the coin, also shown as
+  `estimated_fee` and `estimated_fee_currency`): the position units fall by it, and cash moves only
+  by the EUR value of the fill. An estimated SELL fee stays in EUR (off the proceeds). A reported
+  fee, in either currency, is used as reported and does not trigger the balance read below.
+* after any filled order whose fee was only an estimate, reads `GET /1.0/balances` once and never lets
+  the ledger claim more than the account holds: if the ledger units for that coin exceed the
+  available balance by more than one `base_step`, the units are set to the available balance
+  (`units_source: "account_balance"` on the position, `balance_correction` on the order and in the
+  order log), and the ledger cash is capped to the available EUR (`cash_source:
+  "account_balance"`). Only a downward correction is made: more in the account than in the ledger
+  is outside the allocation and is left alone. A buy whose coin shows no balance at all is flagged
+  (`balance_check`) and not erased, since that reads like a stale answer; a failed read leaves the
+  fill as booked (`balance_check: "unavailable"`).
+* sizes a sale of the WHOLE position from `min(ledger units, available balance)`, so a rounding
+  mismatch cannot make a full exit refuse. When the balance is below the pair's minimum order size or
+  minimum value the sale is refused before anything is sent, with a message saying so. A partial sale
+  is never resized silently. A resized exit reads the balances again afterwards, so the dust the ledger
+  no longer owns is dropped.
+
 **Still NOT verified against a real account** (every test uses fakes for these):
+
+* That the balances read right after a fill already shows the filled amounts and the fee (the
+  correction above relies on it; the live ETH numbers say the account itself was exact).
 
 * Partial fills: which status an immediate-or-cancel order that fills in part ends in. The
   statuses are `pending_new`, `new`, `partially_filled`, `filled`, `cancelled`, `rejected`,
@@ -99,9 +130,9 @@ What Condor does with this:
   orders a day.
 * Whether the Premium plan changes fees in some other way: the buy fee was non-zero, so it does not
   make them zero, but the true taker (and maker) rate is unread.
-* The exact fee when it is reported in the base currency on a larger fill, and a fee missing or
-  zero on a filled order: those are not trusted and the published rate is charged to the ledger as
-  an **estimate** (`fee_source: "estimate"`); a reported positive fee is `reported`.
+* A fee missing or zero on a filled order is not trusted and the published rate is charged to the
+  ledger as an **estimate** (`fee_source: "estimate"`, in the currency the venue really charges,
+  see the next section); a reported positive fee is `reported`.
 * API key permissions and IP rules. The spec shows an HTTP 401 "API key can only be used for
   authentication from whitelisted IP", so the key may be IP-restricted.
 * How the signature treats a query string that needs percent-encoding (the `cursor` of a

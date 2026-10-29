@@ -184,6 +184,8 @@ class FakeService(rx.RevolutXService):
         self.active = []
         self.historical = []
         self.historical_pages = None  # [rows, rows] to test pagination
+        self.balances_after = None  # what GET /balances shows once an order was sent
+        self.balances_after_error = False
 
     def cid(self):
         for method, path, query, body in reversed(self.sent):
@@ -226,6 +228,11 @@ class FakeService(rx.RevolutXService):
         self.credentials(user_id)
         self.sent.append((method, path, query, body))
         if path == "/1.0/balances":
+            if any(m == "POST" for m, *_ in self.sent):
+                if self.balances_after_error:
+                    raise rx.RevolutXError(500, "boom")
+                if self.balances_after is not None:
+                    return self.balances_after
             return self.balances
         if path == "/1.0/orders" and method == "POST":
             if self.reject_place:
@@ -941,12 +948,21 @@ class RevolutXTests(unittest.IsolatedAsyncioTestCase):
         self.svc.record = record
         result = await self.svc.order(1, "buy", "BTC", "7.3")
         value = Decimal("0.0001") * Decimal("72650.36")
-        fee = value * Decimal("0.09") / 100
         ledger = self.ledger()
-        self.assertEqual(Decimal(ledger["cash"]), Decimal("40") - value - fee)
+        # Revolut X charges a BUY fee in the coin: the estimate (0.09% of 0.0001 BTC =
+        # 9e-8, rounded up to the lot) comes off the units, the cash moves by the fill.
+        self.assertEqual(Decimal(ledger["cash"]), Decimal("40") - value)
+        self.assertEqual(
+            Decimal(ledger["positions"]["BTC"]["units"]), Decimal("0.00009991")
+        )
         row = ledger["orders"][-1]
-        self.assertEqual((row["fee_source"], row["fee_currency"]), ("estimate", "EUR"))
+        self.assertEqual(
+            (row["fee"], row["fee_source"], row["fee_currency"]),
+            ("0.00000009", "estimate", "BTC"),
+        )
         self.assertEqual(result["order"]["fee_source"], "estimate")
+        self.assertEqual(result["order"]["estimated_fee"], "0.00000009")
+        self.assertEqual(result["order"]["estimated_fee_currency"], "BTC")
         # an estimate never becomes the "observed" rate
         self.assertIsNone(ledger["observed_taker_fee_pct"])
 
@@ -957,10 +973,11 @@ class RevolutXTests(unittest.IsolatedAsyncioTestCase):
         ledger = self.ledger()
         self.assertEqual(ledger["orders"][-1]["fee_source"], "estimate")
         self.assertIsNone(ledger["observed_taker_fee_pct"])
-        self.assertLess(
+        self.assertEqual(
             Decimal(ledger["cash"]),
             Decimal("40") - Decimal("0.0001") * Decimal("72650.36"),
         )
+        self.assertEqual(ledger["positions"]["BTC"]["units"], "0.00009991")
 
     async def test_a_fee_in_a_currency_the_ledger_cannot_use_is_an_estimate(self):
         await self.synced()
@@ -1220,6 +1237,246 @@ class RevolutXTests(unittest.IsolatedAsyncioTestCase):
             await self.svc.order(1, "sell", "SUI", "1")
         self.assertIsNone(self.ledger()["uncertain_order"])
         self.assertFalse(self.posts())
+
+    # ── buy fee in the coin, balances and whole-position exits (live 2026-10-29) ──
+
+    def fine_eth_lot(self):
+        pairs = json.loads(json.dumps(PAIRS))
+        pairs["ETH/EUR"]["base_step"] = "0.00000001"
+        pairs["ETH/EUR"]["min_order_size"] = "0.000001"
+        self.svc.pairs_raw = pairs
+
+    def balance(self, currency, available):
+        return {
+            "currency": currency,
+            "available": available,
+            "reserved": "0",
+            "total": available,
+        }
+
+    def balance_reads(self):
+        """GET /balances calls since the sync that seeded the ledger."""
+        reads = [p for m, p, q, b in self.svc.sent if p == "/1.0/balances"]
+        return reads[1:]
+
+    async def test_the_live_eth_buy_without_a_reported_fee_matches_the_account(self):
+        # 2026-10-29 14:22 UTC: the read-back carried no fee; the account held
+        # 0.0057273 ETH for a fill of 0.00573246 (0.09% taker fee, charged in ETH).
+        self.fine_eth_lot()
+        await self.synced()
+        record = info("buy", "ETH", "0.00573246", "0.00573246", "2108.54")
+        del record["total_fee"], record["fee_currency"]
+        self.svc.record = record
+        self.svc.balances_after = [
+            self.balance("EUR", "27.92"),
+            self.balance("SUI", "5"),
+            self.balance("ETH", "0.0057273"),
+        ]
+        result = await self.svc.order(1, "buy", "ETH", "12.1")
+        ledger = self.ledger()
+        value = Decimal("0.00573246") * Decimal("2108.54")
+        self.assertEqual(result["order"]["estimated_fee"], "0.00000516")
+        self.assertEqual(
+            Decimal(ledger["positions"]["ETH"]["units"]), Decimal("0.0057273")
+        )
+        self.assertEqual(Decimal(ledger["positions"]["ETH"]["cost"]), value)
+        self.assertEqual(Decimal(ledger["cash"]), Decimal("40") - value)
+        self.assertEqual(
+            (ledger["orders"][-1]["fee_currency"], ledger["orders"][-1]["fee_source"]),
+            ("ETH", "estimate"),
+        )
+        # the estimate was right: nothing to correct, and it says so
+        self.assertNotIn("balance_correction", result["order"])
+        self.assertNotIn("units_source", ledger["positions"]["ETH"])
+        self.assertEqual(len(self.balance_reads()), 2)  # before the order, once after
+
+    async def test_a_buy_with_a_reported_fee_does_not_read_the_balances_again(self):
+        await self.synced()
+        self.svc.record = info(
+            "buy", "ETH", "0.002", "0.002", "2108.54", "0.0000018", "ETH"
+        )
+        result = await self.svc.order(1, "buy", "ETH", "4.3")
+        self.assertEqual(len(self.balance_reads()), 1)  # the pre-order check only
+        self.assertNotIn("balance_check", result["order"])
+        self.assertNotIn("balance_correction", result["order"])
+        self.assertEqual(self.ledger()["positions"]["ETH"]["units"], "0.0019982")
+
+    async def test_the_balance_read_after_an_estimated_buy_corrects_the_ledger(self):
+        await self.synced()
+        record = info("buy", "BTC", "0.0001", "0.0001", "72650.36")
+        del record["total_fee"], record["fee_currency"]
+        self.svc.record = record
+        # the account holds less BTC than the estimate says, and less cash
+        self.svc.balances_after = [
+            self.balance("EUR", "30"),
+            self.balance("SUI", "5"),
+            self.balance("BTC", "0.00009"),
+        ]
+        result = await self.svc.order(1, "buy", "BTC", "7.3")
+        ledger = self.ledger()
+        position = ledger["positions"]["BTC"]
+        self.assertEqual(position["units"], "0.00009")
+        self.assertEqual(position["units_source"], "account_balance")
+        self.assertEqual(ledger["cash"], "30")
+        self.assertEqual(ledger["cash_source"], "account_balance")
+        correction = result["order"]["balance_correction"]
+        self.assertEqual(correction["units"]["ledger"], "0.00009991")
+        self.assertEqual(correction["units"]["set_to"], "0.00009")
+        self.assertEqual(correction["units_source"], "account_balance")
+        self.assertEqual(ledger["orders"][-1]["balance_correction"], correction)
+
+    async def test_a_ledger_within_one_lot_of_the_account_is_left_alone(self):
+        await self.synced()
+        record = info("buy", "BTC", "0.0001", "0.0001", "72650.36")
+        del record["total_fee"], record["fee_currency"]
+        self.svc.record = record
+        self.svc.balances_after = [
+            self.balance("EUR", "32.74"),
+            self.balance("BTC", "0.00009990"),  # one lot (1e-8) below the ledger
+        ]
+        result = await self.svc.order(1, "buy", "BTC", "7.3")
+        self.assertEqual(self.ledger()["positions"]["BTC"]["units"], "0.00009991")
+        self.assertNotIn("balance_correction", result["order"])
+
+    async def test_more_in_the_account_than_in_the_ledger_is_never_adopted(self):
+        await self.synced()
+        record = info("buy", "BTC", "0.0001", "0.0001", "72650.36")
+        del record["total_fee"], record["fee_currency"]
+        self.svc.record = record
+        self.svc.balances_after = [
+            self.balance("EUR", "900"),
+            self.balance("BTC", "0.5"),  # the account has coins outside the allocation
+        ]
+        await self.svc.order(1, "buy", "BTC", "7.3")
+        ledger = self.ledger()
+        self.assertEqual(ledger["positions"]["BTC"]["units"], "0.00009991")
+        self.assertEqual(
+            Decimal(ledger["cash"]),
+            Decimal("40") - Decimal("0.0001") * Decimal("72650.36"),
+        )
+
+    async def test_a_missing_balance_for_the_coin_just_bought_is_flagged_not_erased(
+        self,
+    ):
+        await self.synced()
+        record = info("buy", "BTC", "0.0001", "0.0001", "72650.36")
+        del record["total_fee"], record["fee_currency"]
+        self.svc.record = record  # the fake shows no BTC at all
+        result = await self.svc.order(1, "buy", "BTC", "7.3")
+        self.assertEqual(self.ledger()["positions"]["BTC"]["units"], "0.00009991")
+        self.assertIn("no BTC balance", result["order"]["balance_check"])
+
+    async def test_a_failed_balance_read_after_the_fill_never_undoes_the_fill(self):
+        await self.synced()
+        record = info("buy", "BTC", "0.0001", "0.0001", "72650.36")
+        del record["total_fee"], record["fee_currency"]
+        self.svc.record = record
+        self.svc.balances_after_error = True
+        result = await self.svc.order(1, "buy", "BTC", "7.3")
+        ledger = self.ledger()
+        self.assertIsNone(ledger["uncertain_order"])
+        self.assertEqual(ledger["positions"]["BTC"]["units"], "0.00009991")
+        self.assertEqual(result["order"]["balance_check"], "unavailable")
+
+    async def test_selling_the_whole_position_is_sized_from_the_real_balance(self):
+        # The ledger still holds the full fill (0.00573246 ETH); the account holds
+        # 0.0057273. Asking for the ledger amount used to be refused as insufficient.
+        self.fine_eth_lot()
+        await self.synced()
+        self.set_ledger(
+            positions={"ETH": {"units": "0.00573246", "cost": "12.09"}}, cash="10"
+        )
+        self.svc.balances = [
+            self.balance("EUR", "40"),
+            self.balance("ETH", "0.0057273"),
+        ]
+        self.svc.balances_after = [
+            self.balance("EUR", "52"),
+            self.balance("ETH", "0"),
+        ]
+        self.svc.record = info("sell", "ETH", "0.0057273", "0.0057273", "2108.22")
+        await self.svc.order(1, "sell", "ETH", "0.00573246")
+        self.assertEqual(
+            self.posts()[-1]["order_configuration"]["limit"]["base_size"], "0.0057273"
+        )
+        ledger = self.ledger()
+        # nothing of the position is left on a ledger that has nothing to sell
+        self.assertNotIn("ETH", ledger["positions"])
+        self.assertIsNone(ledger["uncertain_order"])
+
+    async def test_a_whole_exit_with_a_matching_balance_is_sent_unchanged(self):
+        await self.synced()
+        self.svc.record = info("sell", "SUI", "5", "5", "2.995", "0.0135", "EUR")
+        await self.svc.order(1, "sell", "SUI", "5")
+        self.assertEqual(
+            self.posts()[-1]["order_configuration"]["limit"]["base_size"], "5"
+        )
+        self.assertEqual(len(self.balance_reads()), 1)
+
+    async def test_a_whole_exit_below_the_pair_minimum_says_so_and_sends_nothing(self):
+        self.fine_eth_lot()
+        await self.synced()
+        self.set_ledger(positions={"ETH": {"units": "0.00573246", "cost": "12.09"}})
+        self.svc.balances = [
+            self.balance("EUR", "40"),
+            self.balance("ETH", "0.0000005"),  # below the 0.000001 ETH minimum
+        ]
+        with self.assertRaises(ValueError) as caught:
+            await self.svc.order(1, "sell", "ETH", "0.00573246")
+        self.assertIn("Insufficient available Revolut X balance", str(caught.exception))
+        self.assertIn("minimum order size", str(caught.exception))
+        self.assertFalse(self.posts())
+        self.assertIsNone(self.ledger()["uncertain_order"])
+
+    async def test_a_partial_exit_is_never_resized_silently(self):
+        await self.synced()
+        self.svc.balances[1] = self.balance("SUI", "4")
+        with self.assertRaises(ValueError) as caught:
+            await self.svc.order(1, "sell", "SUI", "4.5")
+        self.assertIn("Insufficient available Revolut X balance", str(caught.exception))
+        self.assertFalse(self.posts())
+
+    async def test_a_sale_without_a_reported_fee_keeps_the_estimate_in_euros(self):
+        await self.synced()
+        record = info("sell", "SUI", "2", "2", "3.0")
+        del record["total_fee"], record["fee_currency"]
+        self.svc.record = record
+        self.svc.balances_after = [
+            self.balance("EUR", "45.9946"),
+            self.balance("SUI", "3"),
+        ]
+        result = await self.svc.order(1, "sell", "SUI", "2")
+        ledger = self.ledger()
+        fee = Decimal("6") * Decimal("0.09") / 100
+        self.assertEqual(Decimal(ledger["cash"]), Decimal("40") + 6 - fee)
+        self.assertEqual(ledger["positions"]["SUI"]["units"], "3")  # the lot is whole
+        row = ledger["orders"][-1]
+        self.assertEqual((row["fee_currency"], row["fee_source"]), ("EUR", "estimate"))
+        self.assertEqual(result["order"]["estimated_fee_currency"], "EUR")
+        self.assertNotIn("balance_correction", result["order"])
+
+    async def test_reconcile_books_an_estimated_buy_fee_in_the_coin(self):
+        await self.synced()
+        self.svc.fail_place = True
+        with self.assertRaises(ValueError):
+            await self.svc.order(1, "buy", "BTC", "7.3")
+        self.svc.fail_place = False
+        self.age_pending()
+        record = info("buy", "BTC", "0.0001", "0.0001", "72650.36", cid=self.svc.cid())
+        del record["total_fee"], record["fee_currency"]
+        self.svc.historical = [record]
+        self.svc.balances = [
+            self.balance("EUR", "40"),
+            self.balance("BTC", "0.00009991"),
+        ]
+        await self.svc.reconcile(1)
+        ledger = self.ledger()
+        self.assertEqual(ledger["positions"]["BTC"]["units"], "0.00009991")
+        self.assertEqual(
+            Decimal(ledger["cash"]),
+            Decimal("40") - Decimal("0.0001") * Decimal("72650.36"),
+        )
+        self.assertEqual(ledger["orders"][-1]["fee_currency"], "BTC")
 
     # ── reconcile ──
 

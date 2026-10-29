@@ -1039,6 +1039,9 @@ class RevolutXService:
             "symbol": symbol,
             "pair": pair,
             "quantity": quantity,
+            "base_step": market["base_step"],
+            "min_quantity": market["min_quantity"],
+            "min_value": market["min_value"],
             "limit_price": limit,
             "bid": bid,
             "ask": ask,
@@ -1163,12 +1166,23 @@ class RevolutXService:
             accounts = {
                 a["currency"]: a for a in (await self.accounts(user_id))["accounts"]
             }
+            clamped = False
             if plan["side"] == "buy":
                 have = Decimal(accounts.get(QUOTE, {}).get("available", "0"))
                 need = plan["quantity"] * plan["limit_price"] * (1 + FEE_HEADROOM)
             else:
                 have = Decimal(accounts.get(symbol, {}).get("available", "0"))
                 need = plan["quantity"]
+                units = Decimal(position["units"])
+                whole = plan["quantity"] >= _round_down(units, plan["base_step"])
+                if whole and have < need:
+                    # Selling the WHOLE position: the ledger can read a little more
+                    # than the account holds (a taker fee charged in the coin, rounding),
+                    # and asking for more than is available is refused. Size the exit
+                    # from what the account really has.
+                    clamped = True
+                    self._size_whole_exit(plan, symbol, have)
+                    need = plan["quantity"]
             if have < need:
                 raise ValueError("Insufficient available Revolut X balance")
             recent = [o for o in ledger["orders"] if time.time() - o["time"] < 60]
@@ -1234,12 +1248,107 @@ class RevolutXService:
                 detail["fills"] = await self._fills(user_id, order_id, detail)
             except Exception:
                 raise ValueError(_UNCERTAIN) from None
-            self._apply_fill(ledger, plan["side"], symbol, detail)
+            self._apply_fill(
+                ledger, plan["side"], symbol, detail, base_step=plan["base_step"]
+            )
+            await self._check_balances(
+                user_id,
+                ledger,
+                plan["side"],
+                symbol,
+                detail,
+                plan["base_step"],
+                clamped,
+            )
             ledger["enabled"] = (
                 self.connected(user_id) and _read_ledger(user_id)["enabled"]
             )
             _write(_root(user_id) / "ledger.json", ledger)
             return {"order": self._summary(detail), "status": self.status(user_id)}
+
+    @staticmethod
+    def _size_whole_exit(plan, symbol, available):
+        """Resize a whole-position sale to min(ledger units, available balance)."""
+        pair = plan["pair"]
+        quantity = _round_down(min(plan["quantity"], available), plan["base_step"])
+        if quantity <= 0 or quantity < plan["min_quantity"]:
+            raise ValueError(
+                f"Insufficient available Revolut X balance: {fmt(available)} {symbol} "
+                f"is available, below the {pair} minimum order size of "
+                f"{fmt(plan['min_quantity'])} {symbol}; nothing was sent"
+            )
+        if quantity * plan["limit_price"] < plan["min_value"]:
+            raise ValueError(
+                f"Insufficient available Revolut X balance: the {fmt(available)} "
+                f"{symbol} available is worth less than the {pair} minimum order "
+                f"value of {fmt(plan['min_value'])} EUR; nothing was sent"
+            )
+        plan["quantity"] = quantity
+
+    async def _check_balances(
+        self, user_id, ledger, side, symbol, detail, base_step, force=False
+    ):
+        """After a fill whose fee was only an estimate (or a whole-position exit that
+        had to be resized), read the real balances ONCE and never let the ledger claim
+        more than the account holds.
+
+        Revolut X charges the BUY fee in the coin, so an estimated fee can be a few
+        units off. Only a downward correction is made: the bot allocation may be a part
+        of the account, so more in the account than in the ledger is not touched.
+        Best effort: a failed read leaves the ledger as the fill set it.
+        """
+        if detail.get("fee_source") != "estimate" and not force:
+            return
+        if _decimal(detail.get("filled_quantity"), Decimal(0)) <= 0:
+            return
+        try:
+            accounts = {
+                a["currency"]: a for a in (await self.accounts(user_id))["accounts"]
+            }
+        except Exception:  # noqa: BLE001 - the fill is already booked
+            detail["balance_check"] = "unavailable"
+            return
+        correction = {}
+        position = ledger["positions"].get(symbol)
+        available = _decimal(accounts.get(symbol, {}).get("available"), Decimal(0))
+        if position:
+            units = Decimal(position["units"])
+            if units - available > base_step:
+                if available <= 0 and side == "buy":
+                    # The coin just bought shows no balance at all: more likely a
+                    # stale read than a lost fill. Say so, do not erase the position.
+                    detail["balance_check"] = (
+                        f"no {symbol} balance read after the buy; ledger not changed"
+                    )
+                else:
+                    new_units = max(min(units, available), Decimal(0))
+                    correction["units"] = {
+                        "ledger": fmt(units),
+                        "account_available": fmt(available),
+                        "set_to": fmt(new_units),
+                    }
+                    if new_units <= 0:
+                        del ledger["positions"][symbol]
+                    else:
+                        position["units"] = fmt(new_units)
+                        position["units_source"] = "account_balance"
+        cash = Decimal(ledger["cash"])
+        eur = _decimal(accounts.get(QUOTE, {}).get("available"), Decimal(0))
+        if QUOTE in accounts and cash > eur:
+            correction["cash"] = {
+                "ledger": fmt(cash),
+                "account_available": fmt(eur),
+                "set_to": fmt(eur),
+            }
+            ledger["cash"] = fmt(eur)
+            ledger["cash_source"] = "account_balance"
+        if correction:
+            correction["units_source"] = "account_balance"
+            detail["balance_correction"] = correction
+            if ledger["orders"]:
+                ledger["orders"][-1]["balance_correction"] = correction
+        elif "balance_check" not in detail:
+            detail["balance_check"] = "ledger within one lot of the account balance"
 
     @staticmethod
     def _check_cost(estimate):
@@ -1383,13 +1492,19 @@ class RevolutXService:
             "total_fee",
             "fee_currency",
             "fee_source",
+            "estimated_fee",
+            "estimated_fee_currency",
+            "balance_correction",
+            "balance_check",
             "fills",
             "reject_reason",
             "updated",
         )
         return {k: detail.get(k) for k in keys if detail.get(k) is not None}
 
-    def _apply_fill(self, ledger, side, symbol, detail):
+    def _apply_fill(
+        self, ledger, side, symbol, detail, base_step=Decimal("0.00000001")
+    ):
         status = detail["status"]
         if status not in FINAL_STATUSES and not (
             status == "partially_filled"
@@ -1417,9 +1532,12 @@ class RevolutXService:
             value = fills_value
         elif value <= 0 and quantity > 0 and average:
             value = quantity * average
-        # The fee: the order object carries total_fee and fee_currency. When the real
-        # figure is missing, the published taker rate is applied and LABELLED an
-        # estimate; it never silently becomes zero.
+        # The fee: the order object carries total_fee and fee_currency, but it may not
+        # carry them yet when it is read back. When the real figure is missing, the
+        # published taker rate is applied and LABELLED an estimate; it never silently
+        # becomes zero. VERIFIED live (2026-10-29): a BUY's fee is charged in the BASE
+        # currency (the balance is the filled quantity minus the fee), a SELL's in EUR,
+        # so an estimated buy fee reduces the position units and not the cash.
         reported = _decimal(detail.get("total_fee"))
         fee_currency = str(detail.get("fee_currency") or "").upper()
         fee_in_base = fee_currency == symbol
@@ -1433,8 +1551,16 @@ class RevolutXService:
             fee, fee_source = reported, "reported"
         elif quantity > 0:
             rate = taker_rate(ledger)["taker_pct"]
-            fee, fee_source = value * rate / 100, "estimate"
-            fee_currency, fee_in_base = QUOTE, False
+            fee_source = "estimate"
+            if side == "buy":
+                # Rounded UP to the lot: the ledger must never hold more than the account.
+                fee = min(_round_up(quantity * rate / 100, base_step), quantity)
+                fee_currency, fee_in_base = symbol, True
+            else:
+                fee = value * rate / 100
+                fee_currency, fee_in_base = QUOTE, False
+            detail["estimated_fee"] = fmt(fee)
+            detail["estimated_fee_currency"] = fee_currency
         else:
             fee, fee_source, fee_currency = Decimal(0), "none", QUOTE
         fee_units = fee if fee_in_base else Decimal(0)
@@ -1595,7 +1721,16 @@ class RevolutXService:
                 if not settled:
                     raise ValueError("The order is still open; reconcile again shortly")
             detail["fills"] = await self._fills(user_id, detail["order_id"], detail)
-            self._apply_fill(ledger, pending["side"], pending["symbol"], detail)
+            try:
+                base_step = (await self._market_for(pending["symbol"]))["base_step"]
+            except Exception:  # noqa: BLE001 - the lot only rounds an estimated fee
+                base_step = Decimal("0.00000001")
+            self._apply_fill(
+                ledger, pending["side"], pending["symbol"], detail, base_step=base_step
+            )
+            await self._check_balances(
+                user_id, ledger, pending["side"], pending["symbol"], detail, base_step
+            )
             ledger["enabled"] = False
             _write(_root(user_id) / "ledger.json", ledger)
             return self.status(user_id)
