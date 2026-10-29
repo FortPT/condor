@@ -11,6 +11,7 @@ import {
   formatCurrencyPnl,
   pnlColor,
 } from "@/lib/formatters";
+import { historyChange } from "@/lib/portfolio-change";
 
 /**
  * The window the change beside the total is measured over.
@@ -200,20 +201,16 @@ export function DockPortfolio({ server }: { server: string }) {
   );
 
   /**
-   * The day's change, absolute and relative.
+   * The day's change, absolute and relative, as the server worked it out.
    *
-   * `null` rather than zero whenever the history cannot answer — a single
-   * point, or a first point of zero that no percentage can be taken against.
-   * A total with a "+0.00%" beside it that means "we don't know" is worse than
-   * a total on its own.
+   * Not the first point of the history against the last: that series joins
+   * sources that start at different times and holds deposits, which is how a
+   * 55 EUR desk once read +491%. The server nets recorded deposits and
+   * withdrawals and only answers when every source has a value at the window
+   * start; otherwise this is unknown, and a total with a made-up gain beside it
+   * is worse than a total on its own.
    */
-  const change = useMemo(() => {
-    const points = history?.points ?? [];
-    if (points.length < 2) return null;
-    const first = points[0].total_usd;
-    const last = points[points.length - 1].total_usd;
-    return { abs: last - first, pct: first > 0 ? ((last - first) / first) * 100 : null };
-  }, [history]);
+  const change = useMemo(() => historyChange(history), [history]);
 
   const footer = (
     <button
@@ -267,11 +264,16 @@ export function DockPortfolio({ server }: { server: string }) {
         <span className="font-mono text-lg tabular-nums">
           {formatCurrency(fromUsd(total), currencySymbol)}
         </span>
-        {change ? (
+        {change.known ? (
           <span
             className="font-mono text-[11px] tabular-nums"
             style={{ color: pnlColor(change.abs) }}
-            title="Change over the last 24 hours"
+            title={[
+              "Change over the last 24 hours, net of recorded deposits and withdrawals",
+              change.note,
+            ]
+              .filter(Boolean)
+              .join(". ")}
           >
             {formatCurrencyPnl(fromUsd(change.abs), currencySymbol)}
             {change.pct !== null &&
@@ -280,9 +282,10 @@ export function DockPortfolio({ server }: { server: string }) {
         ) : (
           <span
             className="text-[11px] text-[var(--color-text-muted)]"
-            title="Not enough history on this server to measure a day's change"
+            data-testid="portfolio-change-unknown"
+            title={change.hint}
           >
-            24h unknown
+            24h —
           </span>
         )}
       </div>

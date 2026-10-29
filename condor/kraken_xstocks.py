@@ -9,7 +9,7 @@ The ledger owns only this bot's allocation, in USD, keyed by the plain ticker
 (``AAPL``) while Kraken's own names are ``AAPLx`` (asset) and ``AAPLxUSD`` (pair). It
 is seeded from the Kraken account by :meth:`KrakenXStocksService.sync_from_account`.
 
-VERIFIED (public data, via the paper test in :mod:`condor.xstocks_paper`): the pair
+VERIFIED (public data, via :mod:`condor.xstocks_market`): the pair
 list, ``asset_class=tokenized_asset`` on the public endpoints, tick and lot sizes.
 
 NOT VERIFIED against a real account (comments say so where it matters): the request
@@ -36,13 +36,13 @@ from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from urllib.parse import urlencode
 
 from condor import crypto_com_scorecard as scorecard
-from condor import xstocks_paper
+from condor import xstocks_market
 from condor.fsutil import atomic_write_json
 from condor.paths import data_dir
 
 VENUE = "kraken_xstocks"
 BASE_URL = "https://api.kraken.com"
-ASSET_CLASS = xstocks_paper.ASSET_CLASS
+ASSET_CLASS = xstocks_market.ASSET_CLASS
 QUOTE = "USD"
 # Kraken's name for US dollars in balances; "USD" is accepted defensively.
 USD_ASSETS = ("ZUSD", "USD")
@@ -74,7 +74,7 @@ ORDER_POLL_WAIT_SEC = 1.0
 # Kraken's private-call counter (starter tier: 15, decaying 0.33 a second) is the
 # binding limit; stay well inside it.
 RATE_LIMIT_PER_MINUTE = 18
-# Round-trip cost when the account's fee is unknown: the paper test's 0.40% taker fee
+# Round-trip cost when the account's fee is unknown: a 0.40% taker fee
 # each way plus a little spread. With a known taker fee the scorecard uses
 # 2 * fee + SPREAD_ALLOWANCE_PCT.
 DEFAULT_ROUND_TRIP_COST_PCT = 0.85
@@ -110,7 +110,7 @@ def amount(value) -> Decimal:
 
 
 def symbol_of(value: str) -> str:
-    return xstocks_paper.symbol_of(value)
+    return xstocks_market.symbol_of(value)
 
 
 def fmt(value: Decimal) -> str:
@@ -260,7 +260,7 @@ class KrakenXStocksService:
     def __init__(self):
         self.locks = defaultdict(asyncio.Lock)
         self.calls = defaultdict(deque)
-        self.paper = xstocks_paper.service
+        self.market_feed = xstocks_market.service
         self.clock = time.time
         self._fees = {}
         self._last_nonce = 0
@@ -285,7 +285,7 @@ class KrakenXStocksService:
             ) from None
 
     def _market(self):
-        return xstocks_paper.us_market_open(self.clock())
+        return xstocks_market.us_market_open(self.clock())
 
     def status(self, user_id):
         ledger = _read_ledger(user_id)
@@ -377,8 +377,8 @@ class KrakenXStocksService:
         return data.get("result") or {}
 
     async def public(self, path, params=None, *, asset_class=True):
-        """A public Kraken read; the paper test's reader adds ``asset_class``."""
-        return await self.paper._get(path, params or {}, asset_class=asset_class)
+        """A public Kraken read; the market reader adds ``asset_class``."""
+        return await self.market_feed._get(path, params or {}, asset_class=asset_class)
 
     async def eur_usd(self):
         """USD per euro from Kraken's plain EURUSD pair, or None (cached a minute)."""
@@ -432,7 +432,7 @@ class KrakenXStocksService:
     async def markets(self):
         """``{"AAPL": {"symbol", "pair", "asset", "row"}}`` for the online xStocks pairs."""
         found = {}
-        for pair, row in (await self.paper.pair_rows()).items():
+        for pair, row in (await self.market_feed.pair_rows()).items():
             wsbase = str(row.get("wsname", "")).split("/")[0]
             symbol = wsbase[:-1].upper()
             # `base` is Kraken's asset code for the token; it is what balances are
@@ -460,7 +460,7 @@ class KrakenXStocksService:
         """``{pair: raw Kraken ticker}`` for the named pairs, one request per 40."""
         names = list(dict.fromkeys(pairs))
         found = {}
-        step = xstocks_paper.TICKER_CHUNK
+        step = xstocks_market.TICKER_CHUNK
         for start in range(0, len(names), step):
             chunk = names[start : start + step]
             result = await self.public("Ticker", {"pair": ",".join(chunk)})
@@ -523,7 +523,11 @@ class KrakenXStocksService:
         rows = []
         for symbol, market in wanted.items():
             ticker = tickers.get(market["pair"])
-            row = self.paper._row(symbol, market["pair"], ticker) if ticker else None
+            row = (
+                self.market_feed._row(symbol, market["pair"], ticker)
+                if ticker
+                else None
+            )
             if row:
                 steps = self._steps(market["row"])
                 row["min_quantity_step"] = fmt(steps["qty_step"])
@@ -542,7 +546,7 @@ class KrakenXStocksService:
         return {"quote": QUOTE, "market": self._market(), "stocks": shown}
 
     async def candles(self, user_id, symbol, timeframe="15m", count=96):
-        return await self.paper.candles(symbol, timeframe, count)
+        return await self.market_feed.candles(symbol, timeframe, count)
 
     async def book(self, user_id, symbol, depth=10):
         market = await self._market_for(symbol)

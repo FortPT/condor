@@ -66,9 +66,8 @@ def test_profiles_discoverable_with_enforced_exact_tool_boundaries(registry, slu
     assert "run_code" in allowlist_mutes(slug)
     assert "manage_agents" in allowlist_mutes(slug)
     assert "manage_agent_controllers" in allowlist_mutes(slug)
-    # Neither the Crypto.com tool nor the paper test is reachable from this crew.
+    # The Crypto.com tool is not reachable from this crew.
     assert "crypto_com_exchange" in allowlist_mutes(slug)
-    assert "xstocks_paper" in allowlist_mutes(slug)
 
 
 def test_only_the_analyst_and_reviewer_have_no_market_or_account_tool(registry):
@@ -221,10 +220,9 @@ def test_nothing_in_the_crew_names_another_venues_tool(registry):
     for slug in TOOLS:
         text = registry.get(slug).instructions
         assert not re.search(r"\bcrypto_com_exchange\b", text), slug
-        assert not re.search(r"\bxstocks_paper\b", text), slug
         assert not re.search(r"\b(?:get_prices|get_market_data|run_code)\b", text), slug
     loop = StrategyStore().get(COORDINATOR, "intraday").instructions
-    assert not re.search(r"\b(?:crypto_com_exchange|xstocks_paper)\b", loop)
+    assert not re.search(r"\bcrypto_com_exchange\b", loop)
 
 
 def _tool_node():

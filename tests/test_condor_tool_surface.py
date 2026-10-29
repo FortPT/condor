@@ -24,7 +24,6 @@ from mcp_servers.condor.tools import servers as servers_tool
 
 EXPECTED_TOOLS = {
     "crypto_com_exchange",
-    "xstocks_paper",
     "kraken_xstocks",
     "revolut_x",
     "native_portfolio",

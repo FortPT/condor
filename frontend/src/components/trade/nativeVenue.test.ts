@@ -9,8 +9,8 @@ const kraken = NATIVE_VENUES["kraken-xstocks"];
 const row = (symbol: string, bid: string): VenueRow => ({ symbol, bid, change_pct: null, volume: null });
 
 describe("native venue helpers", () => {
-  it("recognises only the native workspaces", () => {
-    expect(["revolut-x", "kraken-xstocks", "xstocks-paper"].every(isNativeVenueKey)).toBe(true);
+  it("recognises only the two native workspaces", () => {
+    expect(["revolut-x", "kraken-xstocks"].every(isNativeVenueKey)).toBe(true);
     expect(["crypto-exchange", "hummingbot", "", null].some(isNativeVenueKey)).toBe(false);
   });
 
@@ -48,20 +48,6 @@ describe("native venue helpers", () => {
     expect(accountValue(kraken, "ZUSD", "40", known)).toBe(40);
     expect(accountValue(kraken, "AAPLx", "2", known)).toBe(540);
     expect(accountValue(revolut, "SUI", "n/a", known)).toBeNull();
-  });
-
-  it("reads the simulated account's USD and tokenised-stock balances like Kraken's, on its own routes", () => {
-    const paper = NATIVE_VENUES["xstocks-paper"];
-    expect(paper.base).toBe("/api/v1/xstocks-paper");
-    expect(paper.paper).toBe(true);
-    const known = new Map([["AAPL", row("AAPL", "270")]]);
-    expect(accountValue(paper, "USD", "40", known)).toBe(40);
-    expect(accountValue(paper, "AAPLx", "2", known)).toBe(540);
-    expect(rowsOf(paper, { stocks: [{ symbol: "AAPL", bid: "2", change_since_open_pct: "0.5", volume_24h_usd: 12 }] })[0])
-      .toMatchObject({ symbol: "AAPL", change_pct: "0.5", volume: 12 });
-    // the paper history carries a numeric closetm in seconds, like Kraken's
-    expect(historyOf(paper, [{ order_id: "paper-1", pair: "AAPLxUSD", side: "buy", status: "closed", vol_exec: "0.1", avg_price: "270", cost: "27", fee: "0.02", fee_currency: "USD", closetm: 1_793_219_991 }])[0])
-      .toMatchObject({ time: 1_793_219_991_000, quantity: "0.1", fee: "0.02 USD" });
   });
 
   it("values the bot's positions and its equity, and refuses a total with an unpriced holding", () => {

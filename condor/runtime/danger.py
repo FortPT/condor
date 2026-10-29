@@ -44,15 +44,9 @@ LEVERAGED_EXECUTOR_TOOLS = CREATE_EXECUTOR_TOOLS - {"create_lp_executor"}
 LEVERAGE_TOOL = "set_account_position_mode_and_leverage"
 
 #: The native live-order tools. Only ``order`` moves money (the rest read, or log a
-#: paper call); a configured loop may place it without a prompt, an attended
+#: scorecard call); a configured loop may place it without a prompt, an attended
 #: session confirms it.
 LIVE_ORDER_TOOLS = {"crypto_com_exchange", "kraken_xstocks", "revolut_x"}
-
-#: The paper crew's tool. Its ``order`` fills against a simulated ledger on the
-#: public order book: no money, no exchange account, so it never needs a human
-#: (it is not in ``LIVE_ORDER_TOOLS``), but it does change the paper account, so
-#: the action log records it like any other order.
-PAPER_ORDER_TOOLS = {"xstocks_paper"}
 
 # Tools that require user confirmation before execution
 DANGEROUS_TOOLS = {
@@ -608,22 +602,6 @@ def is_mutating_tool_call(tool_call: dict[str, Any]) -> bool:
                 "coins",
                 "candles",
                 "book",
-                "preview",
-                "predict",
-                "scorecard",
-            },
-        )
-    if tool_name in PAPER_ORDER_TOOLS:
-        # Simulated, but a state change all the same; `predict` only logs a call.
-        return _is_mutating_action(
-            tool_call,
-            {"order"},
-            {
-                "status",
-                "valuation",
-                "history",
-                "coins",
-                "candles",
                 "preview",
                 "predict",
                 "scorecard",

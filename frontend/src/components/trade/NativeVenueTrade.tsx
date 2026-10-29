@@ -1,12 +1,11 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
 import { ExchangeResult } from "@/components/settings/CryptoComExchange";
 import { apiFetch, type CandleData } from "@/lib/api";
-import { PaperReset } from "./PaperReset";
 import { CandleChart, Change, ScorecardPanel } from "./TradeParts";
 import {
-  PAPER_BANNER, accountValue, accountsOf, equityOf, historyOf, holdingsOf, rowsOf, useNativeStatus,
+  accountValue, accountsOf, equityOf, historyOf, holdingsOf, rowsOf, useNativeStatus,
   type NativeVenue, type VenueRow,
 } from "./nativeVenue";
 import { money, num, price } from "./tradeFormat";
@@ -30,10 +29,6 @@ const volume = (value: string | number | null) => {
  * orders and the paper scorecard. There is no order ticket: the agent loop trades, and
  * connecting, syncing and enabling live in Settings.
  *
- * The same panel serves the SIMULATED Kraken xStocks (paper) account (`venue.paper`): a
- * banner says no real money is involved, there is no Settings step (the account opens with
- * its starting cash when the paper crew first values it) and the owner can reset it.
- *
  * The cadence is the Crypto.com panel's: status every 10 s and the top markets every
  * 30 s (public data, cached on the server). Balances, history and valuation are read once
  * and on request, never polled, because Revolut X's public endpoints allow one request a
@@ -41,8 +36,6 @@ const volume = (value: string | number | null) => {
  */
 export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
   const { base, key, title } = venue;
-  const paper = !!venue.paper;
-  const queryClient = useQueryClient();
   const status = useNativeStatus(venue);
   const data = status.data;
   const ledger = data?.ledger;
@@ -114,12 +107,7 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
     retry: false,
   });
   // Valuation reads a live book per position on Revolut X, so it runs on request only.
-  // The paper account is opened by its first valuation, so that also refreshes the status.
-  const valuation = useMutation({
-    mutationFn: () => apiFetch<unknown>(`${base}/valuation`),
-    retry: false,
-    onSuccess: () => { if (paper) void queryClient.invalidateQueries({ predicate: (query) => String(query.queryKey[0]).startsWith(key) }); },
-  });
+  const valuation = useMutation({ mutationFn: () => apiFetch<unknown>(`${base}/valuation`), retry: false });
 
   const holdings = holdingsOf(ledger, known);
   const cash = num(ledger?.cash);
@@ -130,32 +118,23 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
   const error = status.error || top.error || found.error || accounts.error || history.error || valuation.error;
 
   return <div className="space-y-4" data-venue={key}>
-    {paper && <div role="note" data-paper-banner className="rounded border border-[var(--color-red)] px-3 py-2 text-sm font-semibold">
-      {PAPER_BANNER}
-      <span className="ml-2 font-normal">A simulated account filled from Kraken's live public order book, with the taker fee{data?.assumptions?.taker_fee_pct ? ` (${data.assumptions.taker_fee_pct}%)` : ""} and a slippage allowance{data?.assumptions?.slippage_allowance_pct ? ` (${data.assumptions.slippage_allowance_pct}%)` : ""} charged. It is not part of any real total.</span>
-    </div>}
     <div className="flex flex-wrap items-center gap-3">
       <h1 className="text-xl font-semibold">{title}</h1>
-      <span className="text-sm">{paper ? (connected ? "Account opened" : data ? "Not opened yet" : "Checking account…") : (connected ? "Connected" : data ? "not connected" : "Checking connection…")} · Trading: {data?.enabled ? "enabled" : "paused"}</span>
+      <span className="text-sm">{connected ? "Connected" : data ? "not connected" : "Checking connection…"} · Trading: {data?.enabled ? "enabled" : "paused"}</span>
       {ledger && <span className="text-sm">Cash {money(cash, quote)} · {held.length} holdings</span>}
       {ledger && <span className="text-sm">Equity {equity === null ? "—" : money(equity, quote)}</span>}
       {data?.market && <span className="text-sm">US market {data.market.open ? "open" : "closed"}{data.market.note ? ` · ${data.market.note}` : ""}</span>}
       <div className="ml-auto flex flex-wrap gap-2">
         <button className={button} disabled={!connected || accounts.isFetching} onClick={() => void accounts.refetch()}>{accounts.isFetching ? "Reading balances…" : "Refresh balances"}</button>
         <button className={button} disabled={!connected || history.isFetching} onClick={() => void history.refetch()}>{history.isFetching ? "Reading history…" : "Refresh history"}</button>
-        <button className={button} disabled={(!connected && !paper) || valuation.isPending} onClick={() => valuation.mutate()}>{valuation.isPending ? "Valuing…" : "Value allocation"}</button>
+        <button className={button} disabled={!connected || valuation.isPending} onClick={() => valuation.mutate()}>{valuation.isPending ? "Valuing…" : "Value allocation"}</button>
       </div>
     </div>
     {error && <p role="alert" className="text-sm text-[var(--color-red)]">{error.message}</p>}
-    {data && !connected && !paper && <p className="text-sm" data-state="not-connected">Not connected - open <a className="underline" href={settings}>Settings</a> to add the {title} API key. Markets below are public data.</p>}
-    {data && !connected && paper && <p className="text-sm" data-state="not-opened">The paper account has not been opened yet. It opens with {data.assumptions?.start_cash ?? "100"} {quote} when the paper crew first values it; the owner can also open it below. Markets below are public data.</p>}
-    {connected && !synced && !paper && <p className="text-sm">The bot allocation has not been synced from the {title} account. Use the sync in <a className="underline" href={settings}>Settings</a> to start.</p>}
-    {paper && connected && !data?.enabled && <p role="alert" className="text-sm text-[var(--color-red)]">The paper account is paused: its equity reached the floor. Only the owner can reset it.</p>}
+    {data && !connected && <p className="text-sm" data-state="not-connected">Not connected - open <a className="underline" href={settings}>Settings</a> to add the {title} API key. Markets below are public data.</p>}
+    {connected && !synced && <p className="text-sm">The bot allocation has not been synced from the {title} account. Use the sync in <a className="underline" href={settings}>Settings</a> to start.</p>}
     {uncertain && <p role="alert" className="text-sm text-[var(--color-red)]">An order needs reconciliation and trading stays paused. Reconcile it in <a className="underline" href={settings}>Settings</a> or ask the trading agent.</p>}
-    {paper
-      ? <p className="text-xs text-[var(--color-text-muted)]">Read-only view: the paper crew trades this simulated account. There is no order ticket and no Settings step. Only the owner can reset it.</p>
-      : <p className="text-xs text-[var(--color-text-muted)]">Read-only view: the agent loop trades inside the bot allocation. Connecting, syncing and enabling trading are in Settings.</p>}
-    {paper && <PaperReset venue={venue} opened={connected} startCash={data?.assumptions?.start_cash} />}
+    <p className="text-xs text-[var(--color-text-muted)]">Read-only view: the agent loop trades inside the bot allocation. Connecting, syncing and enabling trading are in Settings.</p>
 
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
       <section className={`${card} flex max-h-[34rem] flex-col`} aria-label="Markets">
@@ -218,8 +197,7 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
 
     <section className={card} aria-label="Account balances">
       <h2 className="mb-2 font-semibold">Account balances</h2>
-      {!connected && !paper && <p className="text-sm">Not connected - open <a className="underline" href={settings}>Settings</a> to see the {title} account.</p>}
-      {!connected && paper && <p className="text-sm">The paper account has not been opened yet.</p>}
+      {!connected && <p className="text-sm">Not connected - open <a className="underline" href={settings}>Settings</a> to see the {title} account.</p>}
       {connected && accounts.isLoading && <p role="status" className="text-sm">Reading balances…</p>}
       {connected && accounts.isError && <p className="text-sm text-[var(--color-text-muted)]">Balances unavailable: {accounts.error.message}</p>}
       {connected && accounts.data !== undefined && (accountRows.length ? <table className="w-full text-left text-sm">
@@ -229,13 +207,12 @@ export function NativeVenueTrade({ venue }: { venue: NativeVenue }) {
           <td>{money(accountValue(venue, row.currency, row.balance, known), quote)}</td>
         </tr>)}</tbody>
       </table> : <p className="text-sm">The {title} account holds no funded balances.</p>)}
-      <p className="mt-2 text-xs text-[var(--color-text-muted)]">{paper ? `The simulated ${title} account.` : `The whole ${title} account, not only the bot allocation.`} An asset outside the listed markets shows no value.</p>
+      <p className="mt-2 text-xs text-[var(--color-text-muted)]">The whole {title} account, not only the bot allocation. An asset outside the listed markets shows no value.</p>
     </section>
 
     <section className={card} aria-label="Recent orders">
       <h2 className="mb-2 font-semibold">Recent orders</h2>
-      {!connected && !paper && <p className="text-sm">Not connected - open <a className="underline" href={settings}>Settings</a> to see order history.</p>}
-      {!connected && paper && <p className="text-sm">No simulated orders yet.</p>}
+      {!connected && <p className="text-sm">Not connected - open <a className="underline" href={settings}>Settings</a> to see order history.</p>}
       {connected && history.isLoading && <p role="status" className="text-sm">Reading history…</p>}
       {connected && history.isError && <p className="text-sm text-[var(--color-text-muted)]">History unavailable: {history.error.message}</p>}
       {connected && history.data !== undefined && (historyRows.length ? <table className="w-full text-left text-sm">

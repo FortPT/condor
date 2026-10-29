@@ -15,7 +15,7 @@ from urllib.parse import parse_qsl
 
 from condor import crypto_com_scorecard as sc
 from condor import kraken_xstocks as ks
-from condor import xstocks_paper as xs
+from condor import xstocks_market as xs
 
 SECRET = base64.b64encode(b"a-test-secret-that-is-not-real").decode()
 OPEN_TS = datetime(2026, 10, 28, 15, 0, tzinfo=timezone.utc).timestamp()  # 11:00 EDT
@@ -60,8 +60,8 @@ def ticker(bid, ask, last, volume="1000"):
     }
 
 
-class FakePaper(xs.XStocksPaper):
-    """Kraken's public API, as the paper test already reads it."""
+class FakeMarket(xs.XStocksMarket):
+    """Kraken's public API, as the market reader sees it."""
 
     def __init__(self):
         super().__init__()
@@ -126,7 +126,7 @@ def info(side, vol, vol_exec, cost, fee, status="closed", cid=None, **extra):
 class FakeService(ks.KrakenXStocksService):
     def __init__(self):
         super().__init__()
-        self.paper = FakePaper()
+        self.market_feed = FakeMarket()
         self.clock = lambda: OPEN_TS
         self.sent = []
         self.balances = {
@@ -400,7 +400,7 @@ class KrakenTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError) as caught:
             await self.svc.order(1, "buy", "AAPL", "0.4")  # 0.4 USD < costmin 0.5
         self.assertIn("minimum cost", str(caught.exception))
-        rows = await self.svc.paper.pair_rows()
+        rows = await self.svc.market_feed.pair_rows()
         rows["AAPLxUSD"] = {**rows["AAPLxUSD"], "ordermin": "0.5"}
         with self.assertRaises(ValueError) as caught:
             await self.svc.order(1, "buy", "AAPL", "8")  # 0.0230 units < ordermin
@@ -545,7 +545,7 @@ class KrakenTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_wide_spread_is_refused(self):
         await self.synced()
-        self.svc.paper.tickers["TSLAxUSD"] = ticker("390", "410", "400")
+        self.svc.market_feed.tickers["TSLAxUSD"] = ticker("390", "410", "400")
         with self.assertRaises(ValueError) as caught:
             await self.svc.order(1, "buy", "TSLA", "8")
         self.assertIn("spread", str(caught.exception))
@@ -827,9 +827,8 @@ class KrakenTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["stocks"][0]["min_quantity_step"], "0.00000001")
         found = await self.svc.coins(1, "aa")
         self.assertEqual([c["symbol"] for c in found["stocks"]], ["AAPL"])
-        # listed prices feed the live scorecard, apart from the paper test's
+        # listed prices feed the live scorecard
         self.assertIsNotNone(sc.latest_price(1, "TSLA", venue="kraken_xstocks"))
-        self.assertIsNone(sc.latest_price(1, "TSLA", venue="xstocks_paper"))
 
     async def test_book_and_candles_come_from_krakens_public_data(self):
         book = await self.svc.book(1, "aapl", 5)
@@ -872,7 +871,7 @@ class KrakenTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_portfolio_names_euro_cash_it_could_not_price(self):
         self.svc.balances["ZEUR"] = {"balance": "9.37", "hold_trade": "0"}
-        self.svc.paper.eurusd_down = True
+        self.svc.market_feed.eurusd_down = True
         data = await self.svc.portfolio(1)
         by = {b["token"]: b for b in data["balances"]}
         self.assertEqual(by["EUR"]["usd_value"], 0)
@@ -908,9 +907,6 @@ class KrakenTests(unittest.IsolatedAsyncioTestCase):
             report["assumptions"]["round_trip_cost_pct"], ks.DEFAULT_ROUND_TRIP_COST_PCT
         )
         self.assertEqual(sc.report(1)["trade_calls"]["total"], 0)  # not the Exchange's
-        self.assertEqual(
-            sc.report(1, venue="xstocks_paper")["trade_calls"]["total"], 0
-        )  # not the paper test's
 
 
 if __name__ == "__main__":

@@ -9,11 +9,6 @@ record of those external flows and the PnL surfaces subtract it.
 Nothing in this feature moves money. The only exchange calls it adds are read-only
 history reads.
 
-The simulated Kraken xStocks (paper) account is the exception that proves the rule: it has no
-deposits or withdrawals by design, `native_flows` refuses its venue, and the only equity
-jump without trading is the owner's reset, which the account logs itself and the same PnL
-maths subtracts as a baseline change (see `docs/xstocks-paper.md`).
-
 ## The number
 
 ```

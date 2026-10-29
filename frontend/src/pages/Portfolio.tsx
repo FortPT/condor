@@ -30,7 +30,7 @@ import {
   type PortfolioHistoryResponse,
 } from "@/lib/api";
 import { formatCurrency, formatCurrencyPnl, formatCurrencyVolume, isExecutorActive } from "@/lib/formatters";
-import { realConnectors, realShare } from "@/lib/portfolio-paper";
+import { historyChange } from "@/lib/portfolio-change";
 import { agentsQuery, EXECUTORS_REFETCH_MS, executorsQuery } from "@/lib/queryClient";
 import { ACCOUNT_EQUITY } from "@/lib/strategy-unavailable";
 import { getThemeColors } from "@/lib/theme-colors";
@@ -84,6 +84,7 @@ function KpiCell({
   details,
   currencySymbol,
   pnlTitle,
+  pnlUnknownTitle,
 }: {
   label: string;
   mainValue: string | number;
@@ -91,6 +92,8 @@ function KpiCell({
   details: string;
   currencySymbol?: string;
   pnlTitle?: string;
+  /** When set and there is no `pnl`: show a dash with this hover instead of nothing. */
+  pnlUnknownTitle?: string;
 }) {
   return (
     <div className="flex-1 px-5 py-3 min-w-0">
@@ -105,6 +108,15 @@ function KpiCell({
             {formatCurrencyPnl(pnl, currencySymbol || "$")}
           </span>
         )}
+        {(pnl === undefined || pnl === null) && pnlUnknownTitle && (
+          <span
+            className="text-sm tabular-nums text-[var(--color-text-muted)]"
+            data-testid="portfolio-change-unknown"
+            title={pnlUnknownTitle}
+          >
+            —
+          </span>
+        )}
       </div>
       <div className="text-xs text-[var(--color-text-muted)] mt-1 truncate">{details}</div>
     </div>
@@ -116,6 +128,8 @@ function DashboardStrip({
   totalTokens,
   connectorCount,
   portfolioPnl,
+  portfolioPnlTitle,
+  portfolioPnlUnknownTitle,
   botCount,
   controllerCount,
   botPnl,
@@ -133,6 +147,8 @@ function DashboardStrip({
   totalTokens: number;
   connectorCount: number;
   portfolioPnl: number | null;
+  portfolioPnlTitle?: string;
+  portfolioPnlUnknownTitle?: string;
   botCount: number;
   controllerCount: number;
   botPnl: number;
@@ -159,6 +175,8 @@ function DashboardStrip({
           label="Portfolio"
           mainValue={formatCurrency(convertFromUsd(totalUsd), currencySymbol)}
           pnl={portfolioPnl != null ? convertFromUsd(portfolioPnl) : undefined}
+          pnlTitle={portfolioPnlTitle}
+          pnlUnknownTitle={portfolioPnlUnknownTitle}
           details={`${totalTokens} assets · ${connectorCount} connector${connectorCount !== 1 ? "s" : ""}`}
           currencySymbol={currencySymbol}
         />
@@ -348,8 +366,7 @@ function ConnectorRow({
 }) {
   const [expanded, setExpanded] = useState(true);
   const Chevron = expanded ? ChevronDown : ChevronRight;
-  // A simulated account is not part of the real total, so it has no share of it.
-  const pct = realShare(connector, totalPortfolio);
+  const pct = totalPortfolio > 0 ? (connector.total_usd / totalPortfolio) * 100 : 0;
 
   return (
     <>
@@ -364,16 +381,7 @@ function ConnectorRow({
             <span className="text-xs text-[var(--color-text-muted)]">
               {connector.balances.length} token{connector.balances.length !== 1 ? "s" : ""}
             </span>
-            {connector.paper && (
-              <span
-                title="Simulated account: no real money, not included in the total"
-                data-paper-connector
-                className="rounded border border-[var(--color-red)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-red)]"
-              >
-                Simulated - not in total
-              </span>
-            )}
-            {connector.note && !connector.paper && (
+            {connector.note && (
               <span
                 title={connector.note}
                 className="rounded bg-[var(--color-surface-hover)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]"
@@ -390,7 +398,7 @@ function ConnectorRow({
         </td>
         <td className="px-4 py-3">
           <span className="text-sm tabular-nums text-[var(--color-text-muted)]">
-            {connector.paper ? "—" : `${pct.toFixed(1)}%`}
+            {pct.toFixed(1)}%
           </span>
         </td>
       </tr>
@@ -403,7 +411,7 @@ function ConnectorRow({
       )}
       {expanded &&
         connector.balances.map((b) => (
-          <TokenRow key={b.token} b={b} totalPortfolio={connector.paper ? 0 : totalPortfolio} convertFromUsd={convertFromUsd} currencySymbol={currencySymbol} />
+          <TokenRow key={b.token} b={b} totalPortfolio={totalPortfolio} convertFromUsd={convertFromUsd} currencySymbol={currencySymbol} />
         ))}
     </>
   );
@@ -959,19 +967,18 @@ export function Portfolio() {
 
   const totalUsd = data?.total_usd ?? 0;
   const connectors = data?.connectors ?? [];
-  // Simulated (paper) connectors are listed below but never counted in the figures above them.
-  const realOnly = realConnectors(connectors);
   const hasExchange = connectors.some((connector) => connector.connector === "Crypto.com Exchange");
 
-  // Compute portfolio PnL from history (follows period selector)
-  const historyPoints = periodHistory?.points ?? [];
-  const portfolioPnl =
-    !hasExchange && historyPoints.length >= 2
-      ? historyPoints[historyPoints.length - 1].total_usd - historyPoints[0].total_usd
-      : null;
+  // The portfolio's change over the period (follows the period selector), as the
+  // server works it out: net of recorded deposits and withdrawals and only from sources
+  // that all have a value at the start. Never the first point against the last of the
+  // chart series, which mixes accounts that start at different times (and so once read
+  // +491%); when it cannot be stated honestly it is a dash with the reason.
+  const portfolioChange = historyChange(periodHistory);
+  const portfolioPnl = portfolioChange.known ? portfolioChange.abs : null;
 
   // Compute aggregate stats
-  const totalTokens = realOnly.reduce((s, c) => s + c.balances.length, 0);
+  const totalTokens = connectors.reduce((s, c) => s + c.balances.length, 0);
   const botsList = bots?.bots ?? [];
   const controllerCount = controllers.length;
   const activeExecutorCount = executorsList.filter((e) => isExecutorActive(e.status)).length;
@@ -986,7 +993,7 @@ export function Portfolio() {
   }
 
   // Flatten all tokens for top holdings
-  const allTokens = realOnly.flatMap((c) =>
+  const allTokens = connectors.flatMap((c) =>
     c.balances.map((b) => ({ token: b.token, usd_value: b.usd_value, connector: c.connector })),
   );
   allTokens.sort((a, b) => b.usd_value - a.usd_value);
@@ -998,8 +1005,24 @@ export function Portfolio() {
       <DashboardStrip
         totalUsd={totalUsd}
         totalTokens={totalTokens}
-        connectorCount={realOnly.length}
+        connectorCount={connectors.length}
         portfolioPnl={portfolioPnl}
+        portfolioPnlTitle={
+          portfolioChange.known
+            ? [
+                `Change over ${period}, net of recorded deposits and withdrawals` +
+                  (portfolioChange.pct !== null
+                    ? ` (${portfolioChange.pct >= 0 ? "+" : ""}${portfolioChange.pct.toFixed(2)}%)`
+                    : ""),
+                portfolioChange.note,
+              ]
+                .filter(Boolean)
+                .join(". ")
+            : undefined
+        }
+        portfolioPnlUnknownTitle={
+          portfolioChange.known || !periodHistory ? undefined : portfolioChange.hint
+        }
         botCount={botsList.length}
         controllerCount={controllerCount}
         botPnl={botPnl}

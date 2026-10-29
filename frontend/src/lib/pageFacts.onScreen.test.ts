@@ -73,6 +73,9 @@ describe("/portfolio", () => {
     qc.setQueryData(["portfolio-history", SRV, "1W"], {
       server: SRV,
       interval: "1h",
+      // The server's figure: the points below start 120k -> 125.4k, but the change is
+      // what it says, not the difference of the first and last point.
+      change: { available: true, change_usd: 5_430.5, change_pct: 4.53 },
       points: [
         { timestamp: 1, total_usd: 120_000, tokens: { SOL: 84_000, USDC: 30_000, ETH: 6_000 } },
         { timestamp: 2, total_usd: 125_430.5, tokens: { SOL: 87_000, USDC: 30_000, ETH: 8_430.5 } },
@@ -111,6 +114,19 @@ describe("/portfolio", () => {
     expect(line).toContain("assets 4");
     expect(line).toContain("open positions 3");
     expect(line).toContain("tab assets");
+  });
+
+  it("leaves the change out when the server cannot state it honestly, never first-vs-last", () => {
+    qc.setQueryData(["portfolio-history", SRV, "1W"], {
+      server: SRV,
+      interval: "1h",
+      change: { available: false, reason: "different_start" },
+      points: [
+        { timestamp: 1, total_usd: 9_000 },
+        { timestamp: 2, total_usd: 125_430.5 },
+      ],
+    });
+    expect(onScreenLine("/portfolio")).not.toContain("change (1W)");
   });
 
   it("names the venues and the biggest holdings, summed across venues (R4)", () => {

@@ -6,8 +6,21 @@ from pydantic import BaseModel, SecretStr
 from condor.kraken_xstocks import service
 from condor.web.auth import get_current_user
 from condor.web.models import WebUser
+from condor.xstocks_market import QUOTE, us_market_open
 
 router = APIRouter(prefix="/kraken-xstocks", tags=["kraken-xstocks"])
+#: Kept for the stock scheduler, which reads the US session clock from
+#: ``/xstocks-paper/status``; the same answer is at ``/kraken-xstocks/market``.
+legacy_router = APIRouter(prefix="/xstocks-paper", tags=["kraken-xstocks"])
+
+
+def market_clock() -> dict:
+    """The regular US session clock; public data, needs no Kraken account or key."""
+    return {
+        "venue": "Kraken xStocks (public data)",
+        "quote": QUOTE,
+        "market": us_market_open(),
+    }
 
 
 class Credentials(BaseModel):
@@ -42,6 +55,18 @@ def reject(error):
 @router.get("/status")
 async def status(user: WebUser = Depends(get_current_user)):
     return service.status(user.id)
+
+
+@router.get("/market")
+async def market(user: WebUser = Depends(get_current_user)):
+    """Is the regular US session open (``market.open``), and how long until it closes."""
+    return market_clock()
+
+
+@legacy_router.get("/status")
+async def legacy_status(user: WebUser = Depends(get_current_user)):
+    """The old path of :func:`market` (``market.open`` is unchanged); prefer ``/kraken-xstocks/market``."""
+    return market_clock()
 
 
 @router.put("/credentials")

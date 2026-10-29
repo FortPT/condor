@@ -35,6 +35,7 @@ import {
   toMs,
 } from "./formatters";
 import { ownerRowLabel, type FleetOwner } from "./agent-attribution";
+import { historyChange } from "./portfolio-change";
 import { runStatus } from "./perf-tree";
 import { formatWithRate, type RateTable } from "./rates";
 import type { ViewFacts } from "./viewFacts";
@@ -544,8 +545,11 @@ const ROUTES: {
       const points = history?.points ?? [];
       const first = points[0];
       const last = points[points.length - 1];
-      const change =
-        points.length >= 2 ? last.total_usd - first.total_usd : null;
+      // The server's figure (net of deposits, only from sources with a value at the
+      // window start), never first-vs-last point: that mixes sources that start at
+      // different times. Unknown is left out of the block, not guessed.
+      const windowChange = historyChange(history);
+      const change = windowChange.known ? windowChange.abs : null;
       const held = fresh<ConsolidatedPositionsResponse>(qc, [
         "consolidated-positions",
       ]);
