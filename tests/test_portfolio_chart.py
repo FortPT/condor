@@ -542,9 +542,10 @@ class RouteTests(unittest.IsolatedAsyncioTestCase):
             snapshot(ts, 9.0 + (ts - self.since) / 1e6)
             for ts in range(int(self.since) + 600, int(self.now) - 200, 300)
         ]
-        sds = SimpleNamespace(get_or_fetch=AsyncMock(return_value=history))
+        self.history = history
+        self.sds = SimpleNamespace(get_or_fetch=AsyncMock(return_value=history))
         self.patch = patch.object(
-            portfolio_route, "get_server_data_service", lambda: sds
+            portfolio_route, "get_server_data_service", lambda: self.sds
         )
         self.patch.start()
 
@@ -576,6 +577,38 @@ class RouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(out.chart_points[0].total_usd, 50)
         self.assertEqual(out.interval, "5m")
         self.assertEqual({s.source for s in out.sources}, {"Hummingbot", ph.EXCHANGE})
+
+    async def test_a_connector_the_server_no_longer_has_adds_nothing_to_the_chart(self):
+        for k in range(40):
+            ph.record(USER, ph.EXCHANGE, 43.0, now=int(self.now) - 300 * (40 - k))
+        history = self.history
+
+        async def fetch(name, data_type, **kwargs):
+            if data_type == portfolio_route.ServerDataType.PORTFOLIO:
+                # The kraken key was removed: only another connector is live now.
+                return {"master": {"binance": [{"token": "EUR", "value": 1.0}]}}
+            return history
+
+        self.sds.get_or_fetch = AsyncMock(side_effect=fetch)
+        out = await self.get()
+        # Nothing recorded under kraken counts any more: the old series is empty and
+        # the chart is the Exchange alone, never the Exchange plus a stale ~9.
+        self.assertEqual(out.points[-1].total_usd, 43.0)
+        self.assertAlmostEqual(out.chart_points[-1].total_usd, 43.0)
+
+    async def test_connectors_that_are_still_live_keep_their_history(self):
+        for k in range(40):
+            ph.record(USER, ph.EXCHANGE, 43.0, now=int(self.now) - 300 * (40 - k))
+        history = self.history
+
+        async def fetch(name, data_type, **kwargs):
+            if data_type == portfolio_route.ServerDataType.PORTFOLIO:
+                return {"master": {"kraken": [{"token": "EUR", "value": 9.5}]}}
+            return history
+
+        self.sds.get_or_fetch = AsyncMock(side_effect=fetch)
+        out = await self.get()
+        self.assertGreater(out.points[-1].total_usd, 50)
 
     async def test_a_failing_chart_build_leaves_the_old_response_intact(self):
         with patch.object(
