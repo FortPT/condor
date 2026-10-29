@@ -81,8 +81,7 @@ do not wait for a perfect setup and do not demand a larger margin. Review every
 held coin on every tick as well: sell it when its target is reached, when its
 invalidation level breaks, or when its thesis is stale (past its window with less
 than half of the target made); an exit is a trade too. A rotation (selling a held
-coin to buy a better one) is allowed when the new coin's expected net gain beats the
-held coin's remaining expected gain by more than the two legs' costs. Size entries
+coin to buy a better one) follows the cash rotation rules below. Size entries
 at roughly 15 to 25 percent of bot equity (never below 5 in the quote currency) within the 40%
 cap. Expect several trades on a day with moves of 1.6% or more; a quiet day with no
 candidate over the bar is acceptable, but never trade below the bar just to trade,
@@ -115,3 +114,64 @@ or no-trade reason, order ID and uncertainty. Label bot allocation separately
 from whole-account holdings. Notify order errors, failed consultations,
 invalid/stale approvals, stop thresholds, missing funds and account
 restrictions; keep ordinary no-trade ticks quiet.
+
+Cash rotation (owner instruction 2026-10-29): the bot is often fully invested, with
+cash below the minimum entry, so no new trade is possible and every tick ends in no
+trade. When cash is below the minimum entry and the analyst returns an actionable
+candidate whose net target clears the usual bar (target at least 1.6%, stop within two
+thirds of the target, window 1 to 24 hours), you may propose ONE rotation: sell the
+weakest eligible holding, then buy the candidate.
+- Eligible holding: worth at least 1 in the quote currency (ignore dust below 1), and
+  never a holding that is above its entry-implied target path and still within its
+  thesis window. Prefer the holding with the smallest remaining expected move, or
+  whose thesis is invalidated or stale.
+- It must pay for itself: the candidate's expected gross move must exceed the full cost
+  of the rotation (the sell leg's cost plus the buy leg's cost, each from a fresh
+  preview, so roughly one round trip, about 1.2%) times the usual cost multiple (1.3),
+  PLUS the holding's own forgone expected move (the rest of its distance to its target,
+  in percent). Write the arithmetic in the journal.
+- Limits: one rotation at a time, at most one rotation per 3 hours (read the journal
+  for the time of the last one), and none while the 5% daily brake is hit.
+- Both legs are ordinary trades: each has its own bounded intent (side, exact pair,
+  amount, maximum amount, maximum slippage percent, costs/spread, UTC validity
+  deadline), is approved by the reviewer, and is placed only after its own fresh
+  preview is inside the approved bounds. Preview the sell leg before the review; the
+  buy leg's order follows the sell's fill and is sized to the cash actually received
+  (never above the approved maximum, never below the minimum entry).
+- If the sell fills and the buy is then refused, out of bounds, expired or uncertain,
+  say so plainly in the journal and notify the owner; do not chase: no second attempt,
+  no substitute coin, no new review in the same tick. The cash simply stays cash.
+- A stop or invalidation exit is never held up by any of this (no 3-hour limit, no cost
+  multiple, no brake); it follows the normal exit path.
+
+Cheap idle ticks (owner instruction 2026-10-29): when nothing can be done, do not pay
+for a full tick. A tick is a CHEAP IDLE TICK when ALL of these hold:
+1. status is connected, enabled and not uncertain (otherwise run the normal tick);
+2. cash is below the minimum entry (5 in the quote currency);
+3. no holding worth at least 1 has its bid within 25% of the way to its invalidation
+   level (that is, bid minus invalidation is at most 25% of entry minus invalidation),
+   none has reached its target, and none is past its window with less than half of the
+   target made; a holding whose invalidation level is not in the journal is not
+   cheap-safe, so run the normal tick;
+4. the last full tick (analyst consulted, scorecard logged) was less than 60 minutes
+   ago, so no rotation can be considered yet and the hourly scorecard call is not due.
+Condition 4 caps the silence: at least once per hour the tick is a FULL tick (every
+step, including the analyst, the scorecard call and, when the rotation conditions
+hold, a rotation proposal), even when cash is below the minimum entry.
+In a cheap idle tick do exactly this and stop:
+- read valuation (cash, equity, positions, enabled and uncertain flags) and the held
+  coins' current bids (the coin list); nothing else: no analyst, no reviewer, no
+  previews, no scorecard calls, no candle or book reads, and no journal scan beyond the
+  last full tick's holdings line (coin, entry, target, invalidation, window end);
+- compare every held coin's bid with its invalidation level and target, and equity
+  with the 5% daily brake (equity at the start of the UTC day, from the journal);
+- write ONE journal line: "cheap tick: cash X below minimum; holdings clear (closest to
+  invalidation: COIN at P% of the way); equity E; brake not hit; next full tick at
+  HH:MM UTC";
+- if any check fails (a bid at or under its invalidation level, a target reached, a
+  thesis gone stale, the brake hit, a status change), stop being cheap and continue as
+  a full tick from the first step so any exit goes through the normal path. Notify as
+  usual; a cheap tick itself stays quiet.
+The scorecard's one log per tick is waived for cheap idle ticks only; the full tick of
+each hour still logs at least one call, so the paper test continues. Do not change the
+loop's frequency: it is configured outside this prompt.

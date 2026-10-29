@@ -283,6 +283,43 @@ describe("LoopsPanel", () => {
       expect(pnl.title).toContain("estimated from the equity sample 2.0 h after it");
     });
 
+    it("calls the figure a trading result once the venue's deposits and withdrawals are tracked", async () => {
+      await render({
+        loops: [nativeLoop()],
+        agents: [nativeAgent({ latest_session_pnl: 0.47, pnl_flows_tracked: true })],
+      });
+
+      const pnl = cards()[0].querySelector<HTMLElement>("[data-loop-pnl]")!;
+      expect(pnl.textContent).toBe("+$0.47");
+      expect(pnl.title).toBe(
+        "Trading result since this session started: change in account equity net of recorded deposits and withdrawals (native crew)",
+      );
+      expect(cards()[0].querySelector("[data-loop-unconfirmed]")).toBeNull();
+    });
+
+    it("shows an unconfirmed cash movement as a visible line, not only on hover", async () => {
+      await render({
+        loops: [nativeLoop()],
+        agents: [
+          nativeAgent({
+            latest_session_pnl: 4.74,
+            pnl_unconfirmed_count: 1,
+            pnl_unconfirmed_usd: 4.74,
+          }),
+        ],
+      });
+
+      const line = cards()[0].querySelector<HTMLElement>("[data-loop-unconfirmed]")!;
+      expect(line.textContent).toBe("Unconfirmed cash movement of +$4.74");
+      const pnl = cards()[0].querySelector<HTMLElement>("[data-loop-pnl]")!;
+      expect(pnl.title).toContain("is not subtracted until you confirm it");
+    });
+
+    it("shows no unconfirmed line on an executor loop", async () => {
+      await render({ loops: [owner()], agents: [agentSummary()] });
+      expect(cards()[0].querySelector("[data-loop-unconfirmed]")).toBeNull();
+    });
+
     it("says why there is no figure instead of $0.00 when no equity is recorded yet", async () => {
       await render({
         loops: [nativeLoop()],

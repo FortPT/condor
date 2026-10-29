@@ -13,7 +13,12 @@ import {
 import { countdown } from "@/lib/agent-attribution";
 import type { AgentSummary } from "@/lib/api";
 import { formatCurrencyPnl, formatRelativeTime, pnlColor } from "@/lib/formatters";
-import { pnlBasisTitle, unavailableLabel } from "@/lib/strategy-unavailable";
+import {
+  ACCOUNT_EQUITY,
+  pnlBasisTitle,
+  unavailableLabel,
+  unconfirmedLine,
+} from "@/lib/strategy-unavailable";
 
 /**
  * Every loop, from every agent, one click from the rail (FEAT-123) — grouped by
@@ -129,6 +134,13 @@ export function LoopCardGrid({
   );
 }
 
+/** The deposits/withdrawals facts a native crew's card carries. */
+const flowsOf = (stats: LoopCardStats) => ({
+  tracked: stats.pnlFlowsTracked,
+  unconfirmedCount: stats.pnlUnconfirmedCount,
+  unconfirmedUsd: stats.pnlUnconfirmedUsd,
+});
+
 /**
  * One loop, stated in order of visual weight: is it alive and what did it just
  * make, then the tick facts that back that up.
@@ -199,12 +211,24 @@ function LoopCard({
               style={{ color: pnlColor(stats.latestSessionPnl) }}
               // A native crew's figure is the account's equity change, not
               // executor PnL; say so on hover, and say when it is an estimate.
-              title={pnlBasisTitle(stats.pnlBasis, stats.pnlNote)}
+              title={pnlBasisTitle(stats.pnlBasis, stats.pnlNote, flowsOf(stats))}
             >
               {formatCurrencyPnl(stats.latestSessionPnl, "$")}
             </span>
           ))}
       </div>
+
+      {stats && stats.pnlBasis === ACCOUNT_EQUITY && unconfirmedLine(flowsOf(stats)) && (
+        // Visible, not hover-only: until the owner confirms it, the PnL above may
+        // be off by exactly this much.
+        <p
+          data-loop-unconfirmed
+          className="mb-2 truncate text-[11px] text-amber-400"
+          title="Detected on the venue account and not subtracted from the PnL until you confirm it on the Trade page"
+        >
+          {unconfirmedLine(flowsOf(stats))}
+        </p>
+      )}
 
       {live.lastDid ? (
         <LastDeedLine did={live.lastDid} />

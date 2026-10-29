@@ -321,3 +321,92 @@ def test_executor_strategies_still_add_up():
     rolled = routes._aggregate_strategy_perf([plain, plain, summary()])
     assert rolled["total_pnl"] == 9.0
     assert rolled["pnl_basis"] == "account_equity"
+
+
+def test_the_loop_card_is_a_trading_result_net_of_a_confirmed_deposit(
+    tmp_path, monkeypatch
+):
+    import time
+
+    from condor import native_flows
+
+    now = int(time.time())
+    make_session(tmp_path, 1, now - 3600, state="running")
+    ph.record(7, ph.EXCHANGE, 100.0, now=now - 3700)
+    native_flows.add_flow(
+        7,
+        "crypto_com_exchange",
+        amount="4.27",
+        currency="USD",
+        ts=now - 3000,
+        usd_value=4.27,
+        source="manual",
+        now=now - 3000,
+    )
+    native_flows.add_flow(
+        7,
+        "crypto_com_exchange",
+        amount="9",
+        currency="USD",
+        ts=now - 2000,
+        usd_value=9,
+        source="detected",
+        status="pending",
+        now=now - 2000,
+    )
+    # Equity rose 4.74 USD: the 4.27 deposit and 0.47 of trading.
+    fake_account(monkeypatch, 104.74)
+    monkeypatch.setattr(routes, "_get_engines_for", lambda a, s: [])
+    monkeypatch.setattr(routes, "_strategy_principal", lambda s, u: 7)
+
+    sessions, totals, unavailable = compute(tmp_path)
+    assert unavailable == ""
+    assert sessions[0].total_pnl == pytest.approx(0.47)
+    assert sessions[0].pnl_flows_tracked is True
+    assert sessions[0].pnl_flows_usd == pytest.approx(4.27)
+    assert (sessions[0].pnl_unconfirmed_count, sessions[0].pnl_unconfirmed_usd) == (
+        1,
+        pytest.approx(9.0),
+    )
+    assert totals["total_pnl"] == pytest.approx(0.47)
+    assert totals["pnl_flows_usd"] == pytest.approx(4.27)
+
+    summary = asyncio.run(routes._build_strategy_summary(strategy_for(tmp_path), USER))
+    assert summary.latest_session_pnl == pytest.approx(0.47)
+    assert summary.pnl_basis == "account_equity"
+    assert summary.pnl_flows_tracked is True
+    assert summary.pnl_flows_usd == pytest.approx(4.27)
+    assert (summary.pnl_unconfirmed_count, summary.pnl_unconfirmed_usd) == (
+        1,
+        pytest.approx(9.0),
+    )
+
+
+def test_a_venue_without_flows_keeps_the_untracked_label_on_the_card(
+    tmp_path, monkeypatch
+):
+    import time
+
+    now = int(time.time())
+    make_session(tmp_path, 1, now - 3600, state="running")
+    ph.record(7, ph.EXCHANGE, 100.0, now=now - 3700)
+    fake_account(monkeypatch, 104.74)
+    monkeypatch.setattr(routes, "_get_engines_for", lambda a, s: [])
+    monkeypatch.setattr(routes, "_strategy_principal", lambda s, u: 7)
+    summary = asyncio.run(routes._build_strategy_summary(strategy_for(tmp_path), USER))
+    assert summary.latest_session_pnl == pytest.approx(4.74)
+    assert summary.pnl_flows_tracked is False
+    assert summary.pnl_flows_usd == 0.0 and summary.pnl_unconfirmed_count == 0
+
+
+def test_the_rollup_carries_the_chosen_strategys_flow_state():
+    rolled = routes._aggregate_strategy_perf(
+        [
+            summary(pnl_flows_tracked=True, pnl_unconfirmed_count=2),
+            summary(slug="t", pnl_since=T0 + 5, pnl_flows_tracked=True),
+        ]
+    )
+    assert rolled["pnl_flows_tracked"] is True
+    assert rolled["pnl_unconfirmed_count"] == 2
+    plain = routes._aggregate_strategy_perf([summary(pnl_basis="")])
+    assert plain["pnl_flows_tracked"] is False and plain["pnl_unconfirmed_count"] == 0

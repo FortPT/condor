@@ -100,6 +100,41 @@ names must be checked against the actual account (use `uat` first) before enabli
 autonomous execution; fixtures are not proof of a working live association or a
 profitable strategy.
 
+## Rotation and idle ticks
+
+Observed on 29 Oct: with cash 0.30 USD of about 48 equity (below the 5 minimum entry) and
+five coins held, every tick ended in "no trade" while still paying for the analyst, the
+reviewer and the scorecard. Two prompt-only changes (the trader `AGENT.md` and the
+`daily_spot` loop; no engine, ledger or guard change, and the configured frequency is
+untouched):
+
+* **Cash rotation.** With cash below the minimum entry and an actionable analyst candidate
+  that clears the usual bar (target at least 1.6%, stop within two thirds of it, 1 to 24 h),
+  the trader may sell the weakest eligible holding and buy the candidate. Eligible: worth
+  at least 1 (dust ignored), and never one that is above its entry-implied target path and
+  still inside its thesis window; prefer the smallest remaining expected move or an
+  invalidated or stale thesis. It must pay for itself: the candidate's expected gross move
+  has to exceed (sell cost + buy cost, each from a fresh preview, about one round trip at
+  1.2%) x 1.3 PLUS the holding's own forgone expected move. One rotation at a time, at most
+  one per 3 hours, never while the 5% daily brake is hit. Both legs are ordinary trades:
+  bounded intent, reviewer approval, fresh preview inside the bounds. If the sell fills and
+  the buy is refused, out of bounds, expired or uncertain, the trader journals and notifies
+  and does not chase; the cash stays cash. Stop and invalidation exits are never blocked by
+  these rules.
+* **Cheap idle ticks.** When status is connected, enabled and not uncertain, cash is below
+  the minimum entry, no holding is within 25% of the way to its invalidation level (bid -
+  invalidation <= 25% of entry - invalidation), none has hit its target or is stale, and a
+  full tick ran less than 60 minutes ago, the tick only reads valuation and the held coins'
+  bids, compares them with the invalidation levels, targets and the 5% daily brake, and
+  writes one journal line. No analyst, reviewer, previews or scorecard calls. Any failed
+  check turns it into a full tick from step 1. At least once an hour the tick is a full one
+  (analyst, scorecard call, rotation proposal), so the paper scorecard keeps running; with
+  120 s ticks that is about 1 full tick in 30.
+
+Nothing here has been run against a live account; the prompts are a contract the model
+follows, not server authorization. Native guards stay authoritative, and the tests
+(`tests/test_crypto_com_crew.py`) pin the wording, not the model's behaviour.
+
 ## Portfolio dashboard
 
 The main Portfolio page includes the authenticated user's Exchange balances

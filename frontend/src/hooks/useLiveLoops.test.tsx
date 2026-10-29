@@ -224,8 +224,38 @@ describe("loopStats", () => {
       unavailable: "",
       pnlBasis: "",
       pnlNote: "",
+      pnlFlowsTracked: false,
+      pnlUnconfirmedCount: 0,
+      pnlUnconfirmedUsd: 0,
       sessionCount: 3,
       experimentCount: 1,
+    });
+  });
+
+  it("carries whether a native crew's deposits are tracked and what is unconfirmed", () => {
+    const loop = owner({
+      agentSlug: "brigado",
+      strategySlug: "brl_mm",
+      live: live(),
+    }) as never;
+    const base = agentSummary();
+    const native = {
+      ...base,
+      strategies: [
+        {
+          ...base.strategies[0],
+          pnl_basis: "account_equity",
+          pnl_flows_tracked: true,
+          pnl_unconfirmed_count: 2,
+          pnl_unconfirmed_usd: 9.5,
+        },
+      ],
+    };
+
+    expect(loopStats(loop, [native])).toMatchObject({
+      pnlFlowsTracked: true,
+      pnlUnconfirmedCount: 2,
+      pnlUnconfirmedUsd: 9.5,
     });
   });
 

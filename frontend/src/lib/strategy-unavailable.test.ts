@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { pnlBasisTitle, unavailableLabel } from "./strategy-unavailable";
+import { pnlBasisTitle, unavailableLabel, unconfirmedLine } from "./strategy-unavailable";
 
 describe("unavailableLabel", () => {
   it("names every reason a loop's figures can be missing", () => {
@@ -39,5 +39,37 @@ describe("pnlBasisTitle", () => {
     expect(pnlBasisTitle("account_equity", "Session start estimated.")).toBe(
       "Change in account equity since this session started (native crew). Session start estimated.",
     );
+  });
+});
+
+describe("pnlBasisTitle with recorded deposits and withdrawals", () => {
+  it("calls the figure a trading result when the venue's flows are tracked", () => {
+    expect(pnlBasisTitle("account_equity", "", { tracked: true })).toBe(
+      "Trading result since this session started: change in account equity net of recorded deposits and withdrawals (native crew)",
+    );
+  });
+
+  it("keeps the older wording when they are not tracked", () => {
+    expect(pnlBasisTitle("account_equity", "", { tracked: false })).toBe(
+      "Change in account equity since this session started (native crew)",
+    );
+  });
+
+  it("says unconfirmed cash is not subtracted, after the estimate note", () => {
+    const title = pnlBasisTitle("account_equity", "Session start estimated.", {
+      tracked: true,
+      unconfirmedCount: 1,
+      unconfirmedUsd: 4.74,
+    })!;
+    expect(title).toContain("Session start estimated.");
+    expect(title).toContain("Unconfirmed cash movement of +$4.74 is not subtracted");
+  });
+
+  it("states a negative unconfirmed movement with its sign and none when nothing is pending", () => {
+    expect(unconfirmedLine({ unconfirmedCount: 1, unconfirmedUsd: -3 })).toBe(
+      "Unconfirmed cash movement of -$3.00",
+    );
+    expect(unconfirmedLine({ unconfirmedCount: 0, unconfirmedUsd: 5 })).toBe("");
+    expect(unconfirmedLine(undefined)).toBe("");
   });
 });

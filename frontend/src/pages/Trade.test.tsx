@@ -16,8 +16,10 @@ vi.mock("@/pages/CreateExecutor", () => ({ CreateExecutor: () => {
 vi.mock("@/components/ConnectKeysOverlay", () => ({ ConnectKeysOverlay: () => <div data-gate>Connect Exchange keys</div> }));
 
 const exchangeStatus = { connected: true, environment: "production", enabled: false, ledger: { quote: "USD", cash: "26", positions: {}, uncertain_order: null, synced: true } };
+// The deposits/withdrawals record under the venue is read too (a GET, never a write).
+const flowsRead = (path: unknown) => String(path).startsWith("/api/v1/native-flows?venue=");
 const onlyReads = (calls: unknown[][]) => calls.every(([path, init]) =>
-  (path === "/api/v1/crypto-exchange/status" || path === "/api/v1/crypto-exchange/scorecard" ||
+  (flowsRead(path) || path === "/api/v1/crypto-exchange/status" || path === "/api/v1/crypto-exchange/scorecard" ||
     String(path).startsWith("/api/v1/crypto-exchange/coins?") || String(path).startsWith("/api/v1/crypto-exchange/candles?")) && !init);
 vi.mock("@/lib/api", async () => ({
   apiFetch: request.fetch,
@@ -113,7 +115,20 @@ it.each([["revolut-x", "Revolut X"], ["kraken-xstocks", "Kraken xStocks"]])("ope
   expect(pressed).not.toContain("Hummingbot");
   expect(pressed).not.toContain("Crypto.com Exchange");
   // the native panel only reads its own routes (and the Crypto.com status the page itself polls)
-  expect(request.fetch.mock.calls.every(([path, init]) => !init && (String(path).startsWith(`/api/v1/${key}/`) || String(path).startsWith("/api/v1/crypto-exchange/")))).toBe(true);
+  expect(request.fetch.mock.calls.every(([path, init]) => !init && (String(path).startsWith(`/api/v1/${key}/`) || String(path).startsWith("/api/v1/crypto-exchange/") || flowsRead(path)))).toBe(true);
+});
+it.each([
+  ["/trade?workspace=revolut-x", "revolut_x"],
+  ["/trade?workspace=kraken-xstocks", "kraken_xstocks"],
+  ["/trade?workspace=crypto-exchange", "crypto_com_exchange"],
+])("shows the deposits and withdrawals record under %s for its own venue", async (url, venue) => {
+  await render(url);
+  expect(host.querySelector(`[data-native-flows="${venue}"]`)).not.toBeNull();
+  expect(request.fetch.mock.calls.some(([path]) => path === `/api/v1/native-flows?venue=${venue}`)).toBe(true);
+});
+it("shows no deposits panel on the Hummingbot tab", async () => {
+  await render("/trade?workspace=hummingbot");
+  expect(host.querySelector("[data-native-flows]")).toBeNull();
 });
 it("switches between the Crypto.com Exchange, Kraken xStocks, Revolut X and Hummingbot tabs", async () => {
   await render();

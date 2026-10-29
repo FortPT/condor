@@ -481,3 +481,35 @@ describe("the session report (CORR-422)", () => {
     expect(page.className).toContain("fixed");
   });
 });
+
+describe("a native crew's equity basis note", () => {
+  const equity = (over: Partial<AgentPerformance> = {}) =>
+    ({ ...traded(), pnl_basis: "account_equity", ...over }) as AgentPerformance;
+
+  it("keeps saying deposits and withdrawals are not tracked until they are", async () => {
+    await render({ perf: equity() });
+    const note = container.querySelector<HTMLElement>("[data-now-equity-basis]")!;
+    expect(note.textContent).toContain("Deposits and withdrawals are not tracked.");
+  });
+
+  it("says the figures are net of the recorded deposits and withdrawals once tracked", async () => {
+    await render({ perf: equity({ pnl_flows_tracked: true }) });
+    const note = container.querySelector<HTMLElement>("[data-now-equity-basis]")!;
+    expect(note.textContent).toContain("net of the deposits and withdrawals recorded");
+    expect(note.textContent).not.toContain("not tracked");
+  });
+
+  it("names an unconfirmed cash movement that is not subtracted", async () => {
+    await render({
+      perf: equity({
+        pnl_flows_tracked: true,
+        pnl_unconfirmed_count: 1,
+        pnl_unconfirmed_usd: 4.74,
+      }),
+    });
+    const note = container.querySelector<HTMLElement>("[data-now-equity-basis]")!;
+    expect(note.textContent).toContain(
+      "Unconfirmed cash movement of +$4.74 is not subtracted until you confirm it",
+    );
+  });
+});
