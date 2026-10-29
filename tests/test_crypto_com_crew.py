@@ -229,6 +229,22 @@ def test_cash_rotation_rules_are_in_the_agent_and_the_loop(registry):
         assert "follows the cash rotation rules below" in flat
 
 
+def test_the_pace_limits_are_in_the_agent_and_the_loop(registry):
+    """Owner instruction 2026-10-29: fees ate the first day's gross result."""
+    for where, text in _both(registry).items():
+        flat = _flat(text)
+        for phrase in (
+            "take a new entry when the analyst's target is at least 2.4%",
+            "at most 4 new entries per utc day",
+            "a coin bought less than 2 hours ago is sold only for its stop",
+            "the 2.4% bar replaces every 1.6% bar for new entries and rotations",
+            "these limits never block a stop or invalidation exit",
+        ):
+            assert phrase in flat.lower(), (where, phrase)
+    assert "target of at least 2.4%" in registry.get(ANALYST).instructions
+    assert "target of at least 2.4%" in registry.get(REVIEWER).instructions
+
+
 def test_cheap_idle_ticks_say_when_they_apply_and_what_they_still_check(registry):
     for where, text in _both(registry).items():
         flat = _flat(text)

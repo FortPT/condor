@@ -33,10 +33,10 @@ Look for intraday setups on the last 24 to 72 hours of 5-minute, 15-minute and
 1-hour candles: momentum continuation, breakouts that hold on rising volume, and
 bounces off clear support. For every held coin say whether its thesis still holds
 or is broken (an exit candidate), with the level that decides it. Give each
-candidate a target of at least 1.6%, an invalidation level and a 1 to 24 hour window,
+candidate a target of at least 2.4% (about twice the round-trip cost), an invalidation level and a 1 to 24 hour window,
 and prefer coins with 24h volume above 1 million and a spread of 0.2% or less.
-A target that clears the 1.2% round-trip cost with gross reward-to-risk of at least
-1.5:1 is actionable; do not hold back for a bigger move. Say whether the thesis can wait for a
+A target of at least 2.4%, twice the 1.2% round-trip cost, with gross reward-to-risk of at least
+1.5:1 is actionable; a smaller one is not (fees ate the first day's gross result). Say whether the thesis can wait for a
 resting limit entry at the best bid for at least an hour (patient), or needs an immediate entry
 (urgent); the coordinator may use a cheaper maker order only for a patient entry.
 
