@@ -5,6 +5,7 @@ import { ExchangeResult } from "@/components/settings/CryptoComExchange";
 import { limitsSummary } from "@/components/settings/cryptoExchangeLimits";
 import { useCryptoExchangeStatus } from "@/hooks/useCredentials";
 import { apiFetch, type CandleData } from "@/lib/api";
+import { MakerStatsPanel } from "./MakerStatsPanel";
 import { CandleChart, Change, ScorecardPanel } from "./TradeParts";
 import { money, num, price } from "./tradeFormat";
 
@@ -316,6 +317,7 @@ export function ExchangeTrade() {
       <p className="text-sm">{limitsSummary(data?.limits, quote)}</p>
       <p className="mt-2 text-xs text-[var(--color-text-muted)]">Enabling execution does not start a loop or place an order.</p>
     </section>
+    <MakerStatsPanel base={base} quote={quote} />
     <ScorecardPanel base={base} queryKey="crypto-exchange-scorecard" venue="Exchange" />
     {result !== null && <ExchangeResult value={result} />}
   </div>;

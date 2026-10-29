@@ -1471,6 +1471,7 @@ async def crypto_com_exchange(
         "reconcile",
         "predict",
         "scorecard",
+        "maker_stats",
     ],
     side: Literal["buy", "sell"] = "buy",
     symbol: str = "",
@@ -1484,6 +1485,9 @@ async def crypto_com_exchange(
     stop_pct: str = "",
     horizon_hours: str = "",
     note: str = "",
+    mode: Literal["taker", "maker"] = "taker",
+    purpose: Literal["", "entry", "target_exit", "stop_exit"] = "",
+    maker_wait_sec: str = "",
 ) -> dict:
     """Trade spot on the user's Crypto.com EXCHANGE within the bot's allocation.
 
@@ -1501,6 +1505,17 @@ async def crypto_com_exchange(
     (verdict trade|pass, target_pct, stop_pct, horizon_hours, short note); paper
     only, it never trades. scorecard: how the logged calls scored against real prices
     after costs.
+
+    Optional maker mode (preview and order): `mode="maker"` places a POST-ONLY limit
+    order at the best bid (buy) or best ask (sell), never through the touch, waits up
+    to `maker_wait_sec` (default 60, 5 to 75) inside the call, cancels what is left and
+    reports outcome filled, partial or unfilled (unfilled changes nothing in the
+    ledger). `purpose` is required with it: entry (a buy) or target_exit (a sell); a
+    stop_exit is refused, use taker mode for it. A post-only order that would cross
+    is refused and is never retried as a taker order; the maker fee is lower but the
+    order may not fill. Maker mode is off until the owner turns it on, and never
+    retry an unfilled or partial order as a taker order in the same tick. maker_stats:
+    read-only attempts, fill rate, time to fill and fees of the maker orders so far.
 
     The owner connects the API key, syncs the allocation and enables trading in
     Settings. These tools cannot change credentials, sync or enable trading. Orders
@@ -1523,6 +1538,9 @@ async def crypto_com_exchange(
                 "symbol": symbol,
                 "amount": amount,
                 "max_slippage_pct": max_slippage_pct,
+                "mode": mode,
+                "purpose": purpose,
+                "maker_wait_sec": maker_wait_sec,
             },
             timeout=CRYPTO_COM_ORDER_TIMEOUT,
         )
@@ -1535,8 +1553,13 @@ async def crypto_com_exchange(
                 "symbol": symbol,
                 "amount": amount,
                 "max_slippage_pct": max_slippage_pct,
+                "mode": mode,
+                "purpose": purpose,
+                "maker_wait_sec": maker_wait_sec,
             },
         )
+    if action == "maker_stats":
+        return {"data": await call_main_api("GET", "/crypto-exchange/maker-stats")}
     if action == "reconcile":
         return await call_main_api(
             "POST", "/crypto-exchange/reconcile", timeout=CRYPTO_COM_ORDER_TIMEOUT

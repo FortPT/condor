@@ -24,11 +24,18 @@ class Sync(BaseModel):
     quote: str | None = None
 
 
+class MakerMode(BaseModel):
+    enabled: bool
+
+
 class OrderRequest(BaseModel):
     side: str
     symbol: str
     amount: str
     max_slippage_pct: str = ""
+    mode: str = "taker"
+    purpose: str = ""
+    maker_wait_sec: str = ""
 
 
 class Prediction(BaseModel):
@@ -148,7 +155,14 @@ async def book(
 async def preview(body: OrderRequest, user: WebUser = Depends(get_current_user)):
     try:
         return await service.preview(
-            user.id, body.side, body.symbol, body.amount, body.max_slippage_pct or None
+            user.id,
+            body.side,
+            body.symbol,
+            body.amount,
+            body.max_slippage_pct or None,
+            mode=body.mode,
+            purpose=body.purpose or None,
+            maker_wait_sec=body.maker_wait_sec or None,
         )
     except ValueError as error:
         reject(error)
@@ -158,10 +172,29 @@ async def preview(body: OrderRequest, user: WebUser = Depends(get_current_user))
 async def order(body: OrderRequest, user: WebUser = Depends(get_current_user)):
     try:
         return await service.order(
-            user.id, body.side, body.symbol, body.amount, body.max_slippage_pct or None
+            user.id,
+            body.side,
+            body.symbol,
+            body.amount,
+            body.max_slippage_pct or None,
+            mode=body.mode,
+            purpose=body.purpose or None,
+            maker_wait_sec=body.maker_wait_sec or None,
         )
     except ValueError as error:
         reject(error)
+
+
+@router.get("/maker-stats")
+async def maker_stats(user: WebUser = Depends(get_current_user)):
+    """Read-only: how maker orders have done (fill rate, fees, time to fill)."""
+    return service.maker_stats(user.id)
+
+
+@router.put("/maker-mode")
+async def maker_mode(body: MakerMode, user: WebUser = Depends(get_current_user)):
+    """Owner switch for maker orders; off by default and not an MCP action."""
+    return service.set_maker_enabled(user.id, body.enabled)
 
 
 @router.post("/predict")

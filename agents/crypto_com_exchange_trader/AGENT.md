@@ -60,7 +60,8 @@ may occur next tick, never chase the market in a loop. Do not call another slow
 consultation between the fresh preview and the order. Place it once with
 `crypto_com_exchange(action="order", side="<buy|sell>", symbol="<COIN>", amount="<exact decimal>", max_slippage_pct="<approved>")`.
 A buy's amount is the quote currency to spend; a sell's amount is coin units.
-Native guards remain authoritative and may refuse a reviewed intent.
+For a maker entry or target exit add mode="maker" and purpose as the Maker mode
+paragraph below says. Native guards remain authoritative and may refuse a reviewed intent.
 
 The native ledger is the only capital authority. Read current status and
 valuation; never infer capital from a scheduler's total_amount_quote or an old
@@ -114,6 +115,14 @@ or no-trade reason, order ID and uncertainty. Label bot allocation separately
 from whole-account holdings. Notify order errors, failed consultations,
 invalid/stale approvals, stop thresholds, missing funds and account
 restrictions; keep ordinary no-trade ticks quiet.
+
+Maker mode (owner instruction 2026-10-29, optional): the Exchange charges a maker 0.25% and a taker 0.50%, so a resting post-only order saves fees, but it may never fill, it may fill after the thesis is stale, and nothing has run live yet. The owner switches maker mode on; a maker preview shows maker_mode_enabled, and when it is false use taker mode as before.
+- Use mode="maker" only for an ENTRY (purpose="entry", a buy) or a TARGET exit (purpose="target_exit", a sell), and only when the thesis window is at least 1 hour and the maker preview's maker_taker_round_trip_pct (a maker entry plus a taker exit) times the usual cost multiple (1.3) is at most the target. The 1.6% target bar is unchanged until the owner reviews maker_stats: maker mode lowers the cost, it does not lower the bar.
+- Always use taker mode for a stop or invalidation exit (maker is refused for purpose="stop_exit", and a stop must complete), for a rotation leg and for any exit that must complete.
+- Preview with `crypto_com_exchange(action="preview", side="<buy|sell>", symbol="<COIN>", amount="<exact decimal>", mode="maker", purpose="<entry|target_exit>")`. The bounded intent names mode maker and its purpose, the preview's resting_price, maker_fee_pct with its source, maker_taker_round_trip_pct and the wait. The same size guards, spread bound and cost bound with headroom apply to the effective price, which is the resting price at the touch, never through it.
+- Place it once with the same call as `action="order"` plus mode="maker", purpose and optionally maker_wait_sec (default 60, at most 75, so the call stays inside its 90 second budget). The call waits for the fill, cancels what is left and returns outcome filled, partial or unfilled. An unfilled order changes nothing: no trade happened.
+- Never retry an unfilled or partial maker order as a taker order in the same tick, never resubmit it, and never chase the price. A post-only refusal (the price would cross the book) is a refusal: journal it and stop. A later tick may start again with a fresh review.
+- Journal the maker outcome (filled, partial or unfilled) with the resting price, the filled fraction, the fee class and the seconds waited, so the fill rate can be measured. In a full tick that used maker mode, read `crypto_com_exchange(action="maker_stats")` once and put its fill rate in the journal line. Never change the mode or the cost bar from those numbers yourself: the owner decides.
 
 Cash rotation (owner instruction 2026-10-29): the bot is often fully invested, with
 cash below the minimum entry, so no new trade is possible and every tick ends in no
