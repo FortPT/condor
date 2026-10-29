@@ -1,9 +1,10 @@
 """Paper-only xStocks test on Kraken's public market data.
 
-No account, no key and no orders: this reads Kraken's public endpoints for the
-tokenized US stocks (xStocks, quoted in USD), lets an agent log paper calls, and
-scores them against later prices after a conservative round-trip cost. Nothing
-here can move money.
+No exchange account, no key and no real orders: this reads Kraken's public
+endpoints for the tokenized US stocks (xStocks, quoted in USD), lets an agent log
+paper calls, and scores them against later prices after a conservative round-trip
+cost. The simulated account that fills paper orders on the live order book is in
+:mod:`condor.xstocks_paper_ledger`. Nothing here can move money.
 """
 
 from __future__ import annotations
@@ -146,7 +147,10 @@ class XStocksPaper:
             "quote": QUOTE,
             "round_trip_cost_pct": ROUND_TRIP_COST_PCT,
             "market": us_market_open(),
-            "note": "No account, no key, no orders: every call is a paper call.",
+            "note": (
+                "No exchange account, no key and no real orders: every call is "
+                "paper, and orders fill on a simulated account."
+            ),
         }
 
     async def coins(self, keyword: str = "", user_id: int = 1) -> dict:

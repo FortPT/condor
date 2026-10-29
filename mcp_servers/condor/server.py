@@ -1597,8 +1597,22 @@ async def crypto_com_exchange(
 
 @handle_errors("xStocks paper")
 async def xstocks_paper(
-    action: Literal["status", "coins", "candles", "predict", "scorecard"],
+    action: Literal[
+        "status",
+        "valuation",
+        "history",
+        "coins",
+        "candles",
+        "preview",
+        "order",
+        "predict",
+        "scorecard",
+    ],
+    side: Literal["buy", "sell"] = "buy",
     symbol: str = "",
+    amount: str = "",
+    max_slippage_pct: str = "",
+    client_id: str = "",
     timeframe: str = "15m",
     count: str = "96",
     keyword: str = "",
@@ -1608,23 +1622,47 @@ async def xstocks_paper(
     horizon_hours: str = "",
     note: str = "",
 ) -> dict:
-    """Paper-trade tokenized US stocks (Kraken xStocks) on public data; no orders, no money.
+    """Paper-trade tokenized US stocks (Kraken xStocks) on a SIMULATED account; no real money.
 
-    status: whether the regular US session is open, and the round-trip cost the
-    scorecard assumes. coins: the most traded xStocks in USD with bid, ask, spread,
-    24h dollar volume, 24h range and the move since the open; a keyword filters by
-    ticker. candles: OHLCV for `symbol` (timeframe 5m, 15m, 30m, 1h, 4h or 1D; count
-    up to 300). predict: log one paper call for `symbol` (verdict trade|pass,
-    target_pct, stop_pct, horizon_hours 1-168, short note); it never trades.
-    scorecard: how the logged calls scored against later prices after costs.
+    status: the simulated account (cash, positions, enabled), whether the regular US
+    session is open, the paper limits and the fee/slippage assumed. valuation: the
+    simulated equity at the live best bid (opens the account at 100 USD on first
+    use; pauses it at the equity floor). history: recent simulated orders with their
+    fees. coins: the most traded xStocks in USD with bid, ask, spread, 24h dollar
+    volume, 24h range and the move since the open; a keyword filters by ticker.
+    candles: OHLCV for `symbol` (timeframe 5m, 15m, 30m, 1h, 4h or 1D; count up to
+    300). preview: size and price an order and walk the live public order book for it,
+    with the simulated taker fee and the estimated round-trip cost, placing nothing.
+    order: a SIMULATED buy (`amount` is the USD to spend) or sell (`amount` is the
+    number of stock UNITS, fractions allowed), filled immediately-or-cancelled from
+    the live order book inside `max_slippage_pct` (default 0.3, max 2) of the touch,
+    with the same session, sizing and capital guards as the live Kraken xStocks tool;
+    an optional `client_id` makes a repeat of the same order a no-op. predict: log one
+    paper call for `symbol` (verdict trade|pass, target_pct, stop_pct, horizon_hours
+    1-168, short note); it never trades. scorecard: how the logged calls scored against
+    later prices after costs.
 
-    This tool has no account, credentials or order action. It cannot place, size
-    or cancel anything; every call is a paper call.
+    Nothing here touches an exchange account or real money: there is no key, no private
+    call and no withdrawal. These tools cannot reset the paper account; only the owner
+    can, in the Trade page. A configured autonomous loop may order without per-order
+    prompts.
     """
     from urllib.parse import urlencode
 
     from mcp_servers.condor.condor_client import call_main_api
 
+    if action in ("order", "preview"):
+        return await call_main_api(
+            "POST",
+            "/xstocks-paper/" + action,
+            {
+                "side": side,
+                "symbol": symbol,
+                "amount": amount,
+                "max_slippage_pct": max_slippage_pct,
+                "client_id": client_id,
+            },
+        )
     if action == "predict":
         return await call_main_api(
             "POST",
@@ -1917,7 +1955,9 @@ async def native_portfolio() -> dict:
     movements detected but not yet confirmed by the owner, which are NOT subtracted;
     tell the owner) and whether the venue's history could be read. Revolut X's
     ledger is in EUR (its `quote`), while every account value and change here is in
-    USD.
+    USD. The Kraken xStocks (paper) account is SIMULATED: it is listed with
+    `paper: true`, is never part of `total_usd` and must never be added to the real
+    accounts or reported as money.
 
     Report these figures next to the Hummingbot ones, not instead of them. Kraken
     xStocks is the same Kraken account Hummingbot's `kraken` connector may also
