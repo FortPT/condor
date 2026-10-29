@@ -1793,7 +1793,10 @@ async def revolut_x(
     keyword filters by coin. candles: OHLCV for `symbol` (timeframe 1m, 5m, 15m, 30m, 1h,
     4h or 1D; count up to 300). book: top order-book levels. preview: size and price an
     order from the live book without placing it, with the taker fee (an ESTIMATE until a
-    real fill reports the truth) and the estimated round-trip cost. order: buy (`amount`
+    real fill reports the truth) and the estimated round-trip cost, which includes an
+    allowance for Revolut X rounding EUR amounts and fees to the cent (so a tiny order
+    looks expensive; the native service refuses a buy whose cost is too high, never a
+    sale). order: buy (`amount`
     is the EUR to spend) or sell (`amount` is the number of coin UNITS); it is an
     immediate-or-cancel limit order priced `max_slippage_pct` (default 0.3, max 2)
     through the touch, sized down to the pair's lot and price steps. Never retry an order

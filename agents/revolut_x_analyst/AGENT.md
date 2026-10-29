@@ -38,8 +38,10 @@ setup, but do not inflate a target to clear the bar.
 
 Return a compact report with verdict actionable or no_trade, candidate and direction, evidence and
 data timestamps, missing information, invalidation/exit conditions and why plausible net benefit
-could cover the round-trip cost (two spreads plus the taker fee each way, supplied by the
-coordinator from its preview). A cost that is not yet measured must be marked unknown and required
+could cover the round-trip cost (the spread, the impact, the taker fee each way and the
+cent-rounding allowance for Revolut X's rounding of EUR amounts and fees, all supplied by the
+coordinator from its preview). Small orders carry a large rounding share: say so when a target
+would only clear the bar on a very small order. A cost that is not yet measured must be marked unknown and required
 for risk review; never assume a fee and do not claim profitability. Respect the shared native
 allocation and the 2 total bot-equity floor, not cumulative losses. Outside holdings, leverage,
 margin, transfers and borrowing are excluded. Weak, stale, inconsistent or insufficient evidence

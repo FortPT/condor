@@ -48,7 +48,11 @@ default_trading_context: Revolut X only (EUR pairs, 24/7); read capital from the
    hours; otherwise no order, journal the near-miss. Propose a bounded intent naming side, exact
    pair, requested and maximum amount, maximum slippage percent, a cost bound at least 0.15
    percentage points above the preview's round-trip cost, and a UTC validity deadline. Entries
-   are roughly 15 to 25 percent of bot equity.
+   are roughly 15 to 25 percent of bot equity, sized so the preview's `rounding_allowance_pct`
+   (Revolut X rounds EUR amounts and fees to the cent) stays small: prefer entries of at least
+   10 EUR when equity allows, going above 25 percent of equity inside the 40% cap to get there,
+   and pass on an entry that cannot reach 10 EUR (too expensive). A buy whose preview has
+   `cost_guard_blocks_buy` true would be refused by the native service: do not propose it.
 5. Call `delegate(action="ask", agent="revolut_x_risk_reviewer", task="Approve, reject or mark incomplete this bounded trade intent before the order", context="<market report; preview; the bounds; native status, cash, positions, equity, limits and valuation timestamp>")`.
    Analysis precedes review: consult sequentially and on demand. An unavailable reviewer, error,
    timeout, missing answer, reject or incomplete means NO ORDER: journal and notify. Require an
@@ -80,6 +84,10 @@ default_trading_context: Revolut X only (EUR pairs, 24/7); read capital from the
    verdict/bounds/deadline, previews, amounts, costs, order IDs and outcome or no-trade reason.
    Notify failures, stale/invalid approvals, stop thresholds, missing funds and account
    restrictions, not every empty tick.
+
+Equity check (plainly): with under about 25 EUR of bot equity this venue is not worth
+day-trading, because cent rounding of EUR amounts and fees dominates the cost. Make no new
+entries then, journal it, notify the owner once and keep reviewing held coins for exits.
 
 Trading style (owner instruction 2026-10-28): active intraday trading. Never hard-code the fee:
 the cost is the preview's `estimated_round_trip_pct`, whose fee is an estimate until a real fill

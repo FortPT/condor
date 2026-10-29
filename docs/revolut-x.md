@@ -30,65 +30,91 @@ and the PUBLIC endpoints, read live on 28 October 2026; no key involved):
   rate), falling back to Kraken's public EURUSD.
 * The signing formula, against the Ed25519 test vectors of RFC 8032 and an independent
   assembly of the message from the spec (`tests/test_revolut_x.py`). The formula is
-  verified; that Revolut X accepts the Condor request built from it has not been.
-* The documented shapes (not exercised against an account): the order object (`id`,
-  `client_order_id`, `symbol`, `side`, `type`, `quantity`, `filled_quantity`,
-  `leaves_quantity`, `amount`, `filled_amount`, `price`, `average_fill_price`, `total_fee`,
-  `fee_currency`, `status`, `reject_reason`, `time_in_force`, `created_date`,
-  `updated_date`), the placement answer (`data.venue_order_id`, `client_order_id`, `state`),
-  balances (`currency`, `available`, `reserved`, `staked`, `total`), fills (`p`, `q`, `im`
-  for maker, `oid`, `s`, `tdt`) and errors (`error_id`, `message`, `timestamp`).
+  verified, and Revolut X accepted the signed requests of the real order of 28 October (below).
+* The documented shapes: the order object (`id`, `client_order_id`, `symbol`, `side`, `type`,
+  `quantity`, `filled_quantity`, `leaves_quantity`, `amount`, `filled_amount`, `price`,
+  `average_fill_price`, `total_fee`, `fee_currency`, `status`, `reject_reason`,
+  `time_in_force`, `created_date`, `updated_date`), the placement answer
+  (`data.venue_order_id`, `client_order_id`, `state`), balances, fills (`p`, `q`, `im` for
+  maker, `oid`, `s`, `tdt`) and errors (`error_id`, `message`, `timestamp`).
 
-**NOT verified against a real account** until the first tiny real order (nothing here has
-ever talked to a private Revolut X endpoint; every test uses fakes):
+**Verified by a real 1 EUR BTC/EUR buy and sell on 2026-10-28** (the first private calls this
+service ever made; everything else here is still fakes):
 
-* The exact place-order body. Sent: `{"client_order_id": <uuid>, "symbol": "BTC-EUR", "side":
+* The order body is accepted: `{"client_order_id": <uuid>, "symbol": "BTC-EUR", "side":
   "buy"|"sell", "order_configuration": {"limit": {"base_size": ..., "price": ...,
-  "time_in_force": "ioc", "execution_instructions": ["allow_taker"]}}}`. The spec lists
-  `time_in_force` (`gtc`, `ioc`) and `execution_instructions` on the limit configuration and
-  `side` in lowercase, but the placement schema was only read through a summarising fetch, and
-  the spec's own Node example posts to a different path with `BTC/USD` and `qty`. If
-  Revolut X refuses the body the answer is HTTP 400 and nothing is placed.
-* The symbol spelling. Paths and order bodies use the hyphen (`BTC-EUR`); responses and
-  the configuration use the slash (`BTC/EUR`). The service writes the hyphen and accepts
-  both when reading. If the order endpoint wants the slash, the first order is refused.
-* Which status an immediate-or-cancel order ends in. The statuses are `pending_new`, `new`,
-  `partially_filled`, `filled`, `cancelled`, `rejected`, `replaced`. The service treats
-  `filled`, `cancelled`, `rejected` and `replaced` as final; a `partially_filled` order that
-  is no longer in `GET /orders/active` is also treated as final (an IOC order cannot rest).
-  Anything else after ten polls stays an uncertain order.
-* The fee fields. The order object has `total_fee` and `fee_currency`, and the fills have no
-  fee. The service reads the order's fee; it has never seen it filled in. A missing fee, a fee
-  in a currency other than EUR or the coin, or a **reported zero on a filled order** is not
-  trusted: the published taker rate is charged to the ledger as an **estimate** and the order
-  is marked `fee_source: "estimate"`. A reported positive fee is used and marked `reported`,
-  and the rate it implies is remembered (`observed_taker_fee_pct` in the ledger, kept across
-  syncs) and used by `preview` from then on.
-* Whether the owner's Revolut Premium plan changes the taker fee. There is no fee endpoint, so
-  the published EEA rates (maker 0%, taker 0.09%) are used only as a labelled estimate until
-  the first real fill shows the truth. A true zero fee would be read as an estimate too (the
-  ledger errs on the side of less cash); check the first fill by hand.
-* API key permissions and IP rules. The spec shows an HTTP 401 "API key can only be used for
-  authentication from whitelisted IP", so the key may be IP-restricted: register this
-  server's public IP if Revolut X offers it, and give the key trading but no withdrawal
-  rights if it distinguishes them.
-* How the signature treats a query string that needs percent-encoding. The service signs the
-  query exactly as it sends it (`urllib.parse.urlencode`). Order lookups avoid awkward
-  characters, but the `cursor` of a paginated list is passed through as received.
-* The shape of the answers beyond the documented examples: `GET /orders/{id}` and the
-  active and historical lists (`data` plus `metadata.next_cursor`), the `symbols` filter
-  format (not used: lists are read unfiltered), and whether an unknown order id answers 404
-  (a 404 is read as "unknown").
-* Rate limits as published (reads 100 a second and 1,000 a minute, place order 10 a second and
-  1,000 a day, cancel 100 a second, 300 active orders). Condor limits itself to 600 private
-  reads a minute and 900 orders a day.
-* There is no sandbox. The first order is the test.
+  "time_in_force": "ioc", "execution_instructions": ["allow_taker"]}}}`. The IOC limit through
+  the touch filled as a taker.
+* `GET /orders/{id}` returns `{"data": order}` and the order carries `total_fee` and
+  `fee_currency`. `GET /orders/fills/{id}` works. Balances return a plain list of
+  `{currency, available, reserved, total}`.
+* Quantities are rounded to the pair's `base_step`.
+* The buy's fee was reported in the base currency (about 2e-8 BTC); the sell's fee was reported
+  in EUR and rounded to a cent (0.01 EUR on a 0.99 EUR sale).
+* **EUR amounts are rounded to the cent, and that dominates small trades.** The buy took exactly
+  1.00 EUR from the balance although the fills were worth 0.996945; the sell's fills were worth
+  0.9955751 but the balance rose by only 0.98 (0.99 reported, minus the 0.01 fee). The round trip
+  lost 0.02 EUR (about 2%) against the 0.19% a taker fee and spread would suggest.
+* The order object's `average_fill_price` is a rounding artefact: for the sale it read 72368.42
+  although the real price (fills value over quantity) was about 72776. It equals the cent-rounded
+  `filled_amount` (0.99) divided by the quantity. The price a trade really got comes from the
+  fills.
+* The 0.09% taker fee is not zero on this account: the buy fee was non-zero, so Premium did NOT
+  make the fee zero. The exact rate is still unread, because the cent-rounded sell fee is too
+  coarse (0.01 on 0.99 EUR would read as 1%); the service learns the rate only from a fill of
+  at least 50 EUR.
 
-**The first order must be tiny**: the minimum order is 0.1 EUR (`min_order_size_quote`).
-Place it by hand (Settings sync and enable, then one `preview` and one `order` of about 1 EUR),
-look at the order in the Revolut X app, and compare it, its `total_fee` and its fills with the
-ledger before enabling any loop. If the placement body, the read-back or the fee fields
-differ from what is described here, fix them before going further.
+What Condor does with this:
+
+* `preview` adds a cent-rounding allowance of up to 0.01 EUR per leg (0.02 EUR per round trip,
+  `ROUNDING_ALLOWANCE_EUR_PER_LEG` in `condor/revolut_x.py`) to `estimated_round_trip_pct`, which is
+  now two taker fees plus the spread plus the impact plus that allowance as a percentage of the
+  order. It reports `rounding_allowance_eur`, `rounding_allowance_pct` and every part in
+  `round_trip_components_pct`, so the crew can see why a small trade looks expensive (1.5 EUR:
+  about 1.3 points of allowance; 10 EUR: 0.2; 40 EUR: 0.05).
+* A BUY whose preview round-trip cost is above 1.0% (`MAX_BUY_ROUND_TRIP_PCT`) is refused before
+  anything is sent ("Refused, no order placed", with the order size that would be cheaper). The
+  preview flags it in advance (`cost_guard_blocks_buy`). The owner's API route can pass
+  `allow_costly_buy` to override; the MCP tool the crew uses has no such argument. A sale is never
+  blocked by this: an exit must always be possible.
+* The user-facing `average_fill_price` of an order is the fills-derived price (value over
+  quantity) whenever the fills add up to the filled quantity; the order's own figure is kept as
+  `reported_average_fill_price` and a `price_note` appears when they differ materially. The
+  result also carries `fills_value`, `rounding_cost_eur` (what the cent amounts cost against the
+  fills' value) and `realised_cost_eur` (that plus the fee). The ledger itself still moves by the
+  EUR amounts Revolut X reports, because those are what the balance really did.
+
+**Still NOT verified against a real account** (every test uses fakes for these):
+
+* Partial fills: which status an immediate-or-cancel order that fills in part ends in. The
+  statuses are `pending_new`, `new`, `partially_filled`, `filled`, `cancelled`, `rejected`,
+  `replaced`. The service treats `filled`, `cancelled`, `rejected` and `replaced` as final; a
+  `partially_filled` order that is no longer in `GET /orders/active` is also treated as final.
+  Anything else after ten polls stays an uncertain order.
+* Refused orders: the answer to a body or balance Revolut X rejects (HTTP 4xx is assumed to be
+  definite, with the shape `error_id`, `message`), and whether an unknown order id answers 404.
+* HTTP 429 behaviour and the `Retry-After` header (assumed milliseconds), and the published rate
+  limits (reads 100 a second and 1,000 a minute, place order 10 a second and 1,000 a day, cancel
+  100 a second, 300 active orders). Condor limits itself to 600 private reads a minute and 900
+  orders a day.
+* Whether the Premium plan changes fees in some other way: the buy fee was non-zero, so it does not
+  make them zero, but the true taker (and maker) rate is unread.
+* The exact fee when it is reported in the base currency on a larger fill, and a fee missing or
+  zero on a filled order: those are not trusted and the published rate is charged to the ledger as
+  an **estimate** (`fee_source: "estimate"`); a reported positive fee is `reported`.
+* API key permissions and IP rules. The spec shows an HTTP 401 "API key can only be used for
+  authentication from whitelisted IP", so the key may be IP-restricted.
+* How the signature treats a query string that needs percent-encoding (the `cursor` of a
+  paginated list is passed through as received) and the shape of the paginated lists
+  (`metadata.next_cursor`) and the `symbols` filter (not used).
+* There is no sandbox. Any new behaviour is tested by a tiny real order.
+
+**Size matters more than the fee.** Because of the cent rounding, an order below about 10 EUR
+pays a large share of its value to rounding, and with under about 25 EUR of bot equity the venue
+is not worth day-trading. The crew is told to prefer entries of at least 10 EUR and to pass on
+smaller ones. Any new order flow is still checked by hand: compare the order in the Revolut X app,
+its `total_fee` and its fills with the ledger.
+
 
 ## Connecting (the key never leaves the server)
 
@@ -136,17 +162,23 @@ value in cash for the fee. At most ten orders a minute and one order per call.
 * A spread above 1% is refused. `preview` sizes and prices an order from the live public book
   without placing it (it needs no key), walks the book for the estimated average price and
   impact, and reports `taker_fee_pct`, `fee_source` (`estimate` or `observed`), a `fee_note`
-  and `estimated_round_trip_pct` (spread plus the taker fee each way).
+  and `estimated_round_trip_pct` (the spread, the impact, the taker fee each way and the
+  cent-rounding allowance of 0.02 EUR per round trip as a share of the order, with the parts in
+  `round_trip_components_pct`, `rounding_allowance_eur` and `rounding_allowance_pct`).
+* A buy whose estimated round-trip cost is above 1.0% is refused before anything is sent unless
+  the owner's API route passes `allow_costly_buy` (see the verified section above); a sale is
+  never refused for its cost.
 * `order` places an immediate-or-cancel limit priced `max_slippage_pct` (default 0.3, at most
   2) through the touch of the live book. Price rounds to the pair's `quote_step` (up for a buy,
   down for a sell) and quantity down to `base_step`; orders below `min_order_size` or
   `min_order_size_quote` or above the maximums are refused locally. A buy's amount is the EUR
   to spend; a sell's amount is coin units. A UUID `client_order_id` is generated per order.
-* The fill is read back with `GET /orders/{id}` (`filled_quantity`, `average_fill_price`,
-  `filled_amount`, `total_fee`, `fee_currency`) and, as evidence only, `GET
-  /orders/fills/{id}` (trade count, maker or taker); a partial fill moves the ledger by what
-  executed and a rejected or unfilled order by nothing. The order object decides, never the
-  fills.
+* The fill is read back with `GET /orders/{id}` (`filled_quantity`, `filled_amount`,
+  `total_fee`, `fee_currency`) and `GET /orders/fills/{id}` (trade count, maker or taker, value
+  and the real average price); a partial fill moves the ledger by what executed and a rejected
+  or unfilled order by nothing. The order object decides the quantity and the EUR amounts; the
+  fills give the user-facing `average_fill_price` (the order's own is cent-rounded and is kept as
+  `reported_average_fill_price`) when they add up to the filled quantity.
 * POSTs are never retried. A new order is written to the ledger as uncertain before it is sent.
 
 ### Definite versus uncertain
@@ -187,7 +219,9 @@ then preview, then reviewer, then a fresh preview, then one order). The analyst 
 have only the journal; the trader reads the candles and passes the analyst a summary. The
 style is the Exchange crew's tuned intraday style with the cost taken from the preview: a
 target of at least 1.5 times the preview's `estimated_round_trip_pct` and at least 0.8%, gross
-reward-to-risk of at least 1.5:1, a 1 to 24 hour window, entries of 15-25% of equity, a cost
+reward-to-risk of at least 1.5:1, a 1 to 24 hour window, entries of 15-25% of equity but of at
+least 10 EUR when equity allows (a smaller entry is too expensive after cent rounding, so the crew
+passes; under about 25 EUR of equity the venue is not worth day-trading), a cost
 bound at least 0.15 percentage points above the preview, every held coin reviewed for an exit
 each tick, and no new entries on a UTC day when the bot's equity is 5% below that day's
 opening equity. Exits are never blocked on paperwork: an incomplete review of an exit is

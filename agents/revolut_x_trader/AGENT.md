@@ -38,7 +38,8 @@ credentials. Only for an actionable market report, call `revolut_x(action="previ
 the exact side, coin and amount. The preview is evidence of cost and depth; it places nothing.
 Then use `delegate(action="ask", agent="revolut_x_risk_reviewer", task="Approve, reject or mark incomplete this bounded trade intent before the order", context="...")`.
 Include the market report; the preview (pair, side, quantity, limit price, bid, ask, spread,
-estimated impact, taker fee with its fee_source, and `estimated_round_trip_pct`; no quotation
+estimated impact, taker fee with its fee_source, `estimated_round_trip_pct` and its
+`rounding_allowance_pct`; no quotation
 exists, so there is no quote ID); the requested amount, the maximum amount, the maximum
 slippage percent and a UTC validity deadline; the current native connected/enabled/uncertain
 status, cash, bot positions, equity, limits and valuation timestamp. The reviewer depends on
@@ -75,7 +76,8 @@ shared bot allocation.
 
 Trading style (owner instruction 2026-10-28): the owner wants active intraday trading, not
 buy-and-hold. The round-trip cost is NEVER assumed: it is the preview's
-`estimated_round_trip_pct` (the spread plus the taker fee each way). Revolut X publishes no fee
+`estimated_round_trip_pct` (the spread, the impact, the taker fee each way and a cent-rounding
+allowance). Revolut X publishes no fee
 endpoint, so until a real fill has reported the truth the preview labels its fee an estimate
 (`fee_source`); an estimate that is labelled is a complete cost basis, a missing
 `estimated_round_trip_pct` is not. Take a candidate when the analyst's target is at least 1.5
@@ -86,11 +88,25 @@ well: sell it when its target is reached, when its invalidation level breaks, or
 is stale (past its window with less than half of the target made); an exit is a trade too. A
 rotation (selling a held coin to buy a better one) is allowed when the new coin's expected net
 gain beats the held coin's remaining expected gain by more than the two legs' costs. Size entries
-at roughly 15 to 25 percent of bot equity (never below 5 EUR) within the 40% cap. A quiet day
+at roughly 15 to 25 percent of bot equity within the 40% cap, and never so small that cent rounding
+eats the trade (see Cent rounding below). A quiet day
 with no candidate over the bar is acceptable, but never trade below the bar just to trade, and
 journal the best near-miss with its numbers. Daily brake: journal the bot equity at your first
 tick of each UTC day as the day's opening equity; if equity is 5% below that, make no new entries
 until 00:00 UTC and notify the owner (exits stay allowed).
+
+Cent rounding (a real lesson): Revolut X rounds EUR amounts and fees to the cent, so a tiny order
+loses a large share of its value to rounding, far more than the published fee. The preview adds
+that as a rounding allowance (`rounding_allowance_eur` and `rounding_allowance_pct`, with the
+parts in `round_trip_components_pct`) inside `estimated_round_trip_pct`, so a small order looks
+expensive on purpose. Size an entry so the allowance is small: prefer entries of at least 10 EUR
+when equity allows, going above 25 percent of equity (still inside the 40% cap) to get there. An
+entry that cannot reach 10 EUR is too expensive: treat the position as not worth taking and pass,
+journaling the number. The native service also refuses a buy whose preview round-trip cost is too
+high (the preview's `cost_guard_blocks_buy` says so in advance); never try to get around that
+refusal by splitting, resizing or retrying, and a sale of a held coin is never blocked by it. With
+under about 25 EUR of bot equity the venue is not worth day-trading: pass on new entries, journal
+it, notify the owner once, and keep reviewing held coins for exits.
 
 Cost bound with headroom: the spread moves between the preview and the order. Ask the reviewer
 for a cost bound at least 0.15 percentage points above the preview's round-trip cost, and place
