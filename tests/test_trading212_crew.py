@@ -188,6 +188,8 @@ def test_the_round_trip_cost_comes_from_the_preview_and_is_never_hard_coded(regi
     loop = StrategyStore().get(COORDINATOR, "intraday")
     for slug in TOOLS:
         text = flat(registry.get(slug).instructions)
+        # The scan's spread limit is a market filter, not a fee or cost assumption.
+        text = text.replace("a spread of 0.5% or less", "")
         assert not re.search(
             r"\b(?:1\.6|1\.2|0\.85|0\.45|0\.4|0\.5|0\.26|0\.3|0\.15|0\.09|0\.35)\s?%",
             text,
@@ -467,3 +469,14 @@ def test_only_order_is_dangerous_and_the_reads_are_read_only(name):
     assert is_mutating_tool_call(call("reconcile"))
     # unreadable arguments fail closed
     assert is_dangerous_tool_call({"tool": name, "input": "not json"})
+
+
+def test_the_scan_filter_allows_the_wider_spread_of_a_single_exchange_quote(registry):
+    """Owner decision 2026-10-30: IEX quotes are wider than the real market's."""
+    loop = flat(StrategyStore().get(COORDINATOR, "intraday").instructions)
+    assert "skip anything with a reference spread above 0.5%" in loop
+    assert "a reference spread above 0.1%" not in loop
+    assert "the preview charges it inside the round-trip cost" in loop
+    analyst = flat(registry.get(ANALYST).instructions)
+    assert "a spread of 0.5% or less" in analyst
+    assert "a spread of 0.1% or less" not in analyst
