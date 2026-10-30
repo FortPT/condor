@@ -289,10 +289,12 @@ async def sample_user(user_id: int, exchange=None, **services) -> None:
             # Deposit/withdrawal upkeep rides the same reading; it never raises.
             await native_flows.observe(user_id, venue.key, service, data)
         except Exception as error:  # noqa: BLE001 - history must never break a read
-            log.debug(
-                "Portfolio sample for %s skipped (%s)",
+            # A warning, with the reason: a gap in the chart must be explainable.
+            log.warning(
+                "Portfolio sample for %s skipped (%s: %s)",
                 venue.label,
                 type(error).__name__,
+                str(error)[:160],
             )
 
 

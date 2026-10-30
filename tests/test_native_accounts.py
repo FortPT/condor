@@ -454,7 +454,7 @@ class Trading212Service(EuroService):
                 {"token": "EUR", "total": 40, "available": 40, "usd_value": 44.0},
                 {"token": "AAPL", "total": 0.05, "available": 0.05, "usd_value": 10.0},
             ],
-            "note": "Euros converted at Kraken's public EURUSD rate.",
+            "note": "Euros converted at Revolut X's public USDC/EUR rate.",
         }
 
 

@@ -29,8 +29,8 @@ trading result = equity at the end reading
   stretch) is still subtracted, because the live reading includes it. A flow before the
   first recorded sample is not, because that sample already includes it.
 * The USD value is stored when the row is written (`usd_value_at_time`): EUR through the
-  venue's own EUR/USD path (Revolut X's `eur_usd`; Crypto.com falls back
-  to Kraken's public EURUSD), USD/USDT/USDC at 1, any other coin from the account's own
+  venue's own EUR/USD path (Revolut X's `eur_usd`, its public USDC/EUR price; Crypto.com and Trading 212 use
+  it too), USD/USDT/USDC at 1, any other coin from the account's own
   price at that moment. History is never re-priced later. A flow that cannot be priced
   is kept without a value, is not subtracted, and the figure's note says so; the owner
   can fix it by entering the USD value.

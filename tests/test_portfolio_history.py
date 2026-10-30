@@ -180,6 +180,15 @@ class RecorderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(list(rows), [ph.EXCHANGE])
         self.assertEqual(rows[ph.EXCHANGE][0][1], 48.2)
 
+    async def test_a_skipped_reading_is_logged_with_its_reason(self):
+        with self.assertLogs(ph.log, level="WARNING") as logged:
+            await ph.sample_user(
+                1, exchange=FakeService(True, 48.2), trading212=FakeService(True, None)
+            )
+        line = " ".join(logged.output)
+        self.assertIn(TRADING212, line)
+        self.assertIn("skipped (ValueError: unavailable)", line)
+
     async def test_revolut_x_is_sampled_as_its_own_source(self):
         await ph.sample_user(
             1,

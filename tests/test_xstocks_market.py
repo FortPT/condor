@@ -6,7 +6,6 @@ import tempfile
 import time
 import unittest
 from datetime import datetime, timezone
-from decimal import Decimal
 from unittest.mock import patch
 
 from condor import xstocks_market as xs
@@ -245,37 +244,12 @@ class PublicReadTests(unittest.IsolatedAsyncioTestCase):
                 await xs.XStocksMarket()._get("Ticker", {"pair": "AAPLxUSD"})
 
 
-class _EurUsdFake(xs.XStocksMarket):
-    def __init__(self, answer):
-        super().__init__()
-        self.answer = answer
-        self.calls = []
+class NoEurUsdRateTests(unittest.TestCase):
+    """The EUR/USD rate is Revolut X's public USDC/EUR price; Kraken supplies stocks only."""
 
-    async def _get(self, path, params, *, asset_class=True):
-        self.calls.append((path, dict(params), asset_class))
-        if isinstance(self.answer, Exception):
-            raise self.answer
-        return self.answer
-
-
-class EurUsdTests(unittest.IsolatedAsyncioTestCase):
-    """USD per euro from Kraken's plain EURUSD pair: Revolut X and Trading 212 value in USD with it."""
-
-    async def test_the_rate_comes_from_the_plain_pair_and_is_cached_a_minute(self):
-        svc = _EurUsdFake({"ZEURZUSD": {"c": ["1.0850", "1"]}})
-        self.assertEqual(await svc.eur_usd(), Decimal("1.0850"))
-        self.assertEqual(await svc.eur_usd(), Decimal("1.0850"))
-        self.assertEqual(svc.calls, [("Ticker", {"pair": "EURUSD"}, False)])
-
-    async def test_an_unreadable_or_nonsense_answer_is_no_rate_never_a_guess(self):
-        for answer in (
-            ValueError("Kraken public data unavailable"),
-            {},
-            {"ZEURZUSD": {"c": []}},
-            {"ZEURZUSD": {"c": ["0", "1"]}},
-            {"ZEURZUSD": {"c": ["nan", "1"]}},
-        ):
-            self.assertIsNone(await _EurUsdFake(answer).eur_usd(), answer)
+    def test_the_kraken_feed_has_no_eur_usd_rate(self):
+        self.assertFalse(hasattr(xs.service, "eur_usd"))
+        self.assertNotIn("EURUSD", open(xs.__file__, encoding="utf-8").read())
 
 
 if __name__ == "__main__":

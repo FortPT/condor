@@ -26,7 +26,9 @@ and the PUBLIC endpoints, read live on 28 October 2026; no key involved):
   about 1000 candles per call, `data` rows of `{start, open, high, low, close, volume}`.
 * There is **no EUR/USD pair** on Revolut X (`EUR-USD` answers "No such pair"). The dashboard
   therefore values euros in USD through the USDC/EUR mid price (a stand-in for the euro
-  rate), falling back to Kraken's public EURUSD.
+  rate). Trading 212 and the deposit tracking use this same public price, and a rate
+  read within the last hour may value an account (never size or place an order) while the
+  price is briefly unavailable. There is no Kraken fallback.
 * The signing formula, against the Ed25519 test vectors of RFC 8032 and an independent
   assembly of the message from the spec (`tests/test_revolut_x.py`). The formula is
   verified, and Revolut X accepted the signed requests of the real order of 28 October (below).
@@ -275,7 +277,8 @@ path the other native accounts use (`condor/native_accounts.py`). The Portfolio 
 authenticated user's Revolut X balances (connector "Revolut X"), after reading the shared
 Hummingbot cache and never written into it. Hummingbot has no Revolut X connector, so there
 is no double-count rule. Euros and coins are valued at the last traded price and converted to
-USD through the USDC/EUR rate (Kraken's EUR/USD when that pair is missing); assets without a
+USD through the USDC/EUR rate (the last rate read within an hour when that pair is briefly
+missing); assets without a
 price are listed with zero value and named in a note. With no EUR/USD rate at all the account
 is not valued (a note says so) rather than recorded as zero. The bot ledger stays in EUR;
 every account value, chart sample and equity change is in USD. A value sample is recorded for
