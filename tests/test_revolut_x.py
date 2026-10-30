@@ -1906,20 +1906,46 @@ class RevolutXTests(unittest.IsolatedAsyncioTestCase):
             data["total_usd"], sum(b["usd_value"] for b in data["balances"]), places=9
         )
 
-    async def test_portfolio_falls_back_to_krakens_eurusd_when_usdc_eur_is_missing(
-        self,
-    ):
+    def _without_usdc_eur(self):
+        self.svc._tickers_cache = (0.0, {})  # the ticker answer is cached a few seconds
         self.svc.tickers_raw = {
             "data": [t for t in tickers()["data"] if t["symbol"] != "USDC/EUR"]
         }
 
-        async def kraken_rate():
-            return Decimal("1.11")
+    async def test_there_is_no_kraken_fallback_for_the_eur_usd_rate(self):
+        from condor import xstocks_market
 
-        with patch("condor.xstocks_market.service.eur_usd", kraken_rate):
-            data = await self.svc.portfolio(1)
-        by = {b["token"]: b for b in data["balances"]}
-        self.assertAlmostEqual(by["EUR"]["usd_value"], 44.4, places=6)
+        self._without_usdc_eur()
+        self.assertIsNone(await self.svc.eur_usd())
+        self.assertIsNone(self.svc.recent_eur_usd())
+        self.assertFalse(hasattr(xstocks_market.service, "eur_usd"))
+        with self.assertRaisesRegex(ValueError, "No EUR/USD rate"):
+            await self.svc.portfolio(1)
+
+    async def test_a_rate_read_a_moment_ago_values_the_account_while_the_price_is_gone(
+        self,
+    ):
+        first = await self.svc.portfolio(1)
+        rate = self.svc.recent_eur_usd()
+        self.assertIsNotNone(rate)
+        self._without_usdc_eur()
+        self.assertIsNone(await self.svc.eur_usd())  # fresh reads never reuse it
+        second = await self.svc.portfolio(1)
+        by = {b["token"]: b for b in second["balances"]}
+        self.assertAlmostEqual(by["EUR"]["usd_value"], float(40 * rate), places=6)
+        self.assertEqual(
+            {b["token"] for b in first["balances"]},
+            {b["token"] for b in second["balances"]},
+        )
+
+    async def test_a_rate_older_than_an_hour_values_nothing(self):
+        await self.svc.portfolio(1)
+        stamp, rate = self.svc._last_eur_usd
+        self.svc._last_eur_usd = (stamp - rx.RATE_MAX_AGE_SEC - 1, rate)
+        self.assertIsNone(self.svc.recent_eur_usd())
+        self._without_usdc_eur()
+        with self.assertRaisesRegex(ValueError, "No EUR/USD rate"):
+            await self.svc.portfolio(1)
 
     async def test_portfolio_names_the_coins_it_could_not_price(self):
         self.svc.tickers_raw = {
@@ -1933,13 +1959,8 @@ class RevolutXTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_portfolio_refuses_to_value_the_account_without_a_eur_usd_rate(self):
         self.svc.tickers_raw = {"data": []}
-
-        async def none():
-            return None
-
-        with patch("condor.xstocks_market.service.eur_usd", none):
-            with self.assertRaises(ValueError):
-                await self.svc.portfolio(1)
+        with self.assertRaises(ValueError):
+            await self.svc.portfolio(1)
 
     async def test_history_lists_final_orders_newest_first(self):
         old = info("buy", "BTC", "1", "1", "1", updated_date=1_000)

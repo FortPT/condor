@@ -795,6 +795,36 @@ class SyncAndValuationTests(Base):
             await self.svc.portfolio(1)
         self.assertIn("EUR/USD", str(caught.exception))
 
+    async def test_the_eur_usd_rate_is_revolut_xs_public_price_never_krakens(self):
+        calls = []
+
+        async def revolut_rate():
+            calls.append(1)
+            return Decimal("1.12")
+
+        with patch("condor.revolut_x.service.eur_usd", revolut_rate):
+            first = await t212.Trading212Service.eur_usd(self.svc)
+            second = await t212.Trading212Service.eur_usd(self.svc)
+        self.assertEqual((first, second), (Decimal("1.12"), Decimal("1.12")))
+        self.assertEqual(len(calls), 1)  # cached a minute
+        self.assertFalse(hasattr(t212.xstocks_market.service, "eur_usd"))
+
+    async def test_a_rate_read_a_moment_ago_keeps_the_dashboard_value_while_the_price_is_gone(
+        self,
+    ):
+        async def no_rate():
+            return None
+
+        self.svc.eur_usd = no_rate
+        self.svc._eur_usd = (time.monotonic(), FX)
+        view = await self.svc.portfolio(1)
+        self.assertAlmostEqual(view["total_usd"], 40 * 1.10 + 20 + 100, places=6)
+        self.assertIsNone(await self.svc.eur_usd())  # sizing and orders never reuse it
+        stale = time.monotonic() - t212.revolut_x.RATE_MAX_AGE_SEC - 1
+        self.svc._eur_usd = (stale, FX)
+        with self.assertRaisesRegex(ValueError, "EUR/USD"):
+            await self.svc.portfolio(1)
+
 
 class MarketTests(Base):
     async def test_stocks_are_the_intersection_of_trading212_and_the_reference_feed(

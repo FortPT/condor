@@ -53,7 +53,7 @@ from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from condor import crypto_com_scorecard as scorecard
-from condor import xstocks_market
+from condor import revolut_x, xstocks_market
 from condor.fsutil import atomic_write_json
 from condor.paths import data_dir
 
@@ -97,7 +97,7 @@ MAX_SPREAD_PCT = Decimal("1")
 #: A buy must leave this much cash beyond its notional (FX fee, price drift).
 FEE_HEADROOM = Decimal("0.01")
 #: Sizing divides the money by the price in EUR AND this margin: the EUR/USD rate
-#: used here (Kraken's public EURUSD) is not Trading 212's own conversion rate.
+#: used here (Revolut X's public USDC/EUR) is not Trading 212's own conversion rate.
 FX_BUFFER = Decimal("0.005")
 #: The least a buy may be, whatever the instrument says.
 MIN_ORDER_EUR = Decimal("1")
@@ -880,12 +880,12 @@ class Trading212Service:
         return {"accounts": funded}
 
     async def eur_usd(self):
-        """USD per euro from Kraken's public EURUSD pair, or None (cached a minute)."""
+        """USD per euro from Revolut X's public USDC/EUR price, or None (cached a minute)."""
         stamp, cached = self._eur_usd
         if cached and time.monotonic() - stamp < 60:
             return cached
         try:
-            rate = await xstocks_market.service.eur_usd()
+            rate = await revolut_x.service.eur_usd()
         except (
             Exception
         ):  # noqa: BLE001 - a missing rate only drops the dashboard value
@@ -896,12 +896,23 @@ class Trading212Service:
         self._eur_usd = (time.monotonic(), rate)
         return rate
 
+    def recent_eur_usd(self, max_age=revolut_x.RATE_MAX_AGE_SEC):
+        """The last rate ``eur_usd`` read, if at most ``max_age`` seconds old.
+
+        For valuing the account on the dashboard and in the history only; sizing and
+        orders use the fresh ``eur_usd`` and are refused without it.
+        """
+        stamp, rate = self._eur_usd
+        if rate and time.monotonic() - stamp < max_age:
+            return rate
+        return None
+
     async def portfolio(self, user_id):
         """Whole Trading 212 account at Trading 212's own prices, for the dashboard (USD)."""
         summary = await self._summary(user_id)
         self._require_eur(summary)
         positions = await self._positions(user_id)
-        rate = await self.eur_usd()
+        rate = await self.eur_usd() or self.recent_eur_usd()
         if (summary["cash_total"] > 0 or positions) and not rate:
             # Cash is held in euros and converted here, so without the rate the whole
             # account would read as 0 USD, and that false drop would be recorded as
@@ -954,7 +965,7 @@ class Trading212Service:
                 excluded_tokens.append(token)
         note = (
             "Whole Trading 212 account at Trading 212's own current prices, euros "
-            "converted at Kraken's public EURUSD rate: free cash, cash reserved for "
+            "converted at Revolut X's public USDC/EUR rate: free cash, cash reserved for "
             "pending orders, cash in pies and every position, so a pending order "
             "never makes money vanish and reappear. Only the bot allocation may be "
             "traded."
@@ -2060,8 +2071,8 @@ class Trading212Service:
             "fx_fee": None,
             "average_price": average,
             "average_price_source": (
-                "estimate: EUR value / quantity converted at the Kraken reference "
-                "EUR/USD"
+                "estimate: EUR value / quantity converted at the EUR/USD rate "
+                "(Revolut X's public USDC/EUR price)"
             ),
             "fill_source": "account_evidence",
         }

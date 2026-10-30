@@ -50,7 +50,7 @@ the tool answers, the Trade tab and the crew prompts. For a stock the account al
 holds, Trading 212's own current price (positions endpoint) is used for a sale's limit
 (the lower of the two). The real fill price, quantity and fees come only from Trading
 212: the historical-orders endpoint and the account cash change, never from the
-reference. The EUR/USD rate for sizing is Kraken's public EURUSD (`xstocks_market`'s
+reference. The EUR/USD rate for sizing is Revolut X's public USDC/EUR price (`revolut_x`'s
 `eur_usd`), not Trading 212's own conversion rate (a 0.5% sizing buffer covers the
 difference).
 
@@ -148,7 +148,7 @@ A fill booked from the account carries `fill_source: "account_evidence"` and
 `value_source: "account_cash_change"`: quantity = the position's change, EUR value = the
 cash change (minus the fee), fee = an **estimate** at the published (or observed) FX rate
 (`fee_source: "estimate"`; no tax figures exist without a history record), average price
-= EUR value / quantity converted at Kraken's reference EUR/USD (`average_price_source`
+= EUR value / quantity converted at Revolut X's USDC/EUR rate (`average_price_source`
 says so). In the order call a conclusive fill is returned without pausing trading; a
 reconcile leaves it paused.
 
@@ -340,7 +340,7 @@ sections, the per-endpoint pages) and the help centre FX fee articles.
 11. The **exchange working schedule** semantics (`OPEN`, `CLOSE`, `BREAK_*` events and
     their date format): the holiday cross-check reads the latest past event as the
     current state and ignores anything older than four days.
-12. Trading 212's own **EUR/USD conversion rate** against Kraken's (sizing carries a 0.5%
+12. Trading 212's own **EUR/USD conversion rate** against Revolut X's USDC/EUR (sizing carries a 0.5%
     buffer), and whether `walletImpact.totalCost` includes the FX fee.
 13. The **spread, slippage, regulatory and rounding** parts of the round-trip estimate
     (all estimates or assumptions), and the FX fee itself on an EU/EUR account (the help

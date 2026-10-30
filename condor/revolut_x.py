@@ -105,6 +105,9 @@ FILLS_QUANTITY_TOLERANCE = Decimal("0.005")
 PRICE_NOTE_PCT = Decimal("0.1")
 # Round-trip cost used by the scorecard when no spread is known.
 DEFAULT_ROUND_TRIP_COST_PCT = 0.35
+# A last-known EUR/USD rate may value an account (dashboard, history) for this long
+# when the price is briefly unavailable; sizing and orders never use it.
+RATE_MAX_AGE_SEC = 3600
 MAX_BYTES = 4 * 1024 * 1024
 # Published limits: public 1 request/second; authenticated reads 100/s and
 # 1,000/minute; place order 10/s and 1,000/day. Stay well inside them.
@@ -442,6 +445,7 @@ class RevolutXService:
         self._public_at = 0.0
         self._pairs = (0.0, {})
         self._tickers_cache = (0.0, {})
+        self._last_eur_usd = (0.0, None)
 
     # ── credentials and switches ──
 
@@ -701,22 +705,34 @@ class RevolutXService:
         return bid, ask, last
 
     async def eur_usd(self):
-        """USD per euro: Revolut X has no EUR/USD pair, so USDC/EUR stands in, else Kraken's."""
+        """USD per euro: Revolut X has no EUR/USD pair, so its public USDC/EUR price stands in.
+
+        The ticker endpoint is public: no key and no connected account is needed, so
+        Trading 212 and the deposit tracking use this rate too. ``None`` when the
+        price is unavailable; a rate that is a little old is ``recent_eur_usd``.
+        """
         try:
             usdc = (await self.tickers()).get("USDC") or {}
             bid, ask, _ = self._touch(usdc)
-            if bid and ask and bid > 0 and ask > 0:
-                return 2 / (bid + ask)
         except ValueError:
-            pass
-        try:
-            from condor import xstocks_market
-
-            return await xstocks_market.service.eur_usd()
-        except (
-            Exception
-        ):  # noqa: BLE001 - a missing rate only drops the dashboard value
             return None
+        if bid and ask and bid > 0 and ask > 0:
+            rate = 2 / (bid + ask)
+            self._last_eur_usd = (time.monotonic(), rate)
+            return rate
+        return None
+
+    def recent_eur_usd(self, max_age=RATE_MAX_AGE_SEC):
+        """The last rate ``eur_usd`` read, if it is at most ``max_age`` seconds old.
+
+        For valuing an account on a dashboard or in the history only: a euro moves a
+        fraction of a percent in an hour, so a brief outage of the price must not
+        cut the line. Sizing and orders never use it.
+        """
+        stamp, rate = self._last_eur_usd
+        if rate and time.monotonic() - stamp < max_age:
+            return rate
+        return None
 
     def _record_prices(self, user_id, rows):
         """Feed the live scorecard; it must never be able to break a market read."""
@@ -878,7 +894,7 @@ class RevolutXService:
         """Whole Revolut X account at the last traded price, for the dashboard (USD)."""
         accounts = (await self.accounts(user_id))["accounts"]
         tickers = await self.tickers()
-        rate = await self.eur_usd()
+        rate = await self.eur_usd() or self.recent_eur_usd()
         if accounts and not rate:
             # Every holding is priced in euros and converted here, so without the
             # rate the whole account would read as 0 USD, and that false drop would

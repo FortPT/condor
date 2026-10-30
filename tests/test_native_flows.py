@@ -469,6 +469,27 @@ def test_a_partial_history_is_saved_but_does_not_claim_the_venue_is_tracked():
     assert "withdrawals: denied" in info["fetch"]["reason"]
 
 
+def test_euros_fall_back_to_revolut_xs_public_rate_and_never_to_kraken(monkeypatch):
+    from condor import revolut_x, xstocks_market
+
+    class NoRate:  # a venue that cannot price euros itself
+        async def eur_usd(self):
+            return None
+
+    async def revolut_rate():
+        return Decimal("1.09")
+
+    monkeypatch.setattr(revolut_x.service, "eur_usd", revolut_rate)
+    assert run(nf.usd_rate(NoRate(), "EUR")) == Decimal("1.09")
+    assert not hasattr(xstocks_market.service, "eur_usd")
+
+    async def no_rate():
+        return None
+
+    monkeypatch.setattr(revolut_x.service, "eur_usd", no_rate)
+    assert run(nf.usd_rate(NoRate(), "EUR")) is None
+
+
 def test_an_unpriceable_currency_is_stored_without_a_usd_value():
     service = FakeCrypto(deposits=CRYPTO_DEPOSITS, withdrawals={"withdrawal_list": []})
     run(nf.sync(USER, "crypto_com_exchange", service, now=T0, force=True, view=None))

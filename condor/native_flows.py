@@ -570,8 +570,8 @@ async def usd_rate(service, currency: str, view: Mapping | None = None, user_id=
     """USD per unit of ``currency``, or ``None`` when it cannot be priced.
 
     Dollar stablecoins are 1; EUR uses the venue's own ``eur_usd`` (the path its
-    portfolio uses), falling back to Kraken's public EURUSD; anything else is read from
-    the account view's own price (value / units).
+    portfolio uses), falling back to Revolut X's public USDC/EUR rate; anything else is
+    read from the account view's own price (value / units).
     """
     code = currency.upper()
     if code in USD_LIKE:
@@ -579,9 +579,10 @@ async def usd_rate(service, currency: str, view: Mapping | None = None, user_id=
     if code == "EUR":
         sources = [service]
         try:
-            from condor import xstocks_market
+            from condor import revolut_x
 
-            sources.append(xstocks_market.service)
+            if service is not revolut_x.service:
+                sources.append(revolut_x.service)
         except Exception:  # noqa: BLE001
             pass
         for source in sources:
