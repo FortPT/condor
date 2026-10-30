@@ -23,6 +23,13 @@ class Credentials(BaseModel):
     api_secret: SecretStr = SecretStr("")
 
 
+class MarketDataKey(BaseModel):
+    # Alpaca market data only (no brokerage): validated in the service for the same
+    # reason as above, and never sent back.
+    key_id: SecretStr
+    secret: SecretStr
+
+
 class Enable(BaseModel):
     enabled: bool
 
@@ -77,6 +84,28 @@ async def credentials(body: Credentials, user: WebUser = Depends(get_current_use
 @router.delete("/credentials")
 async def disconnect(user: WebUser = Depends(get_current_user)):
     return service.disconnect(user.id)
+
+
+@router.put("/market-data/credentials")
+async def market_data_credentials(
+    body: MarketDataKey, user: WebUser = Depends(get_current_user)
+):
+    """Alpaca's market data key: checked against Alpaca first, saved only when it works.
+
+    It can read prices and nothing else here; it never touches an order or the account.
+    """
+    try:
+        return await service.save_feed_credentials(
+            user.id, body.key_id.get_secret_value(), body.secret.get_secret_value()
+        )
+    except ValueError as error:
+        reject(error)
+
+
+@router.delete("/market-data/credentials")
+async def market_data_disconnect(user: WebUser = Depends(get_current_user)):
+    """Back to Kraken's public xStocks data."""
+    return service.disconnect_feed(user.id)
 
 
 @router.put("/enabled")

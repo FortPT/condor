@@ -32,6 +32,8 @@ export function Trading212() {
   const [synced, setSynced] = useState<SyncResult | null>(null);
   const [notice, setNotice] = useState("");
   const [excludedText, setExcludedText] = useState<string | null>(null);
+  const [feedKeyId, setFeedKeyId] = useState("");
+  const [feedSecret, setFeedSecret] = useState("");
   const status = useTrading212Status();
   const refresh = () => qc.invalidateQueries({ queryKey: ["trading212-status"] });
   const save = useMutation({
@@ -82,8 +84,28 @@ export function Trading212() {
     },
     retry: false,
   });
+  const saveFeed = useMutation({
+    mutationFn: () => apiFetch(base + "/market-data/credentials", {
+      method: "PUT", body: JSON.stringify({ key_id: feedKeyId, secret: feedSecret }),
+    }),
+    onMutate: () => setNotice(""),
+    onSuccess: () => {
+      setFeedKeyId(""); setFeedSecret("");
+      setNotice("Alpaca key checked and saved. The agents now read real-time IEX prices from Alpaca.");
+      refresh();
+    },
+    retry: false,
+  });
+  const removeFeed = useMutation({
+    mutationFn: () => apiFetch(base + "/market-data/credentials", { method: "DELETE" }),
+    onMutate: () => setNotice(""),
+    onSuccess: () => { setNotice("Alpaca key removed. The agents read Kraken's public xStocks data again."); refresh(); },
+    retry: false,
+  });
   const failures: [string, boolean, unknown][] = [
     ["Loading status", status.isError, status.error],
+    ["Save price data key", saveFeed.isError, saveFeed.error],
+    ["Remove price data key", removeFeed.isError, removeFeed.error],
     ["Save API key", save.isError, save.error],
     ["Disconnect", disconnect.isError, disconnect.error],
     ["Enable/pause trading", toggle.isError, toggle.error],
@@ -150,7 +172,7 @@ export function Trading212() {
       {synced && <p role="status" className="text-sm">Allocation synced: cash {synced.ledger.cash} EUR
         {" · "}positions: {Object.entries(synced.ledger.positions).map(([symbol, position]) => `${symbol} ${position.units}`).join(", ") || "none"}
         {synced.skipped.length > 0 && <> · skipped (not tradable here or no price): {synced.skipped.join(", ")}</>}</p>}
-      <p className="text-xs text-[var(--color-text-muted)]">Enabling execution does not start a loop or place an order. Account holdings outside the bot allocation are excluded. Trading 212 has no quote endpoint, so prices the agents see are reference prices from Kraken xStocks public data; real fills and fees come from Trading 212. Authenticated behaviour (order body, limit vs market, error and rate-limit headers, fees) is not yet verified against a real account: the first real order must be tiny and approved by you.</p>
+      <p className="text-xs text-[var(--color-text-muted)]">Enabling execution does not start a loop or place an order. Account holdings outside the bot allocation are excluded. Trading 212 has no quote endpoint, so prices the agents see are reference prices from the market data feed shown under Price data below; real fills and fees come from Trading 212. Authenticated behaviour (order body, limit vs market, error and rate-limit headers, fees) is not yet verified against a real account: the first real order must be tiny and approved by you.</p>
     </section>
     <section className="space-y-3 rounded-lg border border-[var(--color-border)] p-4">
       <h2 className="font-semibold">Holdings kept out of the bot</h2>
@@ -172,6 +194,18 @@ export function Trading212() {
         <button type="button" className={button} disabled={!data?.connected || disconnect.isPending} aria-busy={disconnect.isPending} onClick={() => disconnect.mutate()}>{disconnect.isPending ? "Disconnecting…" : "Disconnect"}</button>
       </div>
       {!data?.connected && <p className="text-xs text-[var(--color-text-muted)]">Disconnect is unavailable: no API key is saved.</p>}
+    </form>
+    <form className="space-y-3 rounded-lg border border-[var(--color-border)] p-4" aria-label="Price data" onSubmit={(event) => { event.preventDefault(); saveFeed.mutate(); }}>
+      <h2 className="font-semibold">Price data</h2>
+      <p className="text-sm" data-testid="price-source">Prices the agents read: {data?.market_data?.label ?? "not read yet"}{data?.market_data?.source === "kraken" ? " (no Alpaca key saved)" : ""}.</p>
+      <p className="text-sm">Trading 212 has no quote or candle endpoint, so the agents read prices elsewhere. Alpaca's free market data gives real-time prices of the real stocks from the IEX exchange (one exchange: its volume is a small share of the market and a quiet stock's best bid and offer can be wider than the national one). Create a free Alpaca account, open Paper Trading and generate API keys: Alpaca shows the key ID and secret once. Enter them here only, never in chat. They are used to read prices and nothing else (Condor never uses them to place an order), are stored on this Condor host and are never returned to the browser or model. The key is checked against Alpaca before it is saved; a key that fails is not kept. Saving or removing it does not change the trading switch.</p>
+      <label className="block text-sm">Alpaca key ID<input type="password" autoComplete="off" value={feedKeyId} onChange={(event) => setFeedKeyId(event.target.value)} className={input} required /></label>
+      <label className="block text-sm">Alpaca secret<input type="password" autoComplete="off" value={feedSecret} onChange={(event) => setFeedSecret(event.target.value)} className={input} required /></label>
+      <div className="flex flex-wrap items-center gap-3">
+        <button className={button} disabled={saveFeed.isPending} aria-busy={saveFeed.isPending}>{saveFeed.isPending ? "Checking…" : "Check and save Alpaca key"}</button>
+        <button type="button" className={button} disabled={!data?.market_data?.alpaca_configured || removeFeed.isPending} aria-busy={removeFeed.isPending} onClick={() => removeFeed.mutate()}>{removeFeed.isPending ? "Removing…" : "Remove Alpaca key (use Kraken data)"}</button>
+      </div>
+      {!data?.market_data?.alpaca_configured && <p className="text-xs text-[var(--color-text-muted)]">Remove is unavailable: no Alpaca key is saved.</p>}
     </form>
   </div>;
 }

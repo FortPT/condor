@@ -35,7 +35,7 @@ export type NativeVenue = {
 
 /** Said above the markets table of a venue whose rows are not its own quotes. */
 export const REFERENCE_NOTE =
-  "Reference prices in USD from Kraken xStocks public data (a tokenized copy of the stock), not Trading 212 quotes; Trading 212 has no quote endpoint. Orders fill at Trading 212's own price.";
+  "Reference prices in USD from a public market data feed (Alpaca's real-time IEX data once a key is saved in Settings, otherwise Kraken's xStocks data), not Trading 212 quotes; Trading 212 has no quote endpoint. Orders fill at Trading 212's own price.";
 
 export const NATIVE_VENUES: Record<NativeVenueKey, NativeVenue> = {
   "revolut-x": {
@@ -66,7 +66,7 @@ export const NATIVE_VENUES: Record<NativeVenueKey, NativeVenue> = {
     volumeLabel: "24h volume",
     marketsPath: "stocks",
     priceQuote: "USD",
-    referenceLabel: "Kraken xStocks reference",
+    referenceLabel: "Market-data reference",
     autoValuation: true,
   },
 };

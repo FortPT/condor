@@ -27,8 +27,8 @@ Trading 212's public documentation, not observed; see "NOT VERIFIED".
 * Only a **EUR** account is accepted. The currency is read from the account summary at
   sync and before every order; any other currency refuses the order and says why
   (orders execute in the account's own currency, and every amount here is read as EUR).
-* Only **US stocks that Trading 212 lists and the Kraken xStocks public feed covers**
-  (so a reference price exists). The mapping `AAPL` -> `AAPL_US_EQ` is read from the
+* Only **US stocks that Trading 212 lists and the reference price feed covers**
+  (so a reference price exists; the feed is described under *How prices are obtained*). The mapping `AAPL` -> `AAPL_US_EQ` is read from the
   instrument metadata at runtime: `type` STOCK, `currencyCode` USD, a US ISIN and a
   short name equal to the ticker's symbol; a symbol claimed by two listings maps only
   when exactly one is the plain `_US_EQ` listing.
@@ -44,9 +44,28 @@ Trading 212's public documentation, not observed; see "NOT VERIFIED".
 
 Trading 212 has **no market-data endpoint** (verified from the endpoint list). Prices
 for the `stocks` table, the candles, sizing and limit prices are **reference prices in
-USD from Kraken's public xStocks data** (`condor/xstocks_market.py`), a tokenized copy of
-the same stocks. They are good for price levels and candles and are labelled as such in
-the tool answers, the Trade tab and the crew prompts. For a stock the account already
+USD from a public market data feed**, labelled as such in the tool answers, the Trade
+tab and the crew prompts (the `stocks` answer's `reference_note` and the preview's
+`reference_source` name the feed in use; `status.market_data` says it too):
+
+* **Alpaca's real-time IEX data** (`condor/alpaca_market.py`) once the owner has saved an
+  Alpaca market data key in Settings -> Trading 212 -> Price data. The prices are those of
+  the real stocks. A free Alpaca account allows only the IEX feed (one exchange): the
+  `volume_24h_usd` of a row is today's IEX dollar volume (a small share of the whole
+  market), a quiet stock's best bid and offer can be wider than the national one, and a
+  15-minute candle with no IEX trade is absent. Every row carries `quote_age_sec`, and a
+  quote older than 300 seconds is no price for an order. Alpaca publishes 200 historical
+  calls a minute for the free plan; Condor stays at 150. The scan universe is a fixed list
+  of liquid US stocks and ETFs (`WATCHLIST`; what Trading 212 does not list drops out), a
+  stock named in a search or a preview is priced whether or not it is on that list. The key
+  is checked against Alpaca before it is saved, is write-only, stored in a private file
+  under the data directory and used for `GET` market data only; Condor never uses it for an
+  order. Saving or removing it does not change the trading switch.
+* **Kraken's public xStocks data** (`condor/xstocks_market.py`, no account and no key), a
+  tokenized copy of the same stocks, while no Alpaca key is saved. Removing the Alpaca key
+  returns to it. It is the fallback until the Alpaca feed has been compared against it.
+
+They are good for price levels and candles. For a stock the account already
 holds, Trading 212's own current price (positions endpoint) is used for a sale's limit
 (the lower of the two). The real fill price, quantity and fees come only from Trading
 212: the historical-orders endpoint and the account cash change, never from the
@@ -63,7 +82,7 @@ Valuation (`valuation`, `equity`) uses Trading 212's own positions endpoint
 |---|---|---|
 | commission | 0 | published (Trading 212 help centre) |
 | FX fee | 0.15% each leg, 0.30% round trip | **published** (help centre "What is the FX fee?": applied when the instrument's currency differs from the account's, on buy and sell); replaced by the **observed** rate after the first fill of at least 50 EUR |
-| spread | the Kraken reference spread, never below 0.02% | **estimate** |
+| spread | the reference feed's spread, never below 0.02% | **estimate** |
 | slippage | 0.03% per leg | **assumption** |
 | regulatory | 0.003% on a sale | **estimate** (SEC fee and FINRA fee on US sales; the help centre lists them, amounts are tiny) |
 | rounding | 0.01 EUR per leg over the order value | **assumption** carried over from the Revolut X lesson (EUR amounts rounded to the cent); makes tiny orders look expensive |

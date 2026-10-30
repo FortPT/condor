@@ -1760,10 +1760,12 @@ async def trading212(
     regular US session is open. valuation: equity in EUR at Trading 212's own current
     prices (pauses at the equity floor). accounts: the Trading 212 cash and positions.
     history: recent filled or final orders with Trading 212's own fill price and fees.
-    stocks: the most traded US stocks that Trading 212 lists AND the Kraken xStocks
-    public feed covers; `price`, `bid`, `ask`, `spread_pct`, `change_since_open_pct` and
-    `volume_24h_usd` are REFERENCE prices in USD from Kraken's public xStocks data (a
-    tokenized copy, not Trading 212's own quote; Trading 212 has no quote endpoint),
+    stocks: the most traded US stocks that Trading 212 lists AND the reference price feed
+    covers; `price`, `bid`, `ask`, `spread_pct`, `change_since_open_pct` and
+    `volume_24h_usd` are REFERENCE prices in USD from that feed (Alpaca's real-time IEX
+    data when a key is saved, else Kraken's public xStocks data, a tokenized copy; the
+    answer's `reference_note` says which; not Trading 212's own quote, which has no
+    quote endpoint),
     held stocks are always included, a keyword filters by ticker. candles: reference
     OHLCV for `symbol` (timeframe 5m, 15m, 30m, 1h, 4h or 1D; count up to 300).
     preview: size and price an order without placing it: quantity, limit price (USD),

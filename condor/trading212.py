@@ -1,15 +1,15 @@
 """Live Trading 212 (US stocks, Invest account in EUR) trading on Trading 212's public API.
 
 Account keys never enter agent tool arguments. The bot trades only US stocks that
-Trading 212 lists AND the Kraken xStocks public feed covers (that feed is where the
-reference prices come from), only in an account whose currency is EUR, and only while
+Trading 212 lists AND the reference price feed covers (Alpaca's real-time IEX data
+when a key is saved, else Kraken's public xStocks data), only in an account whose currency is EUR, and only while
 the regular US session is open. Every order is one call, idempotent by construction
 (the API has no client order id): the order is written to the ledger BEFORE it is
 sent, and an outcome that is not certain pauses trading until it is reconciled.
 
 Trading 212 has no market-data endpoint. Prices used to size and limit an order, the
-candles and the "stocks" table are REFERENCE prices in USD from Kraken's public
-xStocks data (a tokenized copy of the same stocks), labelled as such everywhere. The
+candles and the "stocks" table are REFERENCE prices in USD from that feed (Alpaca's
+IEX data are the real stocks; Kraken's are a tokenized copy), labelled as such everywhere. The
 real fill price, quantity and fees come only from Trading 212's own order history and
 account, never from the reference.
 
@@ -52,6 +52,7 @@ from datetime import datetime, timezone
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
+from condor import alpaca_market
 from condor import crypto_com_scorecard as scorecard
 from condor import revolut_x, xstocks_market
 from condor.fsutil import atomic_write_json
@@ -81,6 +82,14 @@ REFERENCE_NOTE = (
     "stock), not Trading 212 quotes: Trading 212 has no quote endpoint. Orders fill "
     "at Trading 212's own price."
 )
+ALPACA_REFERENCE_NOTE = (
+    "Reference prices in USD from Alpaca's real-time IEX data (the real stock, from one "
+    "exchange: its volume is a small share of the market and a quiet stock's best bid "
+    "and offer can be wider than the national one), not Trading 212 quotes: Trading "
+    "212 has no quote endpoint. Orders fill at Trading 212's own price."
+)
+KRAKEN_SOURCE = "Kraken xStocks public data"
+ALPACA_SOURCE = "Alpaca real-time IEX data"
 
 # Below this total bot equity (EUR) the bot may use all of its money freely; only
 # the equity floor and the single-asset cap apply. At or above it the reserve,
@@ -112,7 +121,7 @@ MIN_PRICE_USD = Decimal("1")
 #: Trading 212's published FX fee, charged on each leg when the instrument's currency
 #: differs from the account's (docs: helpcentre "What is the FX fee?"). Zero commission.
 PUBLISHED_FX_FEE_PCT = Decimal("0.15")
-#: ESTIMATES. The market spread is not published by Trading 212: the Kraken reference
+#: ESTIMATES. The market spread is not published by Trading 212: the reference feed's
 #: spread stands in for it, never below this floor.
 SPREAD_FLOOR_PCT = Decimal("0.02")
 #: ASSUMPTION: what a fill may cost beyond the touch, per leg.
@@ -425,6 +434,7 @@ class Trading212Service:
         self.sleep = asyncio.sleep
         self.gaps = dict(GAPS)
         self.market_feed = xstocks_market.service
+        self.alpaca = alpaca_market.service
         self._next_ok = {}
         self._blocked = {}
         self._cache = {}
@@ -480,6 +490,7 @@ class Trading212Service:
             "excluded_tickers": list(ledger.get("excluded_tickers") or []),
             "account_check": self._checks.get(user_id),
             "market": self._market(),
+            "market_data": self.feed_status(user_id),
             "limits": {
                 "floor": str(FLOOR),
                 "reserve_fraction": "0.5",
@@ -489,7 +500,7 @@ class Trading212Service:
                 "max_asset_fraction_below_threshold": str(MAX_ASSET_FRACTION),
                 "default_slippage_pct": str(DEFAULT_SLIPPAGE_PCT),
                 "pairs": "US stocks listed on Trading 212 and covered by the "
-                "Kraken xStocks reference feed, in a EUR account",
+                "reference price feed, in a EUR account",
                 "session": "regular US session only (Mon-Fri 09:30-16:00 New York)",
                 "fx_fee_pct_each_way": str(rate["fx_fee_pct"]),
                 "fx_fee_source": rate["source"],
@@ -1237,8 +1248,56 @@ class Trading212Service:
             f"{symbol} is not a US stock this Trading 212 account can trade here"
         )
 
-    async def _reference_pairs(self):
+    # ── the reference price feed: Alpaca's IEX data once a key is saved, else Kraken's ──
+
+    def feed_name(self, user_id):
+        return "alpaca" if self.alpaca.configured(user_id) else "kraken"
+
+    def feed_source(self, user_id):
+        return ALPACA_SOURCE if self.feed_name(user_id) == "alpaca" else KRAKEN_SOURCE
+
+    def feed_status(self, user_id):
+        return {
+            "source": self.feed_name(user_id),
+            "label": self.feed_source(user_id),
+            "alpaca_configured": self.alpaca.configured(user_id),
+        }
+
+    async def save_feed_credentials(self, user_id, key_id, secret):
+        """Check the key against Alpaca, then save it; a key that fails is never saved."""
+        await self.alpaca.check(key_id, secret)
+        self.alpaca.save_credentials(user_id, key_id, secret)
+        return self.status(user_id)
+
+    def disconnect_feed(self, user_id):
+        self.alpaca.disconnect(user_id)
+        return self.status(user_id)
+
+    async def _reference_pairs(self, user_id):
+        """``{symbol: handle}`` the feed covers: Alpaca's scan universe, or Kraken's pairs."""
+        if self.feed_name(user_id) == "alpaca":
+            return {s: s for s in self.alpaca.symbols()}
         return await self.market_feed.pairs()
+
+    async def _reference_rows(self, user_id, wanted):
+        """``{symbol: row}`` for ``{symbol: handle}``; a symbol the feed cannot price is absent."""
+        if self.feed_name(user_id) == "alpaca":
+            return await self.alpaca.rows(user_id, list(wanted))
+        tickers = await self._tickers(wanted.values())
+        rows = {}
+        for symbol, pair in wanted.items():
+            ticker = tickers.get(pair)
+            row = self.market_feed._row(symbol, pair, ticker) if ticker else None
+            if row:
+                rows[symbol] = row
+        return rows
+
+    async def _reference_touch(self, user_id, symbol, pair):
+        """``(bid, ask, last)`` of one stock from the feed."""
+        if self.feed_name(user_id) == "alpaca":
+            return await self.alpaca.touch(user_id, symbol)
+        ticker = (await self._tickers([pair])).get(pair) or {}
+        return self._touch(ticker)
 
     async def _tickers(self, pairs):
         """``{pair: raw Kraken ticker}`` for the named pairs, one request per 40."""
@@ -1290,21 +1349,22 @@ class Trading212Service:
         if not isinstance(keyword, str) or len(keyword) > 40:
             raise ValueError("Enter a stock symbol")
         key = keyword.strip().upper()
-        pairs = await self._reference_pairs()
+        pairs = await self._reference_pairs(user_id)
         listed = {}
         unfiltered = not self.connected(user_id)
         if not unfiltered:
             listed = {i["symbol"]: i for i in await self._universe(user_id)}
+            if self.feed_name(user_id) == "alpaca" and key in listed:
+                pairs = {**pairs, key: key}  # a stock named outright is priced too
         wanted = {
             s: p
             for s, p in pairs.items()
             if (unfiltered or s in listed) and (not key or key in s)
         }
-        tickers = await self._tickers(wanted.values())
+        priced = await self._reference_rows(user_id, wanted)
         rows = []
-        for symbol, pair in wanted.items():
-            ticker = tickers.get(pair)
-            row = self.market_feed._row(symbol, pair, ticker) if ticker else None
+        for symbol in wanted:
+            row = priced.get(symbol)
             if not row:
                 continue
             item = listed.get(symbol)
@@ -1325,7 +1385,11 @@ class Trading212Service:
         answer = {
             "quote": QUOTE,
             "price_currency": PRICE_CURRENCY,
-            "reference_note": REFERENCE_NOTE,
+            "reference_note": (
+                ALPACA_REFERENCE_NOTE
+                if self.feed_name(user_id) == "alpaca"
+                else REFERENCE_NOTE
+            ),
             "market": self._market(),
             "stocks": shown,
         }
@@ -1338,7 +1402,12 @@ class Trading212Service:
         return answer
 
     async def candles(self, user_id, symbol, timeframe="15m", count=96):
-        answer = await self.market_feed.candles(symbol, timeframe, count)
+        if self.feed_name(user_id) == "alpaca":
+            answer = await self.alpaca.candles(
+                user_id, symbol_of(symbol), timeframe, count
+            )
+        else:
+            answer = await self.market_feed.candles(symbol, timeframe, count)
         return {**answer, "price_currency": PRICE_CURRENCY, "reference": True}
 
     # ── valuation ──
@@ -1480,14 +1549,18 @@ class Trading212Service:
                 "bot allocation): the bot never trades it; no order placed"
             )
         instrument = await self._instrument(user_id, symbol)
-        pair = (await self._reference_pairs()).get(symbol)
+        if self.feed_name(user_id) == "alpaca":
+            pair = symbol  # any stock Trading 212 lists may be priced on request
+        else:
+            pair = (await self._reference_pairs(user_id)).get(symbol)
         if not pair:
-            raise ValueError(f"{symbol} has no reference price feed (Kraken xStocks)")
+            raise ValueError(
+                f"{symbol} has no reference price feed ({self.feed_source(user_id)})"
+            )
         slip = amount(str(slippage_pct if slippage_pct else DEFAULT_SLIPPAGE_PCT))
         if slip > MAX_SLIPPAGE_PCT:
             raise ValueError(f"Slippage above {MAX_SLIPPAGE_PCT}% is not allowed")
-        ticker = (await self._tickers([pair])).get(pair) or {}
-        bid, ask, _ = self._touch(ticker)
+        bid, ask, _ = await self._reference_touch(user_id, symbol, pair)
         if not bid or not ask or bid <= 0 or ask <= 0 or bid > ask:
             raise ValueError(f"No live reference price for {symbol}")
         spread = (ask - bid) / ask * 100
@@ -1499,14 +1572,14 @@ class Trading212Service:
         if not rate or not Decimal("0.5") < rate < Decimal("2.5"):
             raise ValueError("No usable EUR/USD rate to size the order")
         live = (positions or {}).get(instrument["ticker"])
-        reference_source = "Kraken xStocks public data"
+        reference_source = self.feed_source(user_id)
         sell_price = bid
         if side == "sell" and live and live["price_usd"]:
             # Trading 212's own current price of a stock the account holds beats the
             # reference; the price for a sale limit is the lower of the two.
             sell_price = min(bid, live["price_usd"])
             reference_source = (
-                "Trading 212 position price and Kraken xStocks public data"
+                f"Trading 212 position price and {self.feed_source(user_id)}"
             )
         factor = slip / 100
         fee = PUBLISHED_FX_FEE_PCT / 100
@@ -1583,7 +1656,7 @@ class Trading212Service:
         round_trip = others + components["rounding_allowance"]
         sources = {
             "fx_fee": fee["source"],
-            "spread": "estimate (Kraken reference spread, floored)",
+            "spread": "estimate (reference feed spread, floored)",
             "slippage": "assumption",
             "regulatory": "estimate",
             "rounding_allowance": "assumption (carried over from Revolut X)",
