@@ -1219,12 +1219,14 @@ async def _run_dual(application: Application) -> None:
         try:
             # Report the version we came up on: after a /update restart this is
             # the confirmation that the new commit is the one actually running.
-            from utils.updater import get_current_branch, get_local_commit
-
-            branch, commit = await asyncio.gather(
-                get_current_branch(), get_local_commit()
+            from utils.updater import (
+                get_checkout_version,
+                get_image_commit,
+                version_label,
             )
-            version = f" ({branch} @ {commit})" if commit else ""
+
+            branch, commit = await get_checkout_version()
+            version = version_label(branch, commit, get_image_commit())
             boot_text = f"Condor is online and ready.{version}"
 
             # Judged above, before the admin block, so the panel is correct even
