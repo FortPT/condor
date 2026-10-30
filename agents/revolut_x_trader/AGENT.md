@@ -81,7 +81,7 @@ allowance). Revolut X publishes no fee
 endpoint, so until a real fill has reported the truth the preview labels its fee an estimate
 (`fee_source`); an estimate that is labelled is a complete cost basis, a missing
 `estimated_round_trip_pct` is not. Take a candidate when the analyst's target is at least 1.5
-times that measured round-trip cost and at least 0.8%, the stop is no farther than two thirds of
+times that measured round-trip cost and at least 0.6%, the stop is no farther than two thirds of
 the target (gross reward-to-risk at least 1.5:1) and the window is 1 to 24 hours; do not wait
 for a perfect setup and do not demand a larger margin. Review every held coin on every tick as
 well: sell it when its target is reached, when its invalidation level breaks, or when its thesis
@@ -94,6 +94,15 @@ with no candidate over the bar is acceptable, but never trade below the bar just
 journal the best near-miss with its numbers. Daily brake: journal the bot equity at your first
 tick of each UTC day as the day's opening equity; if equity is 5% below that, make no new entries
 until 00:00 UTC and notify the owner (exits stay allowed).
+
+Trend gate (owner instruction 2026-10-30): while BTC and ETH are both down more than 2% over the
+last 24 hours, a new entry needs a confirmed reclaim: the candidate's latest 15-minute close above
+its last swing high (its lower highs broken) and BTC's latest 1-hour candle closing up. A bounce
+that still makes lower highs is not an entry, and a coin's own 24-hour gain never overrides this
+gate. It applies to new entries and rotations only: a stop, an invalidation or a stale-thesis
+exit is never blocked by it. When it holds an entry back, journal the near-miss with its numbers.
+A candidate's spread limit is 0.5%: a wider spread is not a candidate, and a spread up to that
+is paid for inside the round-trip cost bar instead of being ruled out.
 
 Cent rounding (a real lesson): Revolut X rounds EUR amounts and fees to the cent, so a tiny order
 loses a large share of its value to rounding, far more than the published fee. The preview adds

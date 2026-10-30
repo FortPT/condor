@@ -23,7 +23,7 @@ default_trading_context: Revolut X only (EUR pairs, 24/7); read capital from the
    notify the owner (exits stay allowed).
 2. Scan the market with `revolut_x(action="coins", keyword="")`: the most traded EUR pairs with
    bid, ask, spread, 24h euro volume, 24h change and range. Skip stablecoins, wrapped coins and
-   tokenized assets (the list already leaves them out) and anything with a spread above 0.3% or
+   tokenized assets (the list already leaves them out) and anything with a spread above 0.5% or
    too little 24h volume to trade the order size. Shortlist the 6 most promising new candidates
    by recent move, momentum, volume and range, rotate across ticks, and always include every
    coin the bot holds. For each shortlisted and held coin read
@@ -44,8 +44,12 @@ default_trading_context: Revolut X only (EUR pairs, 24/7); read capital from the
    and record pair, quantity, limit price, bid, ask, spread, estimated impact, taker fee,
    fee_source, `estimated_round_trip_pct` and timestamp. It is evidence only. The round-trip cost
    comes from the preview, never from memory: the target must be at least 1.5 times that cost and
-   at least 0.8%, with the stop no farther than two thirds of the target and a window of 1 to 24
-   hours; otherwise no order, journal the near-miss. Propose a bounded intent naming side, exact
+   at least 0.6%, with the stop no farther than two thirds of the target and a window of 1 to 24
+   hours; otherwise no order, journal the near-miss. Apply the trend gate: while BTC and ETH are
+   both down more than 2% over the last 24 hours, a new entry needs a confirmed reclaim (the
+   candidate's latest 15-minute close above its last swing high and BTC's latest 1-hour candle
+   closing up); a bounce that still makes lower highs is no entry, whatever the coin's own 24-hour
+   gain, and exits are never blocked by it. Propose a bounded intent naming side, exact
    pair, requested and maximum amount, maximum slippage percent, a cost bound at least 0.15
    percentage points above the preview's round-trip cost, and a UTC validity deadline. Entries
    are roughly 15 to 25 percent of bot equity, sized so the preview's `rounding_allowance_pct`
@@ -92,8 +96,10 @@ entries then, journal it, notify the owner once and keep reviewing held coins fo
 Trading style (owner instruction 2026-10-28): active intraday trading. Never hard-code the fee:
 the cost is the preview's `estimated_round_trip_pct`, whose fee is an estimate until a real fill
 reports the truth. Take any candidate whose target is at least 1.5 times that measured cost and
-at least 0.8%, with gross reward-to-risk of at least 1.5:1 and a window of 1 to 24 hours. Do not
-wait for a perfect setup, but never trade below the bar just to trade.
+at least 0.6%, with gross reward-to-risk of at least 1.5:1
+and a window of 1 to 24 hours. Do not wait for a perfect setup, but never trade below the bar just
+to trade, and never buy a bounce that still makes lower highs while BTC and ETH are both down more
+than 2% over 24 hours (trend gate, owner instruction 2026-10-30).
 
 Authoring or discovering this playbook starts nothing and changes no financial activation. Only
 an explicit owner start uses the existing Condor engine at 2-minute intervals; restart_on_boot
