@@ -173,6 +173,8 @@ def test_the_round_trip_cost_comes_from_the_preview_and_is_never_hard_coded(regi
     loop = StrategyStore().get(COORDINATOR, "intraday")
     for slug in TOOLS:
         text = flat(registry.get(slug).instructions)
+        # The candidate spread limit is a market filter, not a fee or cost assumption.
+        text = text.replace("spread limit is 0.5%", "")
         assert not re.search(
             r"\b(?:1\.6|1\.2|0\.85|0\.4|0\.5|0\.26|0\.09|0\.35|0\.18)\s?%", text
         ), slug
@@ -197,7 +199,7 @@ def test_trading_style_matches_the_owners_intraday_instruction_with_a_derived_ba
         flat(loop.instructions),
     ):
         assert "1.5 times" in text
-        assert "at least 0.8%" in text
+        assert "at least 0.6%" in text
         assert "1.5:1" in text
         assert "1 to 24 hours" in text
         assert "0.15 percentage points" in text
@@ -207,10 +209,10 @@ def test_trading_style_matches_the_owners_intraday_instruction_with_a_derived_ba
     assert "an exit is a trade too" in coordinator
     reviewer = flat(registry.get(REVIEWER).instructions)
     assert "1.5 times the preview's estimated round-trip cost" in reviewer
-    assert "at least 0.8%" in reviewer
+    assert "at least 0.6%" in reviewer
     assert "0.15 percentage points above the preview's round-trip cost" in reviewer
     analyst = flat(registry.get(ANALYST).instructions)
-    assert "at least 0.8%" in analyst and "1.5:1" in analyst
+    assert "at least 0.6%" in analyst and "1.5:1" in analyst
 
 
 def test_the_crew_sizes_entries_against_cent_rounding_and_skips_a_tiny_account(
@@ -237,6 +239,48 @@ def test_the_crew_sizes_entries_against_cent_rounding_and_skips_a_tiny_account(
     # the rounding figure comes from the preview too: no number is hard-coded
     for slug in TOOLS:
         assert "1%" not in flat(registry.get(slug).instructions)
+
+
+def test_the_trend_gate_keeps_the_crew_out_of_falling_markets_but_never_blocks_exits(
+    registry,
+):
+    """Owner instruction 2026-10-30: four losing round trips, all bought into a falling day."""
+    loop = StrategyStore().get(COORDINATOR, "intraday")
+    coordinator = flat(registry.get(COORDINATOR).instructions)
+    for where, text in {
+        "trader": coordinator,
+        "loop": flat(loop.instructions),
+        "analyst": flat(registry.get(ANALYST).instructions),
+        "reviewer": flat(registry.get(REVIEWER).instructions),
+    }.items():
+        assert "trend gate" in text, where
+        assert "btc and eth are both down more than 2% over" in text, where
+        assert "latest 15-minute close above" in text, where
+        assert "btc's latest 1-hour candle closing up" in text, where
+        assert "lower highs" in text, where
+        assert "owner instruction 2026-10-30" in text, where
+    assert "a coin's own 24-hour gain never overrides this gate" in coordinator
+    assert (
+        "a stop, an invalidation or a stale-thesis exit is never blocked" in coordinator
+    )
+    assert "never applies to an exit" in flat(registry.get(REVIEWER).instructions)
+
+
+def test_the_target_floor_is_point_six_percent_and_the_spread_limit_half_a_percent(
+    registry,
+):
+    """Owner instruction 2026-10-30: trade more when the market allows it."""
+    loop = StrategyStore().get(COORDINATOR, "intraday")
+    coordinator = flat(registry.get(COORDINATOR).instructions)
+    text = flat(loop.instructions)
+    assert "at least 0.8%" not in coordinator + text
+    assert "spread above 0.5%" in text and "spread above 0.3%" not in text
+    assert "candidate's spread limit is 0.5%" in coordinator
+    for slug in (ANALYST, REVIEWER):
+        assert "0.8%" not in flat(registry.get(slug).instructions)
+    # the floor never replaces the cost multiple: the 1.5 times bar stays everywhere
+    for prompt in (coordinator, text):
+        assert "1.5 times" in prompt
 
 
 def test_the_daily_brake_is_five_percent_below_the_utc_day_opening_equity(registry):

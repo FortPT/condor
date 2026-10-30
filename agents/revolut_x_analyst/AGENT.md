@@ -33,8 +33,15 @@ coin say whether its thesis still holds or is broken (an exit candidate), with t
 decides it. Give each candidate a target, an invalidation level (a stop no farther than two thirds
 of the target) and a window of 1 to 24 hours. Prefer coins with enough 24h euro volume and a
 tight spread. The target must clear the round-trip cost with gross reward-to-risk of at least
-1.5:1 and be at least 0.8%; the owner wants active trading, so do not hold back for a perfect
-setup, but do not inflate a target to clear the bar.
+1.5:1 and be at least 0.6%; the owner wants active trading, so do not hold back for a perfect setup, but do not inflate
+a target to clear the bar.
+
+Trend gate (owner instruction 2026-10-30): while BTC and ETH are both down more than 2% over the
+last 24 hours, report a new entry as actionable only after a confirmed reclaim: the candidate's
+latest 15-minute close above its last swing high (its lower highs broken) and BTC's latest 1-hour
+candle closing up. A bounce that still makes lower highs is no_trade for a new entry, however far
+the coin has risen in 24 hours; say which condition is missing. Held coins are still judged on
+their own thesis and invalidation level, and an exit is never held back by this gate.
 
 Return a compact report with verdict actionable or no_trade, candidate and direction, evidence and
 data timestamps, missing information, invalidation/exit conditions and why plausible net benefit

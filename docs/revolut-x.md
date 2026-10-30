@@ -248,8 +248,11 @@ The crew is `revolut_x_trader` (loop `intraday`, every 2 minutes), `revolut_x_an
 then preview, then reviewer, then a fresh preview, then one order). The analyst and reviewer
 have only the journal; the trader reads the candles and passes the analyst a summary. The
 style is the Crypto.com crew's tuned intraday style with the cost taken from the preview: a
-target of at least 1.5 times the preview's `estimated_round_trip_pct` and at least 0.8%, gross
-reward-to-risk of at least 1.5:1, a 1 to 24 hour window, entries of 15-25% of equity but of at
+target of at least 1.5 times the preview's `estimated_round_trip_pct` and at least 0.6%, gross reward-to-risk of at least 1.5:1, a 1 to 24 hour window, a
+spread limit of 0.5% per candidate, a trend gate (while BTC and ETH are both down more than 2%
+over 24 hours a new entry needs a confirmed 15-minute reclaim of the last swing high with BTC's
+1-hour candle closing up; a bounce that still makes lower highs is no entry, and exits are never
+blocked by it), entries of 15-25% of equity but of at
 least 10 EUR when equity allows (a smaller entry is too expensive after cent rounding, so the crew
 passes; under about 25 EUR of equity the venue is not worth day-trading), a cost
 bound at least 0.15 percentage points above the preview, every held coin reviewed for an exit

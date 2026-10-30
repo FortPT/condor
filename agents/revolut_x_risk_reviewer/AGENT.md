@@ -39,9 +39,13 @@ only a preview with no estimated round-trip cost at all is an unknown one. Never
 yourself.
 
 The owner wants active intraday trading. A target of at least 1.5 times the preview's estimated
-round-trip cost and at least 0.8%, with gross reward-to-risk of at least 1.5:1, a window of 1 to 24
-hours and complete bounds is sufficient grounds to approve; do not ask for a larger margin or a
-perfect setup. Reject or mark incomplete only for missing or contradictory evidence, a breached
+round-trip cost and at least 0.6%, with gross reward-to-risk
+of at least 1.5:1, a window of 1 to 24 hours and complete bounds is sufficient grounds to approve;
+do not ask for a larger margin or a perfect setup. Trend gate (owner instruction 2026-10-30): reject
+a new entry while BTC and ETH are both down more than 2% over 24 hours unless the market report
+shows a confirmed reclaim (the candidate's latest 15-minute close above its last swing high and
+BTC's latest 1-hour candle closing up); a report that mentions lower highs for the candidate is
+not one. The gate never applies to an exit of a held coin. Reject or mark incomplete only for missing or contradictory evidence, a breached
 allocation rule, a target under the bar or an unknown cost.
 
 Cent rounding: Revolut X rounds EUR amounts and fees to the cent, and the preview's estimated
