@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -118,6 +119,46 @@ async def get_current_branch(repo_dir: str = CONDOR_DIR) -> str:
     """
     _, out = await _run_git("rev-parse", "--abbrev-ref", "HEAD", repo_dir=repo_dir)
     return out
+
+
+async def get_checkout_version(repo_dir: str = CONDOR_DIR) -> tuple[str, str]:
+    """``(branch, short commit)`` of a git checkout, or ``("", "")`` when it is not one.
+
+    The two getters above return git's own error text when git fails (``_run_cmd``
+    hands back stderr when stdout is empty), and a Docker image has no checkout at
+    all, so "fatal: not a git repository ..." ended up in the "Condor is online and
+    ready" notice as if it were a branch and a commit. A failed probe is no version.
+    """
+    try:
+        (branch_rc, branch), (commit_rc, commit) = await asyncio.gather(
+            _run_git("rev-parse", "--abbrev-ref", "HEAD", repo_dir=repo_dir),
+            _run_git("rev-parse", "--short", "HEAD", repo_dir=repo_dir),
+        )
+    except OSError:  # no git binary, or no such directory: no version, not a crash
+        return "", ""
+    if branch_rc != 0 or commit_rc != 0 or not branch or not commit:
+        return "", ""
+    return branch, commit
+
+
+def get_image_commit() -> str:
+    """The short commit a Docker image was built from (``CONDOR_BUILD_COMMIT``), or ``""``.
+
+    The image workflow passes the commit as ``VCS_REF``; anything that is not a hex
+    commit (the ``unknown`` default of a local build) is no version.
+    """
+    value = os.environ.get("CONDOR_BUILD_COMMIT", "").strip().lower()
+    return value[:7] if re.fullmatch(r"[0-9a-f]{7,40}", value) else ""
+
+
+def version_label(branch: str, commit: str, image_commit: str = "") -> str:
+    """`` (branch @ commit)`` for a checkout, `` (image @ commit)`` for a Docker image,
+    otherwise nothing, so a boot notice never carries a git error."""
+    if branch and commit:
+        return f" ({branch} @ {commit})"
+    if image_commit:
+        return f" (image @ {image_commit})"
+    return ""
 
 
 async def is_detached(repo_dir: str = CONDOR_DIR) -> bool:

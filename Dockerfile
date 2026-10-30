@@ -53,7 +53,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 UV_OFFLINE=true UV_NO_SYNC=true
     CONDOR_AGENTS_ROOT=/var/lib/condor/local-agents \
     CONDOR_STOCK_AGENTS_ROOT=/opt/condor/agents \
     CONDOR_REPORTS_DIR=/var/lib/condor/reports \
-    CONDOR_TELEMETRY=off CONDOR_SHARING=off
+    CONDOR_TELEMETRY=off CONDOR_SHARING=off \
+    CONDOR_BUILD_COMMIT=${VCS_REF}
 WORKDIR /var/lib/condor
 USER 10001:10001
 VOLUME ["/var/lib/condor"]
