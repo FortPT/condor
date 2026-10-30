@@ -100,6 +100,8 @@ export type Trading212Status = {
     outside_allocation: { ticker: string; symbol: string; units: string; excluded: boolean }[];
   } | null;
   market: { open: boolean; new_york_time: string; minutes_to_close: number; note?: string };
+  /** Where the reference prices come from; the Alpaca key itself is never returned. */
+  market_data?: { source: "alpaca" | "kraken"; label: string; alpaca_configured: boolean };
   limits?: {
     floor?: string;
     reserve_fraction?: string;

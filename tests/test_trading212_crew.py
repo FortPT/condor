@@ -307,17 +307,25 @@ def test_prices_are_labelled_reference_and_the_real_fill_comes_from_trading_212(
     text = flat(loop.instructions)
     for prompt in (coordinator, text):
         assert "reference" in prompt
-        assert "kraken xstocks public data" in prompt
+        assert "the feed named in `reference_note`" in prompt
         assert "real fill price" in prompt
     assert "trading 212 has no quote endpoint" in coordinator
     assert "trust those over any reference price" in coordinator
+    assert "alpaca's real-time iex data" in coordinator
+    assert "kraken's public xstocks data" in coordinator  # the fallback feed
+    assert "`quote_age_sec` is over 300 is no price" in coordinator
+    assert "never compare them with whole-market volume" in coordinator
+    assert "`quote_age_sec` over 300" in text
     assert "not trading 212's own quote" in text
     analyst = flat(registry.get(ANALYST).instructions)
     assert "trading 212 has no quote endpoint" in analyst
     assert "reference prices in usd" in analyst
+    assert "alpaca's real-time iex data" in analyst
+    assert "iex volume is a small share of the whole market" in analyst
     reviewer = flat(registry.get(REVIEWER).instructions)
     assert "reference prices in usd" in reviewer
     assert "tokenized copy" in reviewer
+    assert "alpaca's real-time iex data" in reviewer
 
 
 def test_the_order_is_a_day_limit_cancelled_by_the_service_one_per_call(registry):

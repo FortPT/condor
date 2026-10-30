@@ -15,6 +15,7 @@ from condor import crypto_com_scorecard as sc
 from condor import native_flow_fetchers as fetchers
 from condor import trading212 as t212
 from condor.xstocks_market import XStocksMarket
+from tests import test_alpaca_market as alp
 
 API_KEY = "key-id-1234567890"
 API_SECRET = "secret-abcdefghijklmnop"
@@ -888,6 +889,135 @@ class MarketTests(Base):
         result = await self.svc.candles(1, "AAPL")
         self.assertTrue(result["reference"])
         self.assertEqual(result["price_currency"], "USD")
+
+
+ALPACA_SNAPS = {
+    "AAPL": alp.snap("200.00", "200.04", "200.02", v=1000),
+    "MSFT": alp.snap("400.00", "400.08", "400.04", v=9000),
+    "TSLA": alp.snap("250.00", "250.05", "250.02", v=7000),
+    "NVDA": alp.snap("130.00", "130.03", "130.01", v=20000),
+    "DUP": alp.snap("20.00", "20.02", "20.01", v=100),
+    "AMZN": alp.snap("180.00", "180.04", "180.02", v=99999),  # not on Trading 212
+    "SPY": alp.snap("500.00", "500.05", "500.02", v=70000),  # an ETF: not listed
+    "OLD": alp.snap(age=alp.am.MAX_QUOTE_AGE_SEC + 60),
+}
+
+
+def alpaca_answers(path, params):
+    if path == "/v2/stocks/snapshots":
+        return {
+            s: ALPACA_SNAPS[s]
+            for s in params["symbols"].split(",")
+            if s in ALPACA_SNAPS
+        }
+    if path == "/v2/stocks/bars":
+        bar = {"t": "2026-10-30T14:45:00Z", "o": 1, "h": 2, "l": 1, "c": 1.5, "v": 9}
+        return {"bars": {params["symbols"]: [bar]}}
+    return {}
+
+
+class AlpacaFeedTests(Base):
+    """With an Alpaca key saved, the reference prices are Alpaca's IEX data, not Kraken's."""
+
+    def use_alpaca(self, http=200):
+        self.alpaca = alp.FakeAlpaca(alpaca_answers, http)
+        self.svc.alpaca = self.alpaca
+        self.alpaca.save_credentials(1, alp.KEY, alp.SECRET)
+
+    def kraken_requests(self):
+        return self.svc.market_feed.requests
+
+    async def test_without_a_key_nothing_changes_and_the_status_says_kraken(self):
+        self.svc.alpaca = alp.FakeAlpaca(alpaca_answers)
+        self.assertEqual(
+            self.svc.status(1)["market_data"],
+            {
+                "source": "kraken",
+                "label": "Kraken xStocks public data",
+                "alpaca_configured": False,
+            },
+        )
+        result = await self.svc.stocks(1)
+        self.assertIn("Kraken xStocks public data", result["reference_note"])
+        self.assertEqual(self.svc.alpaca.sent, [])
+
+    async def test_a_saved_key_prices_the_stock_table_from_alpaca_only(self):
+        self.use_alpaca()
+        self.assertEqual(self.svc.status(1)["market_data"]["source"], "alpaca")
+        result = await self.svc.stocks(1)
+        symbols = [r["symbol"] for r in result["stocks"]]
+        # the watchlist on Trading 212, by today's IEX dollar volume; AMZN is not listed
+        # there, SPY is an ETF and DUP is outside the watchlist
+        self.assertEqual(symbols, ["NVDA", "MSFT", "TSLA", "AAPL"])
+        self.assertIn("Alpaca", result["reference_note"])
+        self.assertNotIn("Kraken", result["reference_note"])
+        msft = result["stocks"][1]
+        self.assertEqual(msft["ticker"], "MSFT_US_EQ")
+        self.assertEqual(msft["min_trade_quantity"], "0.01")
+        self.assertEqual(msft["price"], "400.04")
+        self.assertEqual(self.kraken_requests(), [])
+
+    async def test_a_stock_named_outright_is_priced_even_outside_the_watchlist(self):
+        self.use_alpaca()
+        found = await self.svc.stocks(1, "DUP")
+        self.assertEqual([r["symbol"] for r in found["stocks"]], ["DUP"])
+        nothing = await self.svc.stocks(1, "NOPE")
+        self.assertEqual(nothing["stocks"], [])
+
+    async def test_candles_come_from_alpaca_under_the_stocks_own_symbol(self):
+        self.use_alpaca()
+        out = await self.svc.candles(1, "aapl", "15m", 5)
+        self.assertEqual(out["pair"], "AAPL")
+        self.assertTrue(out["reference"])
+        self.assertEqual(len(out["candles"]), 1)
+        self.assertEqual(self.alpaca.sent[-1][0], "/v2/stocks/bars")
+        with self.assertRaises(ValueError):
+            await self.svc.candles(1, "not a symbol!", "15m", 5)
+
+    async def test_a_preview_is_priced_from_the_alpaca_quote_and_says_so(self):
+        await self.synced()
+        self.use_alpaca()
+        result = await self.svc.preview(1, "buy", "AAPL", "8")
+        self.assertEqual(result["reference_source"], "Alpaca real-time IEX data")
+        limit = Decimal(result["limit_price"])
+        self.assertTrue(Decimal("200.64") <= limit <= Decimal("200.66"))  # ask + 0.3%
+        self.assertEqual(self.kraken_requests(), [])
+
+    async def test_a_listed_stock_outside_the_watchlist_can_still_be_previewed(self):
+        await self.synced()
+        self.use_alpaca()
+        result = await self.svc.preview(1, "buy", "DUP", "8")
+        self.assertEqual(result["reference_source"], "Alpaca real-time IEX data")
+
+    async def test_a_quote_too_old_to_be_live_refuses_the_preview(self):
+        await self.synced()
+        self.use_alpaca()
+        ALPACA_SNAPS["AAPL"] = alp.snap(age=alp.am.MAX_QUOTE_AGE_SEC + 60)
+        try:
+            with self.assertRaisesRegex(ValueError, "No live reference price"):
+                await self.svc.preview(1, "buy", "AAPL", "8")
+        finally:
+            ALPACA_SNAPS["AAPL"] = alp.snap("200.00", "200.04", "200.02", v=1000)
+
+    async def test_the_key_is_checked_before_it_is_saved_and_a_bad_one_is_not_kept(
+        self,
+    ):
+        self.svc.alpaca = alp.FakeAlpaca(alpaca_answers, 403)
+        with self.assertRaisesRegex(ValueError, "rejected the key"):
+            await self.svc.save_feed_credentials(1, alp.KEY, alp.SECRET)
+        self.assertFalse(self.svc.alpaca.configured(1))
+        self.svc.alpaca = alp.FakeAlpaca(alpaca_answers)
+        status = await self.svc.save_feed_credentials(1, alp.KEY, alp.SECRET)
+        self.assertEqual(status["market_data"]["source"], "alpaca")
+        self.assertNotIn(alp.SECRET, json.dumps(status))
+        status = self.svc.disconnect_feed(1)
+        self.assertEqual(status["market_data"]["source"], "kraken")
+
+    async def test_saving_the_price_key_never_touches_the_trading_switch(self):
+        await self.synced()
+        self.svc.alpaca = alp.FakeAlpaca(alpaca_answers)
+        await self.svc.save_feed_credentials(1, alp.KEY, alp.SECRET)
+        self.assertTrue(self.svc.status(1)["enabled"])
 
 
 class PreviewTests(Base):

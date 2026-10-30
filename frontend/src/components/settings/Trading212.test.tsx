@@ -82,14 +82,14 @@ it("describes the server's limits and the EUR-only, session-only rule", async ()
   expect(host.textContent).toContain("Account currency: EUR");
   expect(host.textContent).toContain("first real order must be tiny");
   expect(host.textContent).toContain("no withdrawal endpoint and no withdrawal permission");
-  expect(host.querySelectorAll("form")).toHaveLength(1);
+  expect(host.querySelectorAll("form")).toHaveLength(2);
   expect(host.textContent).not.toContain("Preview order");
 });
 
 it("takes the key and secret, never echoes them and sends nothing else", async () => {
   await mount();
   const fields = Array.from(host.querySelectorAll('input[type="password"]')) as HTMLInputElement[];
-  expect(fields).toHaveLength(2);
+  expect(fields).toHaveLength(4);
   await type(fields[0], "the-key");
   await type(fields[1], "the-secret");
   await act(async () => host.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
@@ -271,4 +271,58 @@ it("shows the key-creation instruction with the minimum permissions and no way t
   expect(text).toContain("history transactions");
   expect(text).toContain("never in chat");
   expect(request.mock.calls.every(([path]) => path === "/api/v1/trading212/status")).toBe(true);
+});
+
+const priceForm = () => host.querySelector('form[aria-label="Price data"]') as HTMLFormElement;
+const priceFields = () => Array.from(priceForm().querySelectorAll('input[type="password"]')) as HTMLInputElement[];
+
+it("says where the prices come from: Kraken until an Alpaca key is saved", async () => {
+  await remount({ ...status, market_data: { source: "kraken", label: "Kraken xStocks public data", alpaca_configured: false } });
+  expect(host.querySelector('[data-testid="price-source"]')!.textContent)
+    .toBe("Prices the agents read: Kraken xStocks public data (no Alpaca key saved).");
+  expect(button("Remove Alpaca key (use Kraken data)").disabled).toBe(true);
+  expect(host.textContent).toContain("Remove is unavailable: no Alpaca key is saved.");
+});
+
+it("checks and saves the Alpaca key, sends only the two fields and never echoes them", async () => {
+  await remount({ ...status, market_data: { source: "kraken", label: "Kraken xStocks public data", alpaca_configured: false } });
+  const [keyId, secret] = priceFields();
+  await type(keyId, "PKTESTKEYID12345678");
+  await type(secret, "the-alpaca-secret-0123456789");
+  await act(async () => priceForm().dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  await wait();
+  const [path, init] = calls("PUT")[0];
+  expect(path).toBe("/api/v1/trading212/market-data/credentials");
+  expect(JSON.parse(init.body)).toEqual({ key_id: "PKTESTKEYID12345678", secret: "the-alpaca-secret-0123456789" });
+  expect(keyId.value).toBe("");
+  expect(secret.value).toBe("");
+  expect(host.textContent).not.toContain("the-alpaca-secret");
+  expect(host.textContent).toContain("Alpaca key checked and saved");
+});
+
+it("shows Alpaca as the source and lets the key be removed", async () => {
+  await remount({ ...status, market_data: { source: "alpaca", label: "Alpaca real-time IEX data", alpaca_configured: true } });
+  expect(host.querySelector('[data-testid="price-source"]')!.textContent)
+    .toBe("Prices the agents read: Alpaca real-time IEX data.");
+  expect(button("Remove Alpaca key (use Kraken data)").disabled).toBe(false);
+  await act(async () => button("Remove Alpaca key (use Kraken data)").click());
+  await wait();
+  const [path, init] = calls("DELETE")[0];
+  expect(path).toBe("/api/v1/trading212/market-data/credentials");
+  expect(init.method).toBe("DELETE");
+  expect(host.textContent).toContain("Alpaca key removed");
+});
+
+it("shows a rejected Alpaca key as a visible failure and keeps the fields clear of the secret", async () => {
+  await remount({ ...status, market_data: { source: "kraken", label: "Kraken xStocks public data", alpaca_configured: false } });
+  request.mockImplementation((path: string, init?: { method?: string }) => path.endsWith("/market-data/credentials")
+    ? Promise.reject(new Error("Alpaca rejected the key: check the key ID and secret in Settings"))
+    : Promise.resolve(init ? {} : status));
+  const [keyId, secret] = priceFields();
+  await type(keyId, "PKTESTKEYID12345678");
+  await type(secret, "the-alpaca-secret-0123456789");
+  await act(async () => priceForm().dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  await wait();
+  expect(alerts().join(" ")).toContain("Save price data key failed: Alpaca rejected the key");
+  expect(host.textContent).not.toContain("the-alpaca-secret");
 });

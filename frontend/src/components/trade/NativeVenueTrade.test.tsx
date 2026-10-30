@@ -370,7 +370,7 @@ describe("trading212 panel (EUR ledger, USD reference market rows)", () => {
     setup();
     await open();
     const markets = host.querySelector('section[aria-label="Markets"]')!.textContent!;
-    expect(host.querySelector('[data-testid="reference-note"]')!.textContent).toContain("Reference prices in USD from Kraken xStocks public data");
+    expect(host.querySelector('[data-testid="reference-note"]')!.textContent).toContain("Reference prices in USD from a public market data feed");
     expect(host.querySelector('[data-testid="reference-note"]')!.textContent).toContain("Orders fill at Trading 212's own price");
     expect(markets).toContain("Ref. price (USD)");
     expect(markets).toContain("AAPL");
@@ -379,7 +379,7 @@ describe("trading212 panel (EUR ledger, USD reference market rows)", () => {
     expect(paths().some((path) => path.includes("/coins"))).toBe(false);
     expect(host.textContent).toContain("US market open");
     expect(host.textContent).toContain("TSLA/USD");
-    expect(host.textContent).toContain("Kraken xStocks reference");
+    expect(host.textContent).toContain("Market-data reference");
   });
 
   it("values the EUR holdings and equity from the venue's own valuation, not the USD reference bid", async () => {

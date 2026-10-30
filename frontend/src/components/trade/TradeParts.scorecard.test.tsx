@@ -51,8 +51,8 @@ it("is a call scorecard that says it scores calls, not placed trades, with no pa
 });
 
 it("names the real price source when the venue has no quotes of its own", async () => {
-  const text = await panelText(0.4, "Trading 212", "stocks", "Kraken xStocks reference prices, not Trading 212's own quotes");
-  expect(text).toContain("scored later against Kraken xStocks reference prices, not Trading 212's own quotes after a 0.4% round-trip cost.");
+  const text = await panelText(0.4, "Trading 212", "stocks", "Market-data reference prices, not Trading 212's own quotes");
+  expect(text).toContain("scored later against Market-data reference prices, not Trading 212's own quotes after a 0.4% round-trip cost.");
   expect(text).not.toContain("real Trading 212 prices");
 });
 

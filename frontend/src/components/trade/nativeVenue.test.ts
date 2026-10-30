@@ -62,7 +62,7 @@ describe("native venue helpers", () => {
 
   it("describes Trading 212 as a EUR ledger over USD reference rows that it values itself", () => {
     expect(t212).toMatchObject({ key: "trading212", base: "/api/v1/trading212", quote: "EUR", priceQuote: "USD", marketsPath: "stocks", autoValuation: true });
-    expect(t212.referenceLabel).toContain("Kraken xStocks");
+    expect(t212.referenceLabel).toContain("Market-data reference");
     expect(rowsOf(t212, { stocks: [{ symbol: "AAPL", bid: "2", change_since_open_pct: "0.5", volume_24h_usd: 12 }] })[0])
       .toMatchObject({ symbol: "AAPL", change_pct: "0.5", volume: 12 });
     expect(historyOf([{ order_id: "t", pair: "AAPL_US_EQ", side: "buy", status: "FILLED", filled_quantity: "0.05", average_fill_price: "270", filled_amount: "11.6", total_fee: "0.02", fee_currency: "EUR", updated: 5000 }])[0])
