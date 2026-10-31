@@ -15,6 +15,35 @@ from condor.rates import resolve_rates, unresolved
 
 logger = logging.getLogger(__name__)
 
+_USD_LIKE = frozenset({"USD", "USDT", "USDC"})
+
+
+async def _euro_rate() -> Optional[float]:
+    """USD per euro from the same public price the euro accounts are valued at.
+
+    Revolut X has no EUR/USD pair, so its public USDC/EUR price stands in (see
+    ``RevolutXService.eur_usd``). ``None`` when it is unavailable.
+    """
+    from condor import revolut_x
+
+    try:
+        rate = await revolut_x.service.eur_usd() or revolut_x.service.recent_eur_usd()
+        rate = float(rate) if rate else None
+    except Exception as e:  # noqa: BLE001 - a missing rate falls back to the pool
+        logger.debug("Euro rate unavailable, using the ticker pool: %s", e)
+        return None
+    return rate if rate and rate > 0 else None
+
+
+def _euro_pair(pair: str) -> Optional[bool]:
+    """True for EUR-<usd-like>, False for <usd-like>-EUR, None for any other pair."""
+    base, _, quote = pair.partition("-")
+    if base == "EUR" and quote in _USD_LIKE:
+        return True
+    if base in _USD_LIKE and quote == "EUR":
+        return False
+    return None
+
 
 async def get_price_pool(
     server: str, connector: Optional[str] = None
@@ -63,6 +92,18 @@ async def get_rates(
 
     prices = await get_price_pool(server, connector)
     rates = resolve_rates(prices, trading_pairs)
+
+    # The pool's EUR-USDT can sit a couple of percent away from the euro rate the
+    # accounts are valued at, so a euro total shown on screen would not add up to the
+    # euro balances. Fiat euro conversions use the account rate; an explicit
+    # connector keeps its own market's price.
+    if not connector:
+        euro = [p for p in trading_pairs if _euro_pair(p) is not None]
+        if euro:
+            usd_per_eur = await _euro_rate()
+            if usd_per_eur:
+                for pair in euro:
+                    rates[pair] = usd_per_eur if _euro_pair(pair) else 1 / usd_per_eur
 
     missing = unresolved(rates)
     if not missing:
