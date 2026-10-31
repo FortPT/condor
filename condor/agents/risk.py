@@ -1723,7 +1723,9 @@ async def _wallet_sol_balance(client: Any) -> float | None:
     try:
         return _sol_in_state(await client.portfolio.get_state(refresh=True))
     except Exception:
-        log.warning("Could not read the SOL balance for the swap reserve", exc_info=True)
+        log.warning(
+            "Could not read the SOL balance for the swap reserve", exc_info=True
+        )
         return None
 
 
