@@ -81,6 +81,24 @@ class RiskLimits:
     # upgrade. Deliberately NOT 1: a strategy whose owner approved a 5x default
     # at setup would otherwise stop trading the moment this shipped.
     max_leverage: float = -1.0
+    # Swap policy for ``execute_swap`` (the three below apply to nothing else).
+    # ``allowed_swap_tokens``: symbols or mints a swap may touch, both legs of the
+    # pair; empty = disabled. ``max_swap_quote``: the most one swap may be worth in
+    # its quote token; -1 = disabled. ``min_swap_sol_reserve``: SOL the wallet must
+    # still hold after a swap that spends SOL, so it can always pay the fee of the
+    # swap that sells the position back; -1 = disabled. Unlike
+    # ``min_wallet_sol_reserve`` (an unenforced LP key, see ``unrecognized``) this
+    # one is a real limit, and it refuses when the balance cannot be read.
+    allowed_swap_tokens: tuple[str, ...] = ()
+    max_swap_quote: float = -1.0
+    min_swap_sol_reserve: float = -1.0
+    # ``max_swap_slippage_pct``: the widest slippage a swap may accept, and a swap
+    # that names none is refused (it would take the connector's configured value,
+    # which this session does not control); -1 = disabled. ``swap_default_wallet_only``:
+    # refuse a swap that names a ``wallet_address``, so it can only sign with the
+    # Gateway's default wallet.
+    max_swap_slippage_pct: float = -1.0
+    swap_default_wallet_only: bool = False
     #: Keys the config asked for that this build has no limit for ([[LP-3]]).
     #: Not a limit itself — it bounds nothing and is never read by a check. It
     #: exists so that what was asked for and cannot be honoured is *sayable*,
@@ -90,6 +108,16 @@ class RiskLimits:
     #: the runtime as nothing at all. Populated by :meth:`from_dict`; surfaced
     #: by ``RiskState.to_dict`` and the log line at engine start.
     unrecognized: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # A loop config writes the list as YAML or as one comma string; either
+        # way the check below compares trimmed, case-folded names.
+        tokens = self.allowed_swap_tokens
+        if isinstance(tokens, str):
+            tokens = tokens.split(",")
+        self.allowed_swap_tokens = tuple(
+            str(t).strip().casefold() for t in (tokens or ()) if str(t).strip()
+        )
 
     @classmethod
     def from_dict(cls, d: dict) -> RiskLimits:
@@ -750,11 +778,84 @@ class RiskEngine:
 
         return True, ""
 
+    def _swap_policy_refusal(
+        self,
+        input_data: dict[str, Any],
+        notional_quote: float,
+        sol_balance: float | None,
+    ) -> str:
+        """Why an ``execute_swap`` breaks the swap policy, or "" when it does not.
+
+        Three independent limits, each off by default: the token whitelist, the
+        per-swap size and the SOL fee reserve. A limit that is on and cannot be
+        evaluated refuses (the pair is unreadable, the SOL balance is unknown):
+        the module refuses what it cannot value rather than approve it blind.
+        """
+        limits = self.limits
+        pair = str(input_data.get("trading_pair") or "")
+        base, sep, quote = pair.partition("-")
+        base, quote = base.strip(), quote.strip()
+
+        if limits.allowed_swap_tokens:
+            if not sep or not base or not quote:
+                return f"swap pair {pair!r} cannot be read, so it cannot be checked against the allowed tokens"
+            for leg in (base, quote):
+                if leg.casefold() not in limits.allowed_swap_tokens:
+                    return (
+                        f"swap token {leg!r} is not in the allowed tokens "
+                        f"({', '.join(limits.allowed_swap_tokens)})"
+                    )
+
+        if limits.swap_default_wallet_only and input_data.get("wallet_address"):
+            return "swap names a wallet_address; only the default wallet may sign"
+
+        if limits.max_swap_slippage_pct >= 0:
+            raw = input_data.get("slippage_pct")
+            if raw is None or raw == "":
+                return "swap must state a slippage_pct, within the session limit"
+            try:
+                slippage = _finite_number(raw, "slippage_pct")
+            except ValueError as exc:
+                return str(exc)
+            if slippage > limits.max_swap_slippage_pct:
+                return (
+                    f"swap slippage {slippage:g}% is above the limit of "
+                    f"{limits.max_swap_slippage_pct:g}%"
+                )
+
+        if 0 <= limits.max_swap_quote < notional_quote:
+            return (
+                f"swap is worth {self._amount(notional_quote)}, above the "
+                f"per-swap limit of {self._amount(limits.max_swap_quote)}"
+            )
+
+        if limits.min_swap_sol_reserve >= 0:
+            side = str(input_data.get("side") or "").upper()
+            spent = 0.0
+            if base.casefold() == "sol" and side == "SELL":
+                try:
+                    spent = _finite_number(input_data.get("amount"), "amount")
+                except ValueError as exc:
+                    return str(exc)
+            elif quote.casefold() == "sol" and side == "BUY":
+                spent = notional_quote
+            if spent > 0:
+                if sol_balance is None or not math.isfinite(sol_balance):
+                    return "the wallet's SOL balance could not be read, so the SOL reserve cannot be checked"
+                if sol_balance - spent < limits.min_swap_sol_reserve:
+                    return (
+                        f"swap spends {spent:g} SOL of {sol_balance:g}, which would "
+                        f"leave less than the {limits.min_swap_sol_reserve:g} SOL "
+                        "kept for fees"
+                    )
+        return ""
+
     def check_dex_action(
         self,
         tool_call: dict,
         current_state: RiskState,
         notional_quote: float | None = None,
+        sol_balance: float | None = None,
     ) -> tuple[bool, str]:
         """Check a signing DEX call against the position limit.
 
@@ -810,6 +911,11 @@ class RiskEngine:
                 f"DEX {_dex_call_label(tool_name, input_data)} quote notional "
                 "is unavailable"
             )
+
+        if tool_name == "execute_swap":
+            refusal = self._swap_policy_refusal(input_data, notional_quote, sol_balance)
+            if refusal:
+                return False, refusal
 
         projected = current_state.total_exposure + notional_quote
         if projected > self.limits.max_position_size_quote:
@@ -1224,8 +1330,14 @@ def auto_approve_with_risk_check(
                     except Exception as exc:
                         return deny(tool_name, f"it could not be priced: {exc}")
 
+                sol_balance = None
+                if (
+                    tool_name == "execute_swap"
+                    and risk_engine.limits.min_swap_sol_reserve >= 0
+                ):
+                    sol_balance = await _wallet_sol_balance(price_client)
                 allowed, reason = risk_engine.check_dex_action(
-                    tool_call, risk_state, notional_quote
+                    tool_call, risk_state, notional_quote, sol_balance
                 )
                 if not allowed:
                     return deny(tool_name, reason)
@@ -1577,6 +1689,44 @@ async def _dex_notional_quote(
     if not math.isfinite(amount) or amount <= 0:
         raise ValueError("DEX quote notional must be a positive finite number")
     return amount
+
+
+def _sol_in_state(state: Any) -> float | None:
+    """The SOL held on the Solana connector in a ``portfolio.get_state`` payload.
+
+    ``{account: {connector: [balance rows]}}``; a row names its token as
+    ``token`` and its size as ``units`` (``total`` and ``available_units`` are
+    read too). ``None`` when no row says, so the caller refuses and never
+    assumes a balance.
+    """
+    if not isinstance(state, dict):
+        return None
+    found = None
+    for account in state.values():
+        rows = account.get("solana-mainnet-beta") if isinstance(account, dict) else None
+        for row in rows or []:
+            if not isinstance(row, dict) or str(row.get("token", "")).upper() != "SOL":
+                continue
+            for key in ("available_units", "units", "total"):
+                value = row.get(key)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    if math.isfinite(value) and value >= 0:
+                        found = (found or 0.0) + float(value)
+                        break
+    return found
+
+
+async def _wallet_sol_balance(client: Any) -> float | None:
+    """The live SOL balance of the Gateway wallet, or ``None`` when unreadable."""
+    if client is None:
+        return None
+    try:
+        return _sol_in_state(await client.portfolio.get_state(refresh=True))
+    except Exception:
+        log.warning(
+            "Could not read the SOL balance for the swap reserve", exc_info=True
+        )
+        return None
 
 
 async def _swap_base_price(input_data: dict[str, Any], client: Any) -> float:

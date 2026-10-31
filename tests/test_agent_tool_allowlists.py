@@ -68,6 +68,8 @@ RESTRICTED_CREW = {
     "trading212_trader",
     "trading212_analyst",
     "trading212_risk_reviewer",
+    # Swaps through code-enforced limits (tests/test_swap_policy.py); no framework admin.
+    "solana_dex_trader",
 }
 
 
