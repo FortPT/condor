@@ -5,8 +5,22 @@ import { money, num } from "./tradeFormat";
 export const SOLANA_AGENT = "solana_dex_trader";
 export const SOLANA_LOOP = "swing";
 export const SOLANA_CONNECTOR = "solana-mainnet-beta";
-/** SOL's mint: the DEX candle feed finds a pool by the base token's address, not its ticker. */
-export const SOL_MINT = "So11111111111111111111111111111111111111112";
+/**
+ * Token mints for the chart: the DEX candle feed finds a pool by the base token's address, not its
+ * ticker. Each was checked against the live feed (the last candle's close matched Jupiter's quote).
+ */
+export const TOKEN_MINTS: Record<string, string> = {
+  SOL: "So11111111111111111111111111111111111111112",
+  JUP: "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+  PYTH: "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3",
+  RAY: "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",
+  BONK: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+};
+
+/** The tokens the chart can show: SOL first, then the loop's allowed tokens that have a known mint. */
+export function chartTokens(allowed: string[]): string[] {
+  return ["SOL", ...allowed.filter((token) => token !== "SOL" && token in TOKEN_MINTS)];
+}
 
 export type Balance = { token: string; total: number; usd_value?: number | null };
 export type Portfolio = { connectors?: { connector: string; balances?: Balance[] }[] };

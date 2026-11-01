@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useServer } from "@/hooks/useServer";
 import { apiFetch, type CandleData } from "@/lib/api";
 import {
-  SOL_MINT, SOLANA_AGENT, SOLANA_CONNECTOR, SOLANA_LOOP, allowedTokens, limitRows, n, parseDecisions, signedUsd, walletRows,
+  SOLANA_AGENT, SOLANA_CONNECTOR, SOLANA_LOOP, TOKEN_MINTS, allowedTokens, chartTokens, limitRows, n, parseDecisions, signedUsd, walletRows,
   type Overview, type Portfolio, type Quote, type Strategy, type Swap,
 } from "./solana";
 import { CandleChart } from "./TradeParts";
@@ -48,11 +48,12 @@ function Metric({ label, value, note, className = "" }: { label: string; value: 
  *
  * Cadence: the loop every 15 s, swaps and decisions every 30 s, the wallet, prices and result every 60 s.
  * The chart comes from a public price source that rate-limits, so it is read when opened and when the
- * interval changes, not polled.
+ * token or interval changes, not polled.
  */
 export function SolanaTrade() {
   const { server } = useServer();
   const [interval, setInterval] = useState<(typeof INTERVALS)[number]>("1h");
+  const [chosen, setChosen] = useState("SOL");
   const enc = encodeURIComponent(server ?? "");
 
   const strategy = useQuery({
@@ -85,6 +86,8 @@ export function SolanaTrade() {
   const loop = strategy.data;
   const tokens = allowedTokens(loop?.config);
   const quoteList = ["SOL", ...tokens.filter((t) => t !== "SOL")].join(",");
+  const chartList = chartTokens(tokens);
+  const chartToken = chartList.includes(chosen) ? chosen : "SOL";
   const quotes = useQuery({
     queryKey: ["solana-trade", "quotes", server, quoteList],
     enabled: !!server && tokens.length > 0,
@@ -101,10 +104,10 @@ export function SolanaTrade() {
     retry: false,
   });
   const candles = useQuery({
-    queryKey: ["solana-trade", "candles", server, interval],
+    queryKey: ["solana-trade", "candles", server, chartToken, interval],
     enabled: !!server,
     queryFn: () => apiFetch<CandleData[]>(
-      `/api/v1/servers/${enc}/market/candles?connector=${SOLANA_CONNECTOR}&trading_pair=${SOL_MINT}-USDC&interval=${interval}&limit=200`),
+      `/api/v1/servers/${enc}/market/candles?connector=${SOLANA_CONNECTOR}&trading_pair=${TOKEN_MINTS[chartToken]}-USDC&interval=${interval}&limit=200`),
     staleTime: 60000,
     refetchOnWindowFocus: false,
     retry: false,
@@ -144,15 +147,18 @@ export function SolanaTrade() {
 
     <section className={card} aria-label="Price chart">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <h2 className="text-sm font-semibold">SOL / USDC</h2>
+        <h2 className="text-sm font-semibold">{chartToken} / USDC</h2>
         <span className={`text-xs ${muted}`}>Public DEX price feed</span>
+        <div className="flex gap-2" role="group" aria-label="Chart token">
+          {chartList.map((t) => <button key={t} className={button} aria-pressed={chartToken === t} onClick={() => setChosen(t)}>{t}</button>)}
+        </div>
         <div className="ml-auto flex gap-2" role="group" aria-label="Chart interval">
           {INTERVALS.map((i) => <button key={i} className={button} aria-pressed={interval === i} onClick={() => setInterval(i)}>{i}</button>)}
         </div>
       </div>
       <div className="h-72">
         {candles.isLoading ? <p role="status" className={`p-4 text-sm ${muted}`}>Loading chart…</p> :
-          chartRows.length === 0 ? <p className={`p-4 text-sm ${muted}`} data-state="no-chart">The chart is unavailable right now: the public price feed rate-limits. It retries when you change the interval.</p> :
+          chartRows.length === 0 ? <p className={`p-4 text-sm ${muted}`} data-state="no-chart">The chart is unavailable right now: the public price feed rate-limits. It retries when you change the token or interval.</p> :
             <CandleChart rows={chartRows} />}
       </div>
     </section>

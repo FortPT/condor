@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ServerContext } from "@/hooks/useServer";
 import { SolanaTrade } from "./SolanaTrade";
-import { allowedTokens, limitRows, parseDecisions, signedUsd, walletRows } from "./solana";
+import { TOKEN_MINTS, allowedTokens, chartTokens, limitRows, parseDecisions, signedUsd, walletRows } from "./solana";
 
 const mocks = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock("@/lib/api", () => ({ apiFetch: mocks.fetch }));
@@ -126,6 +126,11 @@ describe("helpers", () => {
     expect(parseDecisions(undefined)).toEqual([]);
     expect(parseDecisions(journal.content, 1)).toHaveLength(1);
   });
+  it("chartTokens offers SOL first and only the allowed tokens that have a known mint", () => {
+    expect(chartTokens(["JUP", "WIF", "SOL", "BONK"])).toEqual(["SOL", "JUP", "BONK"]);
+    expect(chartTokens([])).toEqual(["SOL"]);
+    expect(Object.keys(TOKEN_MINTS)).toEqual(["SOL", "JUP", "PYTH", "RAY", "BONK"]);
+  });
   it("signedUsd shows the sign and a dash for nothing", () => {
     expect(signedUsd(1.234)).toBe("+$1.23");
     expect(signedUsd(-1.234)).toBe("−$1.23");
@@ -172,6 +177,19 @@ describe("SolanaTrade", () => {
       "/api/v1/servers/FortPT%20VM-08/dex/swaps?limit=25",
       "/api/v1/servers/FortPT%20VM-08/dex/quotes?tokens=SOL%2CJUP%2CWIF",
     ]));
+  });
+
+  it("switches the chart to another allowed token, by that token's mint", async () => {
+    respond();
+    await render();
+    const jup = Array.from(host.querySelectorAll("button")).find((x) => x.textContent === "JUP")!;
+    expect(Array.from(host.querySelectorAll("[aria-label='Chart token'] button")).map((x) => x.textContent)).toEqual(["SOL", "JUP"]);
+    await act(async () => jup.click());
+    await wait();
+    const last = paths().filter((p) => p.includes("/market/candles")).at(-1)!;
+    expect(last).toContain(`trading_pair=${TOKEN_MINTS.JUP}-USDC`);
+    expect(host.textContent).toContain("JUP / USDC");
+    expect(jup.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("asks for the SOL chart by its mint and re-reads it when the interval changes", async () => {
