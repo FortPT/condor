@@ -379,6 +379,16 @@ async def dex_quotes(
     except Exception as e:
         raise upstream_error("Failed to reach the server", e)
 
+    async def get_quote(symbol: str, amount: Decimal) -> dict:
+        return await client.gateway_swap.get_swap_quote(
+            connector="jupiter/router",
+            network=DEFAULT_NETWORK,
+            trading_pair=f"{symbol}-USDC",
+            side="SELL",
+            amount=amount,
+            slippage_pct=Decimal("1"),
+        )
+
     async def one(symbol: str) -> dict:
         if symbol.upper() == "USDC":
             return {
@@ -388,17 +398,17 @@ async def dex_quotes(
                 "error": None,
             }
         try:
-            quote = await client.gateway_swap.get_swap_quote(
-                connector="jupiter/router",
-                network=DEFAULT_NETWORK,
-                trading_pair=f"{symbol}-USDC",
-                side="SELL",
-                amount=Decimal("1"),
-                slippage_pct=Decimal("1"),
-            )
+            quote = await get_quote(symbol, Decimal("1"))
+            price = float(quote["price"])
+            if 0 < price < 0.5:
+                # One unit of a cheap token is worth almost nothing, so the quote rounds
+                # its price and reads a huge impact: ask again for about a dollar's worth.
+                units = (Decimal(1) / Decimal(str(price))).to_integral_value()
+                quote = await get_quote(symbol, max(Decimal(1), units))
+                price = float(quote["price"])
             return {
                 "token": symbol,
-                "price": float(quote["price"]),
+                "price": price,
                 "price_impact_pct": float(quote.get("price_impact_pct") or 0),
                 "error": None,
             }
