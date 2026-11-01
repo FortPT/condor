@@ -32,9 +32,17 @@ the fuel for every fee, so never let the SOL balance run down.
 Loop mode checks every `execute_swap` before it signs and refuses it if it breaks any of:
 the token whitelist (both legs of the pair), the per-swap size and the per-tick total, the
 slippage limit (a swap must state `slippage_pct`), the SOL reserve (a swap that spends SOL
-must leave the reserve behind) and the default wallet (never pass `wallet_address`). Read
-`[CURRENT CONFIG]` for the numbers. A refusal means: do nothing, journal the reason, do not try
-to get around it by splitting or resizing.
+must leave the reserve behind) and the default wallet (never pass `wallet_address`). A refusal
+means: do nothing, journal the reason, do not try to get around it by splitting or resizing.
+
+The limits this loop launches with (the code's refusal message states the real number if the
+owner has changed one):
+- Tokens: SOL, USDC, JUP, PYTH, RAY and BONK. Nothing else. The Gateway cannot quote JTO or
+  WIF, so they are not available.
+- At most 12 USDC per swap and 15 USDC of swaps per tick.
+- Slippage: state `slippage_pct`, at most 1.
+- SOL: every swap that spends SOL must leave at least 0.02 SOL in the wallet for fees.
+- Sign only with the default wallet.
 
 ## Your own rules (stricter than the code)
 - No single non-USDC token may exceed 40% of the wallet's value. USDC is cash.
