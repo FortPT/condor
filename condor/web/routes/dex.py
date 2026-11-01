@@ -310,6 +310,110 @@ async def list_swaps(
     }
 
 
+@router.get("/servers/{name}/solana/overview")
+async def solana_overview(
+    name: str,
+    user: WebUser = Depends(require_server_access),
+):
+    """The Gateway's default Solana wallet: value, deposits found on chain and the result net of them.
+
+    Read-only. Deposits come from the public Solana RPC (best effort: a failing RPC keeps what is
+    known), so the result is not read as profit the moment SOL is sent in.
+    """
+    from condor import solana_wallet
+
+    cm = get_config_manager()
+    try:
+        client = await cm.get_client(name)
+        groups = await client.accounts.list_gateway_wallets()
+        address = next(
+            (
+                g.get("default_address")
+                for g in groups or []
+                if isinstance(g, dict) and g.get("chain") == "solana"
+            ),
+            None,
+        )
+        if not address:
+            return {"address": None, "deposits": []}
+        value, sol_price = solana_wallet.wallet_from_portfolio(
+            await client.portfolio.get_state()
+        )
+    except Exception as e:
+        raise upstream_error("Failed to read the Solana wallet", e)
+    state = await solana_wallet.refresh_deposits(address, sol_price)
+    result = solana_wallet.overview(state, value)
+    solana_wallet.save_state(state)
+    return result
+
+
+_QUOTE_TOKEN_RE = re.compile(r"^[A-Za-z0-9]{2,12}$")
+
+
+@router.get("/servers/{name}/dex/quotes")
+async def dex_quotes(
+    name: str,
+    tokens: str = Query(..., description="Comma-separated symbols, at most 12"),
+    user: WebUser = Depends(require_server_access),
+):
+    """Jupiter's price for one unit of each token in USDC, from a Gateway quote (nothing is signed).
+
+    A token the Gateway does not know comes back with ``error`` set, not dropped, so the table says
+    so rather than silently listing fewer rows.
+    """
+    import asyncio
+    from decimal import Decimal
+
+    symbols = [t.strip() for t in tokens.split(",") if t.strip()]
+    if (
+        not symbols
+        or len(symbols) > 12
+        or not all(_QUOTE_TOKEN_RE.match(t) for t in symbols)
+    ):
+        raise HTTPException(
+            status_code=422, detail="tokens must be 1 to 12 plain symbols"
+        )
+    cm = get_config_manager()
+    try:
+        client = await cm.get_client(name)
+    except Exception as e:
+        raise upstream_error("Failed to reach the server", e)
+
+    async def one(symbol: str) -> dict:
+        if symbol.upper() == "USDC":
+            return {
+                "token": symbol,
+                "price": 1.0,
+                "price_impact_pct": 0.0,
+                "error": None,
+            }
+        try:
+            quote = await client.gateway_swap.get_swap_quote(
+                connector="jupiter/router",
+                network=DEFAULT_NETWORK,
+                trading_pair=f"{symbol}-USDC",
+                side="SELL",
+                amount=Decimal("1"),
+                slippage_pct=Decimal("1"),
+            )
+            return {
+                "token": symbol,
+                "price": float(quote["price"]),
+                "price_impact_pct": float(quote.get("price_impact_pct") or 0),
+                "error": None,
+            }
+        except Exception as e:
+            logger.info("Quote for %s failed: %s", symbol, e)
+            return {
+                "token": symbol,
+                "price": None,
+                "price_impact_pct": None,
+                "error": "not quotable",
+            }
+
+    return {"quotes": await asyncio.gather(*(one(s) for s in symbols))}
+
+
 def _throttle_counter() -> int:
     """Every refusal this process has made, as one monotonic number.
 

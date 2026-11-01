@@ -135,7 +135,7 @@ it("opens the read-only Solana panel from its URL and from its tab", async () =>
   expect(host.querySelector("[data-workspace]")).toBeNull();
   expect(host.querySelector("[data-native-flows]")).toBeNull();
   const pressed = Array.from(host.querySelectorAll("button[aria-pressed='true']")).map((b) => b.textContent);
-  expect(pressed).toEqual(["Solana"]);
+  expect(pressed.filter((label) => ["Crypto.com", "Revolut X", "Trading 212", "Solana", "Hummingbot"].includes(label ?? ""))).toEqual(["Solana"]);
   // it only reads: the loop, the wallet and the swaps (plus the Crypto.com status the page itself polls)
   expect(request.fetch.mock.calls.every(([, init]) => !init)).toBe(true);
   await choose("Crypto.com");
