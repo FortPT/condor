@@ -16,7 +16,7 @@ default_config:
     max_swap_slippage_pct: 1.0
     swap_default_wallet_only: true
     min_swap_sol_reserve: 0.02
-    allowed_swap_tokens: SOL,USDC,JUP,JTO,PYTH,RAY,BONK,WIF
+    allowed_swap_tokens: SOL,USDC,JUP,PYTH,RAY,BONK
 default_trading_context: Solana DEX only, Gateway default wallet, jupiter/router on solana-mainnet-beta, USDC as cash; the limits in risk_limits are enforced in code
 ---
 
