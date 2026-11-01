@@ -235,25 +235,31 @@ class FakePortfolio:
 
 
 class FakeSwap:
-    def __init__(self, known):
+    def __init__(self, known, rounded=None):
         self.known = known
+        #: tokens whose one-unit quote rounds the price and shows a large impact, like BONK
+        self.rounded = rounded or {}
+        self.amounts = []
 
     async def get_swap_quote(self, **kwargs):
         base = kwargs["trading_pair"].split("-")[0]
+        self.amounts.append((base, kwargs["amount"]))
         if base not in self.known:
             raise RuntimeError("Token not found")
+        if base in self.rounded and kwargs["amount"] < 1000:
+            return {"price": str(self.rounded[base]), "price_impact_pct": "31.8"}
         return {"price": str(self.known[base]), "price_impact_pct": "0.07"}
 
 
 class FakeClient:
-    def __init__(self, groups=None, known=None):
+    def __init__(self, groups=None, known=None, rounded=None):
         self.accounts = FakeAccounts(
             groups
             if groups is not None
             else [{"chain": "solana", "default_address": WALLET}]
         )
         self.portfolio = FakePortfolio()
-        self.gateway_swap = FakeSwap(known or {})
+        self.gateway_swap = FakeSwap(known or {}, rounded)
 
 
 class FakeConfigManager:
@@ -316,6 +322,26 @@ def test_quotes_price_each_token_and_mark_the_unknown_ones(route_client):
     }
     assert by["USDC"]["price"] == 1.0
     assert [r["token"] for r in rows] == ["SOL", "JUP", "WIF", "USDC"], "order is kept"
+
+
+def test_a_cheap_token_is_quoted_for_about_a_dollar_not_for_one_unit(route_client):
+    """One BONK is worth almost nothing: its quote rounds the price and reads a huge impact."""
+    fake = FakeClient(
+        known={"BONK": 0.0000029, "SOL": 95.6}, rounded={"BONK": 0.000002}
+    )
+    rows = (
+        route_client(fake)
+        .get("/servers/srv/dex/quotes?tokens=SOL,BONK")
+        .json()["quotes"]
+    )
+    by = {r["token"]: r for r in rows}
+    assert by["BONK"]["price"] == pytest.approx(0.0000029)
+    assert by["BONK"]["price_impact_pct"] == pytest.approx(0.07)
+    bonk_amounts = [a for token, a in fake.gateway_swap.amounts if token == "BONK"]
+    assert bonk_amounts[0] == 1 and bonk_amounts[1] == 500_000
+    assert [a for token, a in fake.gateway_swap.amounts if token == "SOL"] == [
+        1
+    ], "a dear token is quoted once"
 
 
 @pytest.mark.parametrize(
