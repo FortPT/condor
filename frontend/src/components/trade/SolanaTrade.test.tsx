@@ -5,7 +5,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ServerContext } from "@/hooks/useServer";
-import { SolanaTrade, limitRows, walletRows } from "./SolanaTrade";
+import { SolanaTrade } from "./SolanaTrade";
+import { limitRows, walletRows } from "./solana";
 
 const mocks = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock("@/lib/api", () => ({ apiFetch: mocks.fetch }));
