@@ -4,6 +4,7 @@ import { ConnectKeysOverlay } from "@/components/ConnectKeysOverlay";
 import { ExchangeTrade } from "@/components/trade/ExchangeTrade";
 import { NativeFlowsPanel } from "@/components/trade/NativeFlowsPanel";
 import { NativeVenueTrade } from "@/components/trade/NativeVenueTrade";
+import { SolanaTrade } from "@/components/trade/SolanaTrade";
 import { flowVenueKey } from "@/components/trade/nativeFlows";
 import { NATIVE_VENUES, isNativeVenueKey, type NativeVenueKey } from "@/components/trade/nativeVenue";
 import { useCredentials, useCryptoExchangeStatus } from "@/hooks/useCredentials";
@@ -21,7 +22,9 @@ export function Trade() {
     params.has("type") || params.has("connector") || params.has("pair");
   // Revolut X and Trading 212 are only ever opened explicitly: they never become the default.
   const nativeWorkspace = isNativeVenueKey(workspace) ? workspace : null;
-  const cryptoWorkspace = !nativeWorkspace && (workspace === "crypto-exchange" ||
+  // The Solana wallet is read-only here too: the Gateway signs for the loop, never from this page.
+  const solanaWorkspace = workspace === "solana";
+  const cryptoWorkspace = !nativeWorkspace && !solanaWorkspace && (workspace === "crypto-exchange" ||
     (!explicitExchange && !!status.data?.connected && credentials.length === 0));
   const loading = !workspace && !explicitExchange && (keysLoading || status.isLoading);
 
@@ -32,7 +35,7 @@ export function Trade() {
     return <Navigate to={{ pathname: "/trade", search: `?${nextParams}` }} replace />;
   }
 
-  function selectWorkspace(next: "crypto-exchange" | "hummingbot" | NativeVenueKey) {
+  function selectWorkspace(next: "crypto-exchange" | "hummingbot" | "solana" | NativeVenueKey) {
     const nextParams = new URLSearchParams(params);
     nextParams.set("workspace", next);
     if (next !== "hummingbot") {
@@ -48,9 +51,11 @@ export function Trade() {
       <button className="rounded border border-[var(--color-border)] px-3 py-2 text-sm aria-pressed:bg-[var(--color-surface-hover)]" aria-pressed={!loading && cryptoWorkspace} onClick={() => selectWorkspace("crypto-exchange")}>Crypto.com</button>
       {Object.values(NATIVE_VENUES).map((venue) =>
         <button key={venue.key} className="rounded border border-[var(--color-border)] px-3 py-2 text-sm aria-pressed:bg-[var(--color-surface-hover)]" aria-pressed={!loading && nativeWorkspace === venue.key} onClick={() => selectWorkspace(venue.key)}>{venue.title}</button>)}
-      <button className="rounded border border-[var(--color-border)] px-3 py-2 text-sm aria-pressed:bg-[var(--color-surface-hover)]" aria-pressed={!loading && !cryptoWorkspace && !nativeWorkspace} onClick={() => selectWorkspace("hummingbot")}>Hummingbot</button>
+      <button className="rounded border border-[var(--color-border)] px-3 py-2 text-sm aria-pressed:bg-[var(--color-surface-hover)]" aria-pressed={!loading && solanaWorkspace} onClick={() => selectWorkspace("solana")}>Solana</button>
+      <button className="rounded border border-[var(--color-border)] px-3 py-2 text-sm aria-pressed:bg-[var(--color-surface-hover)]" aria-pressed={!loading && !cryptoWorkspace && !nativeWorkspace && !solanaWorkspace} onClick={() => selectWorkspace("hummingbot")}>Hummingbot</button>
     </div>
     {loading ? <p role="status" className="p-6 text-sm">Loading trading accounts…</p> :
+      solanaWorkspace ? <div className="min-h-0 flex-1 space-y-4 overflow-auto p-6"><SolanaTrade /></div> :
       nativeWorkspace ? <div className="min-h-0 flex-1 space-y-4 overflow-auto p-6">
         <NativeVenueTrade venue={NATIVE_VENUES[nativeWorkspace]} />
         <NativeFlowsPanel venue={flowVenueKey(nativeWorkspace)} title={NATIVE_VENUES[nativeWorkspace].title} defaultCurrency={NATIVE_VENUES[nativeWorkspace].quote} />

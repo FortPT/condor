@@ -258,6 +258,58 @@ async def list_chains(
     return {"chains": chains}
 
 
+# What a swap row shows in the table: no wallet address, no raw signing data.
+_SWAP_KEYS = (
+    "status",
+    "side",
+    "trading_pair",
+    "connector",
+    "network",
+    "input_amount",
+    "output_amount",
+    "price",
+    "base_token",
+    "quote_token",
+    "transaction_hash",
+    "timestamp",
+)
+
+
+@router.get("/servers/{name}/dex/swaps")
+async def list_swaps(
+    name: str,
+    limit: int = Query(default=25, ge=1, le=100),
+    user: WebUser = Depends(require_server_access),
+):
+    """The latest Gateway swaps on a server, newest first, for the Solana Trade tab.
+
+    Read-only: one swap search, reduced to the fields a table needs. It names no
+    wallet, key or signing detail, and an unreachable server is an upstream error
+    the browser shows, never an empty list that reads as "no swaps".
+    """
+    cm = get_config_manager()
+    try:
+        client = await cm.get_client(name)
+        if not hasattr(client, "gateway_swap"):
+            raise HTTPException(
+                status_code=501, detail="Gateway swap is not available on this server"
+            )
+        raw = await client.gateway_swap.search_swaps(limit=limit)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise upstream_error("Failed to list swaps", e)
+
+    rows = (raw.get("data") or []) if isinstance(raw, dict) else (raw or [])
+    return {
+        "swaps": [
+            {key: row.get(key) for key in _SWAP_KEYS}
+            for row in rows
+            if isinstance(row, dict)
+        ]
+    }
+
+
 def _throttle_counter() -> int:
     """Every refusal this process has made, as one monotonic number.
 

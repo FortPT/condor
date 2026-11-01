@@ -127,6 +127,22 @@ it.each([
   expect(host.querySelector(`[data-native-flows="${venue}"]`)).not.toBeNull();
   expect(request.fetch.mock.calls.some(([path]) => path === `/api/v1/native-flows?venue=${venue}`)).toBe(true);
 });
+it("opens the read-only Solana panel from its URL and from its tab", async () => {
+  await render("/trade?workspace=solana");
+  expect(host.querySelector("[data-solana]")).not.toBeNull();
+  expect(host.textContent).not.toContain("Preview order");
+  expect(host.querySelector("[data-gate]")).toBeNull();
+  expect(host.querySelector("[data-workspace]")).toBeNull();
+  expect(host.querySelector("[data-native-flows]")).toBeNull();
+  const pressed = Array.from(host.querySelectorAll("button[aria-pressed='true']")).map((b) => b.textContent);
+  expect(pressed).toEqual(["Solana"]);
+  // it only reads: the loop, the wallet and the swaps (plus the Crypto.com status the page itself polls)
+  expect(request.fetch.mock.calls.every(([, init]) => !init)).toBe(true);
+  await choose("Crypto.com");
+  expect(host.querySelector("[data-solana]")).toBeNull();
+  await choose("Solana");
+  expect(host.querySelector("[data-solana]")).not.toBeNull();
+});
 it("shows no deposits panel on the Hummingbot tab", async () => {
   await render("/trade?workspace=hummingbot");
   expect(host.querySelector("[data-native-flows]")).toBeNull();
