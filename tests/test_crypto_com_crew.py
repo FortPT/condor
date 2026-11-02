@@ -164,6 +164,7 @@ def test_native_tool_exposes_no_enable_credentials_or_money_limit_mutation():
         "predict",
         "scorecard",
         "maker_stats",
+        "trend",
     }
     assert {arg.arg for arg in tool.args.args} == {
         "action",

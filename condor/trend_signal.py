@@ -52,7 +52,9 @@ class Rule:
     exit_days: int = 10
 
 
-TREND_50 = Rule("trend50", "long while above the 50-day average", "trend", ("BTC", "ETH"))
+TREND_50 = Rule(
+    "trend50", "long while above the 50-day average", "trend", ("BTC", "ETH")
+)
 BREAKOUT_20_10 = Rule(
     "breakout20_10",
     "long after a close above the prior 20-day high, flat after a close below the "
@@ -130,10 +132,15 @@ def evaluate(rule: Rule, bars: list[tuple], now: float | None = None) -> dict:
     last_t, close = bars[-1][0], bars[-1][4]
     age_days = (now * 1000 - (last_t + DAY_MS)) / DAY_MS
     if age_days > MAX_AGE_DAYS:
-        return {"signal": "no_data", "reason": f"newest closed candle is {age_days:.0f} days old"}
+        return {
+            "signal": "no_data",
+            "reason": f"newest closed candle is {age_days:.0f} days old",
+        }
     out: dict = {
         "close": close,
-        "last_closed_day": datetime.fromtimestamp(last_t / 1000, timezone.utc).strftime("%Y-%m-%d"),
+        "last_closed_day": datetime.fromtimestamp(last_t / 1000, timezone.utc).strftime(
+            "%Y-%m-%d"
+        ),
         "candles": len(bars),
     }
     if rule.kind == "trend":
@@ -161,7 +168,11 @@ def _held(positions: Mapping, coin: str, close: float | None) -> dict:
         units = Decimal(0)
     value = float(units) * close if close else None
     held = units > 0 and (value is None or value >= DUST_VALUE)
-    return {"held": held, "units": format(units.normalize(), "f") if units > 0 else "0", "held_value": None if value is None else round(value, 2)}
+    return {
+        "held": held,
+        "units": format(units.normalize(), "f") if units > 0 else "0",
+        "held_value": None if value is None else round(value, 2),
+    }
 
 
 def action_for(signal: str, held: bool) -> str:
@@ -187,8 +198,12 @@ async def report(
         item: dict = {"coin": coin}
         try:
             candles = await fetch(coin)
-        except Exception as error:  # noqa: BLE001 - a failed read is no data, never a guess
-            item.update(signal="no_data", reason=f"candles unavailable ({type(error).__name__})")
+        except (
+            Exception
+        ) as error:  # noqa: BLE001 - a failed read is no data, never a guess
+            item.update(
+                signal="no_data", reason=f"candles unavailable ({type(error).__name__})"
+            )
         else:
             item.update(evaluate(rule, closed_daily(candles, now), now))
         item.update(_held(positions, coin, item.get("close")))
@@ -197,7 +212,9 @@ async def report(
     return {
         "rule": rule.key,
         "rule_text": rule.label,
-        "as_of": datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        "as_of": datetime.fromtimestamp(now, timezone.utc).strftime(
+            "%Y-%m-%d %H:%M UTC"
+        ),
         "coins": coins,
         "note": NOTE,
     }

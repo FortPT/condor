@@ -733,7 +733,9 @@ class ExchangeService:
             return (await self.candles(user_id, coin, "1D", 300))["candles"]
 
         return await trend_signal.report(
-            trend_signal.BREAKOUT_20_10, fetch, _read_ledger(user_id).get("positions") or {}
+            trend_signal.BREAKOUT_20_10,
+            fetch,
+            _read_ledger(user_id).get("positions") or {},
         )
 
     async def book(self, user_id, symbol, depth=10):

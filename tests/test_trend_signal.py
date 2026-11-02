@@ -81,21 +81,31 @@ def test_the_breakout_needs_a_new_20_day_high_and_leaves_below_the_10_day_low():
 
 
 def test_too_little_or_stale_history_is_no_data_never_a_guess():
-    short = ts.evaluate(ts.TREND_50, ts.closed_daily(series([1.0 + i for i in range(60)]), now_after(60)), now_after(60))
+    short = ts.evaluate(
+        ts.TREND_50,
+        ts.closed_daily(series([1.0 + i for i in range(60)]), now_after(60)),
+        now_after(60),
+    )
     assert short["signal"] == "no_data" and "need" in short["reason"]
     closes = [100 + i for i in range(150)]
     bars = ts.closed_daily(series(closes), now_after(150))
     stale = ts.evaluate(ts.TREND_50, bars, now_after(150) + 10 * DAY / 1000)
     assert stale["signal"] == "no_data" and "days old" in stale["reason"]
     fresh = ts.evaluate(ts.TREND_50, bars, now_after(150))
-    assert fresh["signal"] == "long" and fresh["gap_pct"] > 0 and fresh["days_in_state"] > 50
+    assert (
+        fresh["signal"] == "long"
+        and fresh["gap_pct"] > 0
+        and fresh["days_in_state"] > 50
+    )
     assert fresh["last_closed_day"]
 
 
 def test_the_breakout_answer_names_its_levels():
     rows = series([100.0] * 130)
     rows.append(candle(130, 110, high=111))
-    out = ts.evaluate(ts.BREAKOUT_20_10, ts.closed_daily(rows, now_after(131)), now_after(131))
+    out = ts.evaluate(
+        ts.BREAKOUT_20_10, ts.closed_daily(rows, now_after(131)), now_after(131)
+    )
     assert out["signal"] == "long" and out["days_in_state"] == 1
     assert out["prior_high"] == 100.0 and out["prior_low"] == 100.0
 
@@ -124,13 +134,25 @@ def test_the_report_maps_each_coin_and_treats_dust_as_not_held():
             raise TimeoutError("down")
         return rising
 
-    out = run(ts.report(ts.TREND_50, fetch, {"BTC": {"units": "0.0001", "cost": "1"}}, clock))
+    out = run(
+        ts.report(ts.TREND_50, fetch, {"BTC": {"units": "0.0001", "cost": "1"}}, clock)
+    )
     btc, eth = out["coins"]
     # 0.0001 units of a ~250 coin is worth 0.025: dust, so the long signal still says buy
     assert btc["signal"] == "long" and btc["held"] is False and btc["action"] == "buy"
-    assert eth["signal"] == "no_data" and eth["action"] == "none" and "TimeoutError" in eth["reason"]
-    held = run(ts.report(ts.TREND_50, fetch, {"BTC": {"units": "0.5", "cost": "50"}}, clock))["coins"][0]
-    assert held["held"] is True and held["action"] == "hold" and held["held_value"] > ts.DUST_VALUE
+    assert (
+        eth["signal"] == "no_data"
+        and eth["action"] == "none"
+        and "TimeoutError" in eth["reason"]
+    )
+    held = run(
+        ts.report(ts.TREND_50, fetch, {"BTC": {"units": "0.5", "cost": "50"}}, clock)
+    )["coins"][0]
+    assert (
+        held["held"] is True
+        and held["action"] == "hold"
+        and held["held_value"] > ts.DUST_VALUE
+    )
     assert out["rule"] == "trend50" and "places no order" in out["note"]
 
 
@@ -163,7 +185,9 @@ def test_each_venue_service_answers_from_its_own_daily_candles(monkeypatch):
 
 def test_the_new_crew_agents_trade_their_venue():
     assert native_venues.for_agent("revolut_x_trend_trader").key == "revolut_x"
-    assert native_venues.for_agent("crypto_com_trend_trader").key == "crypto_com_exchange"
+    assert (
+        native_venues.for_agent("crypto_com_trend_trader").key == "crypto_com_exchange"
+    )
     assert native_venues.for_agent("revolut_x_trader").key == "revolut_x"
 
 
