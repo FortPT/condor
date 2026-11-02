@@ -104,6 +104,17 @@ async def value_account(
     return view
 
 
+def _why(error: Exception) -> str:
+    """``ValueError: Crypto.com unavailable`` for a log line, not just ``ValueError``.
+
+    The venue services raise short, fixed or sanitised messages ("Crypto.com
+    unavailable", "API rate limit: wait 60 seconds"), and the bare class name hid
+    which one a failed valuation was. Capped so a long message cannot flood the log.
+    """
+    text = " ".join(str(error).split())[:120]
+    return f"{type(error).__name__}: {text}" if text else type(error).__name__
+
+
 def forget() -> None:
     """Drop the live-valuation cache (tests)."""
     _live.clear()
@@ -371,7 +382,7 @@ async def performance(
                 float(view.get("excluded_value_usd") or 0.0),
             )
         except Exception as error:  # noqa: BLE001 - fall back to the recorded sample
-            log.warning("%s live value skipped (%s)", venue.label, type(error).__name__)
+            log.warning("%s live value skipped (%s)", venue.label, _why(error))
     if live is None:
         live = _with_excluded(
             user_id,
@@ -601,9 +612,7 @@ async def overview(
         try:
             view = await value_account(venue, user_id, services=services, max_age=0)
         except Exception as error:  # noqa: BLE001
-            log.warning(
-                "%s overview unavailable (%s)", venue.label, type(error).__name__
-            )
+            log.warning("%s overview unavailable (%s)", venue.label, _why(error))
             entry["error"] = (
                 f"Could not be valued ({type(error).__name__}); excluded from the total."
             )
