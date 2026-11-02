@@ -55,6 +55,9 @@ class Rule:
 TREND_50 = Rule(
     "trend50", "long while above the 50-day average", "trend", ("BTC", "ETH")
 )
+SOL_TREND_50 = Rule(
+    "trend50_sol", "long while above the 50-day average", "trend", ("SOL",)
+)
 BREAKOUT_20_10 = Rule(
     "breakout20_10",
     "long after a close above the prior 20-day high, flat after a close below the "
@@ -218,3 +221,62 @@ async def report(
         "coins": coins,
         "note": NOTE,
     }
+
+
+#: SOL the wallet keeps for fees (the swap policy enforces the same figure) and the
+#: smallest swap worth its fixed costs, in USD.
+SOL_RESERVE = 0.02
+MIN_SWAP_VALUE = 3.0
+
+SOLANA_NOTE = (
+    "The signal comes from closed UTC daily SOL-USDT candles. The plan is only what the rule "
+    "asks for: swaps are capped per swap and per tick by the swap policy, so a sale or "
+    "purchase of the whole amount takes several ticks. It places nothing."
+)
+
+
+def from_normalized(rows: Any) -> list[dict]:
+    """Hummingbot candles (``timestamp``, ``open``...) as the t/o/h/l/c rows ``closed_daily`` reads."""
+    return [
+        {
+            "t": r.get("timestamp"),
+            "o": r.get("open"),
+            "h": r.get("high"),
+            "l": r.get("low"),
+            "c": r.get("close"),
+        }
+        for r in (rows if isinstance(rows, list) else [])
+        if isinstance(r, dict)
+    ]
+
+
+def solana_plan(
+    signal: str,
+    sol_units: float,
+    usdc_value: float,
+    price: float | None,
+    reserve: float = SOL_RESERVE,
+    min_value: float = MIN_SWAP_VALUE,
+) -> dict:
+    """What the daily SOL rule asks of a wallet holding ``sol_units`` SOL and ``usdc_value`` USDC.
+
+    Flat: sell the SOL above the fee reserve into USDC. Long: buy SOL with the USDC.
+    Anything under ``min_value`` dollars is not worth a swap, so the wallet is left alone.
+    """
+    tradable = max(sol_units - reserve, 0.0)
+    tradable_value = tradable * price if price else 0.0
+    plan = {
+        "action": "none",
+        "sell_sol_units": 0.0,
+        "buy_usdc": 0.0,
+        "tradable_sol": round(tradable, 6),
+        "reserve_sol": reserve,
+    }
+    if signal not in ("long", "flat"):
+        return plan
+    plan["action"] = "hold"
+    if signal == "flat" and tradable_value >= min_value:
+        plan.update(action="sell_sol", sell_sol_units=round(tradable, 6))
+    elif signal == "long" and usdc_value >= min_value:
+        plan.update(action="buy_sol", buy_usdc=round(usdc_value, 2))
+    return plan

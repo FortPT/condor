@@ -34,6 +34,7 @@ POST_V1_TOOLS = {
         "revolut_x",
         "trading212",
         "native_portfolio",
+        "solana_trend",
     },
     "hummingbot_api": set(),
 }

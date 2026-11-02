@@ -1882,6 +1882,23 @@ async def native_portfolio() -> dict:
     return await call_main_api("GET", "/portfolio/native")
 
 
+@handle_errors("Solana trend")
+async def solana_trend() -> dict:
+    """The slow daily SOL signal and what the default Solana wallet should do about it (read-only).
+
+    SOL is long while its last closed daily candle is above its 50-day average, flat
+    otherwise. The answer carries the signal and the numbers behind it, the wallet's SOL
+    and USDC, and a plan: `sell_sol` (the rule is flat: sell the SOL above the fee reserve
+    into USDC), `buy_sol` (the rule is long: buy SOL with the USDC), `hold` or `none` (no
+    data). Computed in code from closed candles; the swap policy still caps each swap, so a
+    whole sale or purchase takes several ticks. This tool takes no arguments and cannot
+    swap, sign or change any setting.
+    """
+    from mcp_servers.condor.condor_client import call_main_api
+
+    return await call_main_api("GET", "/solana/trend")
+
+
 TOOL_PROFILES: dict[str, tuple] = resolve_profiles(globals(), PROFILE_TOOLS)
 register_tools(
     mcp, settings.tool_profile, settings.muted_tools, settings.execution_mode
