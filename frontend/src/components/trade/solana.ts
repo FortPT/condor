@@ -1,9 +1,13 @@
 /** Pure helpers and shapes for the read-only Solana Trade tab. */
 import { money, num } from "./tradeFormat";
 
-/** The agent and loop that trade the Gateway's Solana wallet: the slow daily SOL trend crew (the old swing crew is retired). */
+/**
+ * The agent and loop that trade the Gateway's Solana wallet: the slow daily SOL trend crew (the old swing
+ * crew is retired). The strategy API is addressed by the loop's folder (`daily`), not by the strategy name
+ * the loop starts as (`daily_trend`).
+ */
 export const SOLANA_AGENT = "solana_trend_trader";
-export const SOLANA_LOOP = "daily_trend";
+export const SOLANA_LOOP = "daily";
 export const SOLANA_CONNECTOR = "solana-mainnet-beta";
 /**
  * Token mints for the chart: the DEX candle feed finds a pool by the base token's address, not its
@@ -29,7 +33,21 @@ export type Strategy = {
   unavailable?: string;
   config?: Record<string, unknown>;
   instances?: { session_num?: number; tick_count?: number }[];
+  /** Every session the loop has run: only the numbers are read. */
+  sessions?: { number?: number }[];
 };
+
+/**
+ * The session whose journal to read: the running instance's, else the newest session listed. A loop
+ * with no pinned server lists no instances (`unavailable: no_server`) but still has its sessions.
+ */
+export function currentSession(loop?: Strategy): number | undefined {
+  const fromInstance = loop?.instances?.[0]?.session_num;
+  if (fromInstance !== undefined) return fromInstance;
+  if (loop?.status !== "running") return undefined;
+  const numbers = (loop.sessions ?? []).map((s) => s.number).filter((n): n is number => typeof n === "number");
+  return numbers.length ? Math.max(...numbers) : undefined;
+}
 /** `GET /servers/{name}/solana/overview`: the wallet's value, its deposits found on chain, and the result net of them. */
 export type Overview = {
   address?: string | null;

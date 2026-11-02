@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ServerContext } from "@/hooks/useServer";
 import { SolanaTrade } from "./SolanaTrade";
-import { TOKEN_MINTS, allowedTokens, chartTokens, limitRows, parseDecisions, signedUsd, walletRows } from "./solana";
+import { TOKEN_MINTS, allowedTokens, chartTokens, currentSession, limitRows, parseDecisions, signedUsd, walletRows } from "./solana";
 
 const mocks = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock("@/lib/api", () => ({ apiFetch: mocks.fetch }));
@@ -170,8 +170,8 @@ describe("SolanaTrade", () => {
     expect(host.querySelector('[data-deposit="withdrawsig5678"]')?.textContent).toContain("−$1.20");
     expect(mocks.fetch.mock.calls.every(([, init]) => !init)).toBe(true);
     expect(paths()).toEqual(expect.arrayContaining([
-      "/api/v1/agents/solana_trend_trader/strategies/daily_trend",
-      "/api/v1/agents/solana_trend_trader/strategies/daily_trend/sessions/2/journal",
+      "/api/v1/agents/solana_trend_trader/strategies/daily",
+      "/api/v1/agents/solana_trend_trader/strategies/daily/sessions/2/journal",
       "/api/v1/servers/FortPT%20VM-08/portfolio",
       "/api/v1/servers/FortPT%20VM-08/solana/overview",
       "/api/v1/servers/FortPT%20VM-08/dex/swaps?limit=25",
@@ -249,5 +249,19 @@ describe("SolanaTrade", () => {
     await render(null);
     expect(text()).toContain("Select a server");
     expect(paths().some((p) => p.includes("/servers/"))).toBe(false);
+  });
+
+  it("reads the newest session when the loop lists no instances (no server pinned)", async () => {
+    respond({ strategy: { ...strategy, unavailable: "no_server", instances: [], sessions: [{ number: 2 }, { number: 3 }] } });
+    await render();
+    expect(text()).toContain("Loop: running");
+    expect(text()).toContain("Session 3 · every 15 min");
+    expect(paths()).toContain("/api/v1/agents/solana_trend_trader/strategies/daily/sessions/3/journal");
+  });
+
+  it("reads no session from a stopped loop that lists no instances", () => {
+    expect(currentSession({ status: "stopped", instances: [], sessions: [{ number: 4 }] })).toBeUndefined();
+    expect(currentSession(undefined)).toBeUndefined();
+    expect(currentSession({ status: "running", instances: [{ session_num: 7 }], sessions: [{ number: 9 }] })).toBe(7);
   });
 });

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useServer } from "@/hooks/useServer";
 import { apiFetch, type CandleData } from "@/lib/api";
 import {
-  SOLANA_AGENT, SOLANA_CONNECTOR, SOLANA_LOOP, TOKEN_MINTS, allowedTokens, chartTokens, limitRows, n, parseDecisions, signedUsd, walletRows,
+  SOLANA_AGENT, SOLANA_CONNECTOR, SOLANA_LOOP, TOKEN_MINTS, allowedTokens, chartTokens, currentSession, limitRows, n, parseDecisions, signedUsd, walletRows,
   type Overview, type Portfolio, type Quote, type Strategy, type Swap,
 } from "./solana";
 import { CandleChart } from "./TradeParts";
@@ -95,7 +95,7 @@ export function SolanaTrade() {
     refetchInterval: 60000,
     retry: false,
   });
-  const session = loop?.instances?.[0]?.session_num;
+  const session = currentSession(loop);
   const journal = useQuery({
     queryKey: ["solana-trade", "journal", session],
     enabled: session !== undefined,
@@ -131,7 +131,7 @@ export function SolanaTrade() {
     <div className="flex flex-wrap items-center gap-3">
       <h1 className="text-xl font-semibold">Solana</h1>
       <span className="text-sm">{strategy.isLoading ? "Checking the loop…" : loop ? `Loop: ${running ? "running" : loop.status ?? "stopped"}` : "Loop not found"}</span>
-      {running && instance && <span className="text-sm">Session {instance.session_num ?? "—"} · {instance.tick_count ?? 0} ticks{frequency ? ` · every ${Math.round(frequency / 60)} min` : ""}</span>}
+      {running && session !== undefined && <span className="text-sm">Session {session}{instance ? ` · ${instance.tick_count ?? 0} ticks` : ""}{frequency ? ` · every ${Math.round(frequency / 60)} min` : ""}</span>}
       {loop?.unavailable === "no_server" && <span className="text-sm text-[var(--color-red)]">The loop has no server pinned, so it cannot swap.</span>}
       <span className={`ml-auto text-sm ${muted}`}>Read only: the loop trades, and it is started and stopped on the Agents page.</span>
     </div>
