@@ -34,6 +34,7 @@ import logging
 import math
 import time
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from condor.agents.quote_render import format_quote
@@ -1741,11 +1742,27 @@ async def _swap_base_price(input_data: dict[str, Any], client: Any) -> float:
     trading_pair = input_data.get("trading_pair") or ""
     if not trading_pair:
         raise ValueError("swap must name a trading_pair")
+    connector = input_data.get("connector", "") or ""
+
+    if "/" in connector:
+        # A Gateway connector (``jupiter/router``) is not a market-data connector: the
+        # price service answers "Connector jupiter/router not found", so a swap on it
+        # could never be priced and the gate refused every one. A quote prices it, and
+        # signs nothing.
+        swap = getattr(client, "gateway_swap", None)
+        if swap is None:
+            raise ValueError("Hummingbot Gateway swap client is unavailable")
+        amount = _amm_field(input_data.get("amount"), "amount")
+        quote = await swap.get_swap_quote(
+            connector=connector,
+            network=input_data.get("network") or "solana-mainnet-beta",
+            trading_pair=trading_pair,
+            side=str(input_data.get("side") or "SELL").upper(),
+            amount=Decimal(str(amount)),
+            slippage_pct=Decimal("1"),
+        )
+        return _positive_price(quote.get("price") if isinstance(quote, dict) else None)
 
     from condor.fetchers.market_data import fetch_current_price
 
-    return _positive_price(
-        await fetch_current_price(
-            client, input_data.get("connector", "") or "", trading_pair
-        )
-    )
+    return _positive_price(await fetch_current_price(client, connector, trading_pair))
