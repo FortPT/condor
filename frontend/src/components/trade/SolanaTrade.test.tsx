@@ -170,8 +170,8 @@ describe("SolanaTrade", () => {
     expect(host.querySelector('[data-deposit="withdrawsig5678"]')?.textContent).toContain("−$1.20");
     expect(mocks.fetch.mock.calls.every(([, init]) => !init)).toBe(true);
     expect(paths()).toEqual(expect.arrayContaining([
-      "/api/v1/agents/solana_dex_trader/strategies/swing",
-      "/api/v1/agents/solana_dex_trader/strategies/swing/sessions/2/journal",
+      "/api/v1/agents/solana_trend_trader/strategies/daily_trend",
+      "/api/v1/agents/solana_trend_trader/strategies/daily_trend/sessions/2/journal",
       "/api/v1/servers/FortPT%20VM-08/portfolio",
       "/api/v1/servers/FortPT%20VM-08/solana/overview",
       "/api/v1/servers/FortPT%20VM-08/dex/swaps?limit=25",
