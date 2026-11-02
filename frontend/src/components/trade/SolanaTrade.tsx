@@ -4,8 +4,8 @@ import { useState } from "react";
 import { useServer } from "@/hooks/useServer";
 import { apiFetch, type CandleData } from "@/lib/api";
 import {
-  SOLANA_AGENT, SOLANA_CONNECTOR, SOLANA_LOOP, TOKEN_MINTS, allowedTokens, chartTokens, currentSession, limitRows, n, parseDecisions, signedUsd, walletRows,
-  type Overview, type Portfolio, type Quote, type Strategy, type Swap,
+  SOLANA_AGENT, SOLANA_CONNECTOR, SOLANA_LOOP, TOKEN_MINTS, allowedTokens, chartTokens, currentSession, limitRows, n, parseDecisions, signedUsd, swapResults, walletRows,
+  type Overview, type Portfolio, type Quote, type Strategy, type Swap, type SwapResult,
 } from "./solana";
 import { CandleChart } from "./TradeParts";
 import { money, num } from "./tradeFormat";
@@ -28,6 +28,11 @@ const statusText = (status?: string | null) => {
 
 const tone = (value?: number | null) =>
   value === undefined || value === null || Math.abs(value) < 0.005 ? "" : value > 0 ? "text-[var(--color-green)]" : "text-[var(--color-red)]";
+
+const resultCell = (result?: SwapResult) =>
+  !result || result.kind === "none" ? "—" :
+    result.kind === "unknown" ? <span className={muted} title="Bought before the swaps shown here, so its cost is not known">n/a</span> :
+      <span className={tone(result.usd)}>{signedUsd(result.usd)}{result.pct === null ? "" : ` (${result.pct >= 0 ? "+" : "−"}${Math.abs(result.pct).toFixed(1)}%)`}</span>;
 
 const quotePrice = (price: number) => price.toLocaleString(undefined, { maximumFractionDigits: price >= 100 ? 2 : price >= 1 ? 3 : price >= 0.01 ? 4 : 8 });
 
@@ -118,6 +123,7 @@ export function SolanaTrade() {
   const instance = loop?.instances?.[0];
   const frequency = n(loop?.config?.frequency_sec);
   const rows = swaps.data?.swaps ?? [];
+  const results = swapResults(rows);
   const decisions = parseDecisions(journal.data?.content);
   const result = overview.data;
   const deposits = result?.deposits ?? [];
@@ -216,10 +222,11 @@ export function SolanaTrade() {
       {swaps.isLoading ? <p className={`text-sm ${muted}`}>Reading swaps…</p> :
         rows.length === 0 ? <p className={`text-sm ${muted}`} data-state="no-swaps">No swaps yet.</p> :
           <table className="w-full text-sm">
-            <thead><tr className={`text-left ${muted}`}><th>Time</th><th>Pair</th><th>Side</th><th>In</th><th>Out</th><th>Price</th><th>Status</th><th>Transaction</th></tr></thead>
+            <thead><tr className={`text-left ${muted}`}><th>Time</th><th>Pair</th><th>Side</th><th>In</th><th>Out</th><th>Price</th><th>Result</th><th>Status</th><th>Transaction</th></tr></thead>
             <tbody>{rows.map((s, i) => <tr key={s.transaction_hash ?? i}>
               <td>{when(s.timestamp)}</td><td>{s.trading_pair ?? "—"}</td><td>{String(s.side ?? "—").toUpperCase()}</td>
               <td>{num(s.input_amount) ?? "—"}</td><td>{num(s.output_amount) ?? "—"}</td><td>{num(s.price) ?? "—"}</td>
+              <td>{resultCell(s.transaction_hash ? results.get(s.transaction_hash) : undefined)}</td>
               <td>{statusText(s.status)}</td>
               <td>{s.transaction_hash ? <a className="underline" href={`https://solscan.io/tx/${encodeURIComponent(s.transaction_hash)}`} target="_blank" rel="noreferrer">{s.transaction_hash.slice(0, 8)}…</a> : "—"}</td>
             </tr>)}</tbody>

@@ -179,7 +179,7 @@ export function resultsOf(perf: Performance | undefined): Map<string, PerfTrade>
 /** The realized result of each sale, by the venue's order id (what the venue's own order history rows carry). */
 export function resultsByOrderId(perf: Performance | undefined): Map<string, PerfTrade> {
   const map = new Map<string, PerfTrade>();
-  for (const row of perf?.orders ?? []) if (row.order_id) map.set(row.order_id, row);
+  for (const row of perf?.orders ?? []) if (row.order_id !== null && row.order_id !== undefined && row.order_id !== "") map.set(String(row.order_id), row);
   return map;
 }
 
