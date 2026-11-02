@@ -63,6 +63,8 @@ export type Swap = {
   status?: string | null;
   side?: string | null;
   trading_pair?: string | null;
+  base_token?: string | null;
+  quote_token?: string | null;
   input_amount?: number | string | null;
   output_amount?: number | string | null;
   price?: number | string | null;
@@ -132,4 +134,55 @@ export function signedUsd(value?: number | null): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return "—";
   const cents = Math.abs(value).toFixed(2);
   return value >= 0.005 ? `+$${cents}` : value <= -0.005 ? `−$${cents}` : `$${cents}`;
+}
+
+export type SwapResult = { kind: "none" } | { kind: "unknown" } | { kind: "known"; usd: number; pct: number | null };
+
+const amount = (value?: number | string | null) => {
+  const parsed = typeof value === "string" ? Number(value) : value;
+  return typeof parsed === "number" && Number.isFinite(parsed) ? parsed : null;
+};
+
+/**
+ * What each confirmed swap earned, by transaction hash. Oldest first, one running average cost per token (priced in
+ * USDC): a buy adds to it and has no result; a sale realizes its USDC proceeds minus the average cost of the units sold.
+ * A sale of more than the swaps here show was bought (the wallet held it before) has no known cost, so it is "unknown".
+ */
+export function swapResults(swaps: Swap[]): Map<string, SwapResult> {
+  const out = new Map<string, SwapResult>();
+  const held = new Map<string, { units: number; cost: number }>();
+  const confirmed = swaps
+    .filter((s) => String(s.status ?? "").toUpperCase() === "CONFIRMED" && s.transaction_hash)
+    .map((s) => ({ s, at: new Date(typeof s.timestamp === "number" && s.timestamp < 1e12 ? s.timestamp * 1000 : (s.timestamp ?? 0)).getTime() }))
+    .sort((a, b) => (a.at || 0) - (b.at || 0));
+  for (const { s } of confirmed) {
+    const [pairBase, pairQuote] = String(s.trading_pair ?? "").split("-");
+    const base = s.base_token ?? pairBase;
+    const quote = s.quote_token ?? pairQuote;
+    const key = s.transaction_hash as string;
+    const side = String(s.side ?? "").toLowerCase();
+    const input = amount(s.input_amount);
+    const output = amount(s.output_amount);
+    if (!base || quote !== "USDC" || input === null || output === null || (side !== "buy" && side !== "sell")) {
+      out.set(key, side === "sell" ? { kind: "unknown" } : { kind: "none" });
+      continue;
+    }
+    const lot = held.get(base) ?? { units: 0, cost: 0 };
+    if (side === "buy") {
+      lot.units += output;
+      lot.cost += input;
+      held.set(base, lot);
+      out.set(key, { kind: "none" });
+      continue;
+    }
+    if (input > lot.units + 1e-9 || lot.units <= 0) {
+      held.set(base, { units: 0, cost: 0 });
+      out.set(key, { kind: "unknown" });
+      continue;
+    }
+    const cost = (lot.cost / lot.units) * input;
+    held.set(base, { units: lot.units - input, cost: lot.cost - cost });
+    out.set(key, { kind: "known", usd: output - cost, pct: cost > 0 ? ((output - cost) / cost) * 100 : null });
+  }
+  return out;
 }

@@ -95,6 +95,13 @@ describe("results by order", () => {
     expect(Array.from(resultsByOrderId(perf).keys())).toEqual(["x1"]);
   });
 
+  it("matches a numeric order id from the report to the venue's text id", () => {
+    const numeric = makePerformance("USD", {
+      orders: [{ time: 10, symbol: "A", order_id: 12345 as unknown as string, client_oid: null, pnl: 2, pnl_pct: 20, closed_position: true, reason: null }],
+    });
+    expect(resultFor("sell", "12345", resultsByOrderId(numeric))).toEqual({ kind: "known", pnl: 2, pct: 20 });
+  });
+
   it("gives a sale its amount, a buy nothing, and an unknown sale its reason", () => {
     const results = resultsOf(perf);
     expect(resultFor("sell", "x1-10", results)).toEqual({ kind: "known", pnl: 2, pct: 20 });
