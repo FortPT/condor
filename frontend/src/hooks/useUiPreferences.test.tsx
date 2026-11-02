@@ -65,7 +65,7 @@ describe("useHideHummingbot", () => {
 
 describe("DisplaySettings", () => {
   it("shows the switch off, and turning it on saves the preference and updates every reader", async () => {
-    request.fetch.mockImplementation((path: string, init?: RequestInit) =>
+    request.fetch.mockImplementation((_path: string, init?: RequestInit) =>
       Promise.resolve(init?.method === "PATCH" ? { [HIDE_HUMMINGBOT_PAGES]: true } : {}));
     await render(<><Probe /><DisplaySettings /></>);
     const box = host.querySelector("input[type=checkbox]") as HTMLInputElement;
