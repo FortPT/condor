@@ -12,9 +12,10 @@ import { TelemetryConsentBanner } from "@/components/TelemetryConsentBanner";
 import { ChatProvider } from "@/hooks/useChat";
 import { useCredentials } from "@/hooks/useCredentials";
 import { usePrefetchData } from "@/hooks/usePrefetchData";
+import { useHideHummingbot } from "@/hooks/useUiPreferences";
 import { useServer } from "@/hooks/useServer";
 import { useTheme } from "@/hooks/useTheme";
-import { NAV_ITEMS, FULL_BLEED_ROUTES } from "@/lib/nav";
+import { FULL_BLEED_ROUTES, visibleNavItems } from "@/lib/nav";
 import { routeFacts } from "@/lib/pageFacts";
 import { useViewFacts } from "@/lib/viewFacts";
 import { CurrencySelector } from "./CurrencySelector";
@@ -102,6 +103,7 @@ function AppShellBody() {
   // rendering (FEAT-060) — at send time, out of the cache the page fetched
   // through, rather than from eight components each pushing their state here.
   const queryClient = useQueryClient();
+  const { hidden: hideHummingbot } = useHideHummingbot();
   useViewFacts(() => routeFacts(pathname, search, queryClient));
 
   return (
@@ -116,7 +118,7 @@ function AppShellBody() {
           </NavLink>
 
           <nav className="flex items-center">
-            {NAV_ITEMS.map(({ to, icon: Icon, label }) => (
+            {visibleNavItems(hideHummingbot).map(({ to, icon: Icon, label }) => (
               <NavLink
                 key={to}
                 to={to}

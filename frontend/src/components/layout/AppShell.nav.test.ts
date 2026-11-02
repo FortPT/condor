@@ -19,7 +19,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { FULL_BLEED_ROUTES, NAV_ITEMS } from "@/lib/nav";
+import { FULL_BLEED_ROUTES, HUMMINGBOT_ROUTES, NAV_ITEMS, visibleNavItems } from "@/lib/nav";
 
 describe("the nav", () => {
   it("has neither a fleet nor a floor entry: both are somebody else's report now", () => {
@@ -54,5 +54,17 @@ describe("full bleed", () => {
     // And the fleet is not a route with a body any more (FEAT-114), so a
     // layout rule for it would be a rule about a redirect.
     expect(FULL_BLEED_ROUTES as readonly string[]).not.toContain("/fleet");
+  });
+});
+
+describe("hiding the Hummingbot pages", () => {
+  it("drops only the pages that drive Hummingbot bots, and keeps every other entry in order", () => {
+    expect(HUMMINGBOT_ROUTES).toEqual(["/dex", "/bots"]);
+    const shown: string[] = visibleNavItems(true).map((item) => item.to);
+    expect(shown).toEqual(["/", "/portfolio", "/trade", "/routines", "/settings"]);
+  });
+
+  it("offers the whole nav when nothing is hidden", () => {
+    expect(visibleNavItems(false)).toBe(NAV_ITEMS);
   });
 });

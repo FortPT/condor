@@ -8,6 +8,7 @@ import { SolanaTrade } from "@/components/trade/SolanaTrade";
 import { flowVenueKey } from "@/components/trade/nativeFlows";
 import { NATIVE_VENUES, isNativeVenueKey, type NativeVenueKey } from "@/components/trade/nativeVenue";
 import { useCredentials, useCryptoExchangeStatus } from "@/hooks/useCredentials";
+import { useHideHummingbot } from "@/hooks/useUiPreferences";
 import { useServer } from "@/hooks/useServer";
 import { CreateExecutor } from "@/pages/CreateExecutor";
 
@@ -16,20 +17,23 @@ export function Trade() {
   const { server } = useServer();
   const { hasKeys, credentials, isLoading: keysLoading } = useCredentials();
   const status = useCryptoExchangeStatus();
+  const { hidden: hideHummingbot, loading: prefsLoading } = useHideHummingbot();
   // `workspace=exchange` has always meant the Hummingbot exchange workspace; `app` is the retired App link.
-  const workspace = params.get("workspace") === "app" ? "crypto-exchange" : params.get("workspace");
-  const explicitExchange = workspace === "hummingbot" || workspace === "exchange" ||
-    params.has("type") || params.has("connector") || params.has("pair");
+  const requested = params.get("workspace") === "app" ? "crypto-exchange" : params.get("workspace");
+  // With the Hummingbot pages hidden, its links land on Crypto.com instead of on the hidden terminal.
+  const workspace = hideHummingbot && (requested === "hummingbot" || requested === "exchange") ? "crypto-exchange" : requested;
+  const explicitExchange = !hideHummingbot && (workspace === "hummingbot" || workspace === "exchange" ||
+    params.has("type") || params.has("connector") || params.has("pair"));
   // Revolut X and Trading 212 are only ever opened explicitly: they never become the default.
   const nativeWorkspace = isNativeVenueKey(workspace) ? workspace : null;
   // The Solana wallet is read-only here too: the Gateway signs for the loop, never from this page.
   const solanaWorkspace = workspace === "solana";
-  const cryptoWorkspace = !nativeWorkspace && !solanaWorkspace && (workspace === "crypto-exchange" ||
+  const cryptoWorkspace = !nativeWorkspace && !solanaWorkspace && (workspace === "crypto-exchange" || hideHummingbot ||
     (!explicitExchange && !!status.data?.connected && credentials.length === 0));
-  const loading = !workspace && !explicitExchange && (keysLoading || status.isLoading);
+  const loading = !workspace && !explicitExchange && (keysLoading || status.isLoading || prefsLoading);
 
   // CreateExecutor consumes connector/pair; retain the account choice afterward.
-  if (!workspace && !params.has("type") && (params.has("connector") || params.has("pair"))) {
+  if (!hideHummingbot && !workspace && !params.has("type") && (params.has("connector") || params.has("pair"))) {
     const nextParams = new URLSearchParams(params);
     nextParams.set("workspace", "hummingbot");
     return <Navigate to={{ pathname: "/trade", search: `?${nextParams}` }} replace />;
@@ -52,7 +56,7 @@ export function Trade() {
       {Object.values(NATIVE_VENUES).map((venue) =>
         <button key={venue.key} className="rounded border border-[var(--color-border)] px-3 py-2 text-sm aria-pressed:bg-[var(--color-surface-hover)]" aria-pressed={!loading && nativeWorkspace === venue.key} onClick={() => selectWorkspace(venue.key)}>{venue.title}</button>)}
       <button className="rounded border border-[var(--color-border)] px-3 py-2 text-sm aria-pressed:bg-[var(--color-surface-hover)]" aria-pressed={!loading && solanaWorkspace} onClick={() => selectWorkspace("solana")}>Solana</button>
-      <button className="rounded border border-[var(--color-border)] px-3 py-2 text-sm aria-pressed:bg-[var(--color-surface-hover)]" aria-pressed={!loading && !cryptoWorkspace && !nativeWorkspace && !solanaWorkspace} onClick={() => selectWorkspace("hummingbot")}>Hummingbot</button>
+      {!hideHummingbot && <button className="rounded border border-[var(--color-border)] px-3 py-2 text-sm aria-pressed:bg-[var(--color-surface-hover)]" aria-pressed={!loading && !cryptoWorkspace && !nativeWorkspace && !solanaWorkspace} onClick={() => selectWorkspace("hummingbot")}>Hummingbot</button>}
     </div>
     {loading ? <p role="status" className="p-6 text-sm">Loading trading accounts…</p> :
       solanaWorkspace ? <div className="min-h-0 flex-1 space-y-4 overflow-auto p-6"><SolanaTrade /></div> :
