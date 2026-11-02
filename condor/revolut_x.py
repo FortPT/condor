@@ -48,6 +48,7 @@ from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from urllib.parse import urlencode
 
 from condor import crypto_com_scorecard as scorecard
+from condor import trend_signal
 from condor.fsutil import atomic_write_json
 from condor.paths import data_dir
 
@@ -841,6 +842,16 @@ class RevolutXService:
                 for r in series[-count:]
             ],
         }
+
+    async def trend(self, user_id):
+        """The slow daily signal for the bot's coins, from this venue's own daily candles."""
+
+        async def fetch(coin):
+            return (await self.candles(user_id, coin, "1D", 300))["candles"]
+
+        return await trend_signal.report(
+            trend_signal.TREND_50, fetch, _read_ledger(user_id).get("positions") or {}
+        )
 
     async def book(self, user_id, symbol, depth=10):
         market = await self._market_for(symbol)
