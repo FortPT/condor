@@ -56,6 +56,38 @@ class Base(unittest.IsolatedAsyncioTestCase):
 
 
 class ChangeTests(Base):
+    def test_history_reaching_before_the_window_starts_from_the_point_at_its_start(
+        self,
+    ):
+        # The live case: the history held 42 hours, so its first point (1.67 USD,
+        # before a 29.79 USD deposit into the Solana wallet) was read as the value at
+        # the start of a 24-hour window, and the deposit showed as a 22% gain.
+        out = self.compute(
+            hb(
+                (SINCE - 30 * 3600, 1.67),
+                (SINCE - 600, 31.4),
+                (SINCE + 3600, 31.0),
+                (NOW, 30.6),
+            ),
+            {},
+        )
+        self.assertTrue(out["available"])
+        self.assertEqual(out["start_usd"], 31.4)
+        self.assertEqual(out["change_usd"], -0.8)
+        self.assertEqual(out["change_pct"], round(-0.8 / 31.4 * 100, 2))
+
+    def test_a_point_exactly_at_the_window_start_is_the_start(self):
+        out = self.compute(hb((SINCE - 100, 5.0), (SINCE, 20.0), (NOW, 21.0)), {})
+        self.assertEqual(out["start_usd"], 20.0)
+        self.assertEqual(out["change_usd"], 1.0)
+
+    def test_a_history_that_only_begins_after_the_window_still_needs_a_point_near_its_start(
+        self,
+    ):
+        out = self.compute(hb((SINCE + 10 * 3600, 20.0), (NOW, 21.0)), {})
+        self.assertFalse(out["available"])
+        self.assertEqual(out["reason"], "different_start")
+
     def test_a_clean_window_is_the_change_net_of_the_recorded_flows(self):
         # 9 + 50 at the start, 9.5 + 70 now; 15 of the 20 gained on the exchange was
         # a deposit, so the trading result is 20.5 - 15 = 5.5.

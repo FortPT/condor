@@ -101,7 +101,13 @@ def compute(
 
     points = sorted(hummingbot_points, key=lambda p: p.timestamp)
     if points and (points[0].total_usd > 0 or points[-1].total_usd > 0):
-        first, last = points[0], points[-1]
+        # The history can reach back before the window (the server hands over its
+        # newest snapshots, about 42 hours of them for a 1D range), so the value at
+        # the window start is the last point at or before it, never the first point
+        # fetched: a deposit made before the window is not a gain inside it.
+        at_or_before = [p for p in points if p.timestamp <= since]
+        first = at_or_before[-1] if at_or_before else points[0]
+        last = points[-1]
         if first.timestamp > deadline or first.total_usd <= 0:
             return unavailable("different_start", HUMMINGBOT)
         start += float(first.total_usd)
