@@ -23,7 +23,7 @@ ROW = {
     "quote_token": "USDC",
     "transaction_hash": "5abc",
     "timestamp": "2026-11-01T00:10:00Z",
-    "wallet_address": "85maohASGbekdraAsBkX9XLXppwmFDpF9nnboKPCSqbn",
+    "wallet_address": "FakeWa11etFakeWa11etFakeWa11etFakeWa11etFak1",
     "signature_blob": "must not leave the server",
 }
 

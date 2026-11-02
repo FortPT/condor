@@ -12,7 +12,7 @@ from condor import solana_wallet as sw
 from condor.web.auth import get_current_user
 from condor.web.models import WebUser
 
-WALLET = "85maohASGbekdraAsBkX9XLXppwmFDpF9nnboKPCSqbn"
+WALLET = "FakeWa11etFakeWa11etFakeWa11etFakeWa11etFak1"
 PHANTOM = "Bnvnmj27khnr6yxtV6RzNamaXJT838NTi31d3Kab24Nw"
 USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 

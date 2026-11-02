@@ -144,7 +144,7 @@ def test_slippage_zero_is_a_real_value():
 
 def test_a_named_wallet_is_refused_when_only_the_default_may_sign():
     call = _swap()
-    call["input"]["wallet_address"] = "BWxBgc9VutumXPV4DD4WyBkJJxrTCfcpFvY79gYrJpea"
+    call["input"]["wallet_address"] = "Gateway1FakeWa11etGateway1FakeWa11etGateway1"
     assert _check(_engine(), call)[0]
     allowed, reason = _check(_engine(swap_default_wallet_only=True), call)
     assert not allowed and "default wallet" in reason
