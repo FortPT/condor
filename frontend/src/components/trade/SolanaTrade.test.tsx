@@ -41,7 +41,7 @@ const swap = {
   price: 94, transaction_hash: "5abcdefghijkl", timestamp: "2026-11-01T00:10:00Z",
 };
 const overview = {
-  address: "85maohASGbekdraAsBkX9XLXppwmFDpF9nnboKPCSqbn", value_usd: 31.4, deposits_usd: 31.0, since_start_usd: 0.4, today_usd: -0.1,
+  address: "FakeWa11etFakeWa11etFakeWa11etFakeWa11etFak1", value_usd: 31.4, deposits_usd: 31.0, since_start_usd: 0.4, today_usd: -0.1,
   deposits: [{ signature: "depositsig1234", ts: 1_793_489_183, usd: 29.75 }, { signature: "withdrawsig5678", ts: 1_793_485_199, usd: -1.2 }],
 };
 const quotes = {
@@ -149,7 +149,7 @@ describe("SolanaTrade", () => {
     expect(text()).toContain("Session 2 · 3 ticks · every 15 min");
     const metric = (label: string) => host.querySelector(`[data-metric="${label}"]`)?.textContent ?? "";
     expect(metric("Wallet value")).toMatch(/31[.,]40 USD/);
-    expect(metric("Wallet value")).toContain("85ma…Sqbn");
+    expect(metric("Wallet value")).toContain("Fake…Fak1");
     expect(metric("Deposited")).toMatch(/31[.,]00 USD/);
     expect(metric("Result since start")).toContain("+$0.40");
     expect(metric("Result since start")).toContain("+1.29% of deposits");
