@@ -13,6 +13,7 @@ from condor.agents.risk import (
     RiskLimits,
     RiskState,
     _sol_in_state,
+    _swap_base_price,
     _wallet_sol_balance,
 )
 
@@ -264,3 +265,79 @@ async def test_a_failing_or_missing_client_gives_no_balance():
     assert await _wallet_sol_balance(None) is None
     failing = _Portfolio(error=RuntimeError("gateway down"))
     assert await _wallet_sol_balance(_Client(failing)) is None
+
+
+# ── Pricing a swap for the gate ──
+
+
+class _GatewaySwap:
+    def __init__(self, answer=None):
+        self.answer, self.calls = answer, []
+
+    async def get_swap_quote(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.answer
+
+
+class _GatewayClient:
+    def __init__(self, swap):
+        self.gateway_swap = swap
+
+
+def _run(coro):
+    import asyncio
+
+    return asyncio.run(coro)
+
+
+def test_a_gateway_swap_is_priced_from_a_quote_not_the_spot_price_service(monkeypatch):
+    """``jupiter/router`` is no market-data connector: the price service answers
+    "Connector jupiter/router not found", so every live swap was refused as unpriced."""
+
+    async def refused(*args, **kwargs):
+        raise AssertionError(
+            "the spot price service must not be asked for a Gateway swap"
+        )
+
+    monkeypatch.setattr("condor.fetchers.market_data.fetch_current_price", refused)
+    swap = _GatewaySwap({"price": 94.12, "price_impact_pct": 0.0})
+    price = _run(
+        _swap_base_price(
+            _swap(side="SELL", amount="0.127")["input"], _GatewayClient(swap)
+        )
+    )
+    assert price == 94.12
+    (call,) = swap.calls
+    assert call["connector"] == "jupiter/router"
+    assert call["network"] == "solana-mainnet-beta"
+    assert call["trading_pair"] == "SOL-USDC" and call["side"] == "SELL"
+    assert str(call["amount"]) == "0.127"
+
+
+def test_a_gateway_quote_without_a_usable_price_leaves_the_swap_unpriced():
+    for answer in (None, {}, {"price": 0}, {"price": "n/a"}, {"price": -1}):
+        with pytest.raises(ValueError):
+            _run(
+                _swap_base_price(_swap()["input"], _GatewayClient(_GatewaySwap(answer)))
+            )
+
+
+def test_a_client_without_gateway_swap_leaves_a_gateway_swap_unpriced():
+    class Bare:
+        pass
+
+    with pytest.raises(ValueError, match="Gateway swap client"):
+        _run(_swap_base_price(_swap()["input"], Bare()))
+
+
+def test_a_market_data_connector_is_still_priced_by_the_price_service(monkeypatch):
+    seen = []
+
+    async def fake(client, connector, pair):
+        seen.append((connector, pair))
+        return 3.5
+
+    monkeypatch.setattr("condor.fetchers.market_data.fetch_current_price", fake)
+    call = _swap()["input"] | {"connector": "binance"}
+    assert _run(_swap_base_price(call, object())) == 3.5
+    assert seen == [("binance", "SOL-USDC")]
