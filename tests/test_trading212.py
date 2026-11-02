@@ -2298,8 +2298,7 @@ class WholeAccountTests(Base):
         self.svc.held["MRNA_US_EQ"] = position("MRNA_US_EQ", "2", "100", "150")
         await self.svc.set_excluded(1, ["MRNA"])
         view = await self.svc.portfolio(1)
-        (holding,) = view["holdings"]
-        self.assertEqual(holding["token"], "MRNA")
+        holding = next(h for h in view["holdings"] if h["token"] == "MRNA")
         self.assertAlmostEqual(holding["value_usd"], 200.0, places=6)
         self.assertAlmostEqual(holding["gain_usd"], 200 - 150 * 1.10, places=6)
         self.assertAlmostEqual(
@@ -2310,7 +2309,8 @@ class WholeAccountTests(Base):
         self.svc.instruments_raw = INSTRUMENTS + [self.MRNA]
         self.svc.held["MRNA_US_EQ"] = position("MRNA_US_EQ", "2", "100", "0")
         await self.svc.set_excluded(1, ["MRNA"])
-        (holding,) = (await self.svc.portfolio(1))["holdings"]
+        holdings = (await self.svc.portfolio(1))["holdings"]
+        holding = next(h for h in holdings if h["token"] == "MRNA")
         self.assertIsNone(holding["gain_usd"])
         self.assertIsNone(holding["gain_pct"])
 
@@ -2318,7 +2318,22 @@ class WholeAccountTests(Base):
         view = await self.svc.portfolio(1)
         self.assertEqual(view["excluded_value_usd"], 0.0)
         self.assertEqual(view["excluded_tokens"], [])
-        self.assertEqual(view["holdings"], [])
+        # No exclusion list and no bot positions: every account position is the owner's own.
+        held = {b["token"] for b in view["balances"] if b["token"] != "EUR"}
+        self.assertEqual({h["token"] for h in view["holdings"]}, held)
+        self.assertTrue(held)
+
+    async def test_a_position_the_bot_holds_is_not_listed_as_the_owners(self):
+        before = await self.svc.portfolio(1)
+        tokens = {h["token"] for h in before["holdings"]}
+        mine = sorted(tokens)[0]
+        self.set_ledger(
+            positions={mine: {"units": "1", "cost": "10"}},
+        )
+        self.svc._cache.clear()
+        after = await self.svc.portfolio(1)
+        self.assertNotIn(mine, {h["token"] for h in after["holdings"]})
+        self.assertEqual({h["token"] for h in after["holdings"]}, tokens - {mine})
 
 
 class FlowsTests(unittest.IsolatedAsyncioTestCase):
