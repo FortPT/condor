@@ -146,6 +146,15 @@ async def candles(
         reject(error)
 
 
+@router.get("/trend")
+async def trend(user: WebUser = Depends(get_current_user)):
+    """The slow daily trend signal and what the bot holds (read-only, places nothing)."""
+    try:
+        return await service.trend(user.id)
+    except ValueError as error:
+        reject(error)
+
+
 @router.get("/book")
 async def book(
     symbol: str = Query(..., max_length=24),

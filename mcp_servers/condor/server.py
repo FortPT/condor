@@ -1472,6 +1472,7 @@ async def crypto_com_exchange(
         "predict",
         "scorecard",
         "maker_stats",
+        "trend",
     ],
     side: Literal["buy", "sell"] = "buy",
     symbol: str = "",
@@ -1505,6 +1506,10 @@ async def crypto_com_exchange(
     (verdict trade|pass, target_pct, stop_pct, horizon_hours, short note); it
     only logs a call and never trades. scorecard: how the logged calls scored against
     real prices after costs (it scores the calls, not the trades actually placed).
+    trend: the slow daily signal for BTC and ETH (breakout: long after a close above
+    the prior 20-day high, flat after a close below the prior 10-day low) with what
+    the bot holds and the action that follows (buy, sell, hold, none); computed in
+    code from closed daily candles, it places nothing.
 
     Optional maker mode (preview and order): `mode="maker"` places a POST-ONLY limit
     order at the best bid (buy) or best ask (sell), never through the touch, waits up
@@ -1614,6 +1619,7 @@ async def revolut_x(
         "reconcile",
         "predict",
         "scorecard",
+        "trend",
     ],
     side: Literal["buy", "sell"] = "buy",
     symbol: str = "",
@@ -1648,6 +1654,10 @@ async def revolut_x(
     `symbol` (verdict trade|pass, target_pct, stop_pct, horizon_hours, short note); it
     only logs a call and never trades. scorecard: how the logged calls scored against
     real prices after costs (it scores the calls, not the trades actually placed).
+    trend: the slow daily signal for BTC and ETH (long while the last closed day is
+    above its 50-day average) with what the bot holds and the action that follows
+    (buy, sell, hold, none); computed in code from closed daily candles, it places
+    nothing.
 
     The owner generates the signing key, saves the API key, syncs the allocation and
     enables trading in Settings. These tools cannot change credentials, keys, sync or

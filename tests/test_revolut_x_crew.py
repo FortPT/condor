@@ -392,6 +392,7 @@ def test_native_tool_exposes_no_key_credentials_sync_enable_or_limit_mutation():
         "reconcile",
         "predict",
         "scorecard",
+        "trend",
     }
     assert {arg.arg for arg in tool.args.args} == {
         "action",
@@ -435,6 +436,7 @@ def test_only_order_is_dangerous_and_the_reads_are_read_only(name):
         "preview",
         "predict",
         "scorecard",
+        "trend",
     ):
         assert not is_dangerous_tool_call(call(action)), action
         assert not is_mutating_tool_call(call(action)), action

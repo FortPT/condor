@@ -123,6 +123,7 @@ def test_crypto_com_exchange_schema_exposes_no_credential_or_enable_arguments():
         "predict",
         "scorecard",
         "maker_stats",
+        "trend",
     }
     assert not {"api_key", "api_secret", "enabled", "user_id"} & properties.keys()
     # Maker mode is opt-in per call; the owner switch is not an MCP argument.
@@ -153,6 +154,7 @@ def test_revolut_x_schema_exposes_no_credential_key_or_enable_arguments():
         "reconcile",
         "predict",
         "scorecard",
+        "trend",
     }
     assert (
         not {

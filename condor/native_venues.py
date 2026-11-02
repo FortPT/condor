@@ -41,7 +41,7 @@ VENUES: tuple[NativeVenue, ...] = (
         key="crypto_com_exchange",
         label="Crypto.com",
         module="condor.crypto_com_exchange",
-        agents=("crypto_com_exchange_trader",),
+        agents=("crypto_com_exchange_trader", "crypto_com_trend_trader"),
         unvalued_note=(
             "Crypto.com App could not be valued. Its holdings are excluded from "
             "this total; check the Crypto.com page and retry."
@@ -51,7 +51,7 @@ VENUES: tuple[NativeVenue, ...] = (
         key="revolut_x",
         label="Revolut X",
         module="condor.revolut_x",
-        agents=("revolut_x_trader",),
+        agents=("revolut_x_trader", "revolut_x_trend_trader"),
         unvalued_note=(
             "Revolut X could not be valued. Its holdings are excluded from this "
             "total; check the Revolut X settings and retry."

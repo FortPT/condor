@@ -610,6 +610,7 @@ def is_mutating_tool_call(tool_call: dict[str, Any]) -> bool:
                 "preview",
                 "predict",
                 "scorecard",
+                "trend",
             },
         )
 

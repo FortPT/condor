@@ -396,7 +396,7 @@ def test_revolut_x_is_registered_once_and_is_a_real_valued_account():
     assert [v.key for v in native_venues.VENUES].count("revolut_x") == 1
     assert REVOLUT.label == "Revolut X"
     assert REVOLUT.module == "condor.revolut_x"
-    assert REVOLUT.agents == ("revolut_x_trader",)
+    assert REVOLUT.agents == ("revolut_x_trader", "revolut_x_trend_trader")
     assert REVOLUT in native_venues.account_venues()
     assert "Revolut X" in ph.SOURCES and ph.REVOLUT == "Revolut X"
     assert "Revolut X could not be valued" in REVOLUT.unvalued_note
