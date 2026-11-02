@@ -1,9 +1,9 @@
 /** Pure helpers and shapes for the read-only Solana Trade tab. */
 import { money, num } from "./tradeFormat";
 
-/** The agent and loop that trade the Gateway's Solana wallet. */
-export const SOLANA_AGENT = "solana_dex_trader";
-export const SOLANA_LOOP = "swing";
+/** The agent and loop that trade the Gateway's Solana wallet: the slow daily SOL trend crew (the old swing crew is retired). */
+export const SOLANA_AGENT = "solana_trend_trader";
+export const SOLANA_LOOP = "daily_trend";
 export const SOLANA_CONNECTOR = "solana-mainnet-beta";
 /**
  * Token mints for the chart: the DEX candle feed finds a pool by the base token's address, not its
