@@ -1784,6 +1784,9 @@ class RevolutXTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(preview["taker_fee_pct"], "0.09")
         self.assertEqual(preview["fee_source"], "estimate")
         self.assertIn("ESTIMATE", preview["fee_note"])
+        # Below $10K of 30-day volume the maker fee equals the taker fee: never "maker 0%".
+        self.assertNotIn("maker 0%", preview["fee_note"])
+        self.assertIn("same below $10K", preview["fee_note"])
         spread = (Decimal("3.003") - Decimal("3.0")) / Decimal("3.003") * 100
         allowance = Decimal("0.02") / Decimal(preview["notional_eur"]) * 100
         self.assertEqual(
