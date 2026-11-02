@@ -294,6 +294,23 @@ def test_one_venue_failing_is_a_note_and_hides_nothing_else():
     assert result.notes == [EXCHANGE.unvalued_note]
 
 
+def test_a_failed_valuation_logs_why_not_just_the_class(caplog):
+    services = {
+        "crypto_com_exchange": FakeService(error=ValueError("Crypto.com unavailable")),
+    }
+    with caplog.at_level("WARNING", logger="condor.native_accounts"):
+        run(na.overview(1, services=services, now=T0))
+    assert "Crypto.com overview unavailable (ValueError: Crypto.com unavailable)" in (
+        caplog.text
+    )
+
+
+def test_an_error_without_a_message_logs_its_class_and_a_long_one_is_capped():
+    assert na._why(ValueError()) == "ValueError"
+    assert na._why(ValueError("x" * 500)) == "ValueError: " + "x" * 120
+    assert na._why(RuntimeError("a\nb")) == "RuntimeError: a b"
+
+
 # ── the chat overview ──
 
 
