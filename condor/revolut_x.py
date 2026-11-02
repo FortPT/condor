@@ -85,7 +85,9 @@ FEE_HEADROOM = Decimal("0.01")
 ORDER_POLLS = 10
 ORDER_POLL_WAIT_SEC = 1.0
 # Revolut X publishes no fee endpoint. Until a real fill reports the truth the cost is
-# an ESTIMATE: the published EEA taker rate (maker is 0%). Always labelled as one.
+# an ESTIMATE: the published EEA taker rate. Always labelled as one. The maker rate is the
+# SAME 0.09% until the rolling 30-day volume reaches $10K (then 0%), so a resting order
+# saves the spread, not the fee.
 PUBLISHED_TAKER_FEE_PCT = Decimal("0.09")
 # Revolut X rounds EUR amounts and EUR fees to the cent. A real 1 EUR round trip (BTC/EUR,
 # 2026-10-28) lost 0.02 EUR (about 2%) against a modelled 0.19%. Assume up to this much
@@ -378,8 +380,9 @@ def taker_rate(ledger):
         "source": "estimate",
         "note": (
             f"ESTIMATE: Revolut X's published EEA taker fee of "
-            f"{PUBLISHED_TAKER_FEE_PCT}% (maker 0%); the real rate is confirmed "
-            "only by a real fill"
+            f"{PUBLISHED_TAKER_FEE_PCT}% (the maker fee is the same below $10K of "
+            "30-day volume, so a resting order saves the spread, not the fee); the "
+            "real rate is confirmed only by a real fill"
         ),
     }
 
