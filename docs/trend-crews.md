@@ -10,6 +10,7 @@ buys and the owner's enable switch) stay authoritative.
 |---|---|---|---|
 | Revolut X | `revolut_x_trend_trader` | long while the last closed day is above its 50-day average | BTC, ETH |
 | Crypto.com | `crypto_com_trend_trader` | long after a close above the prior 20-day high, flat after a close below the prior 10-day low | BTC, ETH |
+| Solana wallet | `solana_trend_trader` | long while the last closed day is above its 50-day average; flat means USDC | SOL |
 
 ## The signal
 
@@ -35,3 +36,15 @@ The loop (`daily`) ticks every four hours; the signal changes at most once a day
 do nothing and a missed tick costs hours. Entries are about 35% of the bot's equity per coin.
 Starting a crew is an owner action. If the signal is already long when the loop first runs and
 the bot holds nothing, the rule buys.
+
+## Solana (`solana_trend_trader`)
+
+The Gateway's default Solana wallet holds SOL while the rule says long and USDC while it says
+flat. `solana_trend` (read-only, no arguments; `GET /api/v1/solana/trend`) reads 300 daily
+SOL-USDT candles through the Hummingbot server and the wallet's SOL and USDC from its portfolio
+state, and answers the signal plus a plan: `sell_sol` (sell the SOL above the 0.02 SOL fee
+reserve), `buy_sol` (spend the USDC), `hold` or `none` (no data). The swaps still go through the
+code-enforced swap policy (SOL and USDC only, at most 12 USDC per swap, slippage stated and at most
+1%, the fee reserve, the default wallet only), one quoted swap per tick, so moving a whole wallet
+takes a few hourly ticks. The first time the wallet receives USDC the network charges about
+0.002 SOL of token-account rent. Swaps may count as sales for tax purposes where you live.

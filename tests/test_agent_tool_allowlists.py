@@ -71,6 +71,7 @@ RESTRICTED_CREW = {
     # Slow daily-signal crews: the rule is computed in code, so no analyst or reviewer.
     "revolut_x_trend_trader",
     "crypto_com_trend_trader",
+    "solana_trend_trader",
     # Swaps through code-enforced limits (tests/test_swap_policy.py); no framework admin.
     "solana_dex_trader",
 }

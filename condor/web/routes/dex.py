@@ -19,7 +19,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from condor import dex_candles
-from condor.web.auth import require_owner, require_server_access
+from condor.web.auth import (
+    check_server_access,
+    get_current_user,
+    require_owner,
+    require_server_access,
+)
 from condor.web.models import WebUser
 from condor.web.routes._errors import upstream_error
 from config_manager import get_config_manager
@@ -345,6 +350,71 @@ async def solana_overview(
     result = solana_wallet.overview(state, value)
     solana_wallet.save_state(state)
     return result
+
+
+@router.get("/solana/trend")
+async def solana_trend(user: WebUser = Depends(get_current_user)):
+    """The slow daily SOL signal and what the default Solana wallet should do about it.
+
+    Read-only: daily SOL-USDT candles through the Hummingbot server, the wallet's SOL and
+    USDC from its portfolio state, and a plan (``sell_sol``, ``buy_sol``, ``hold`` or
+    ``none``). It places nothing and never names the wallet address.
+    """
+    import time
+
+    from condor import solana_wallet, trend_signal
+    from condor.fetchers.market_data import fetch_historical_candles
+
+    cm = get_config_manager()
+    name = cm.get_default_server()
+    if not name:
+        raise HTTPException(
+            status_code=409, detail="No default Hummingbot server is set"
+        )
+    check_server_access(user.id, name)
+    now = time.time()
+    try:
+        client = await cm.get_client(name)
+        rows = await fetch_historical_candles(
+            client,
+            "binance",
+            "SOL-USDT",
+            "1d",
+            start_time=int(now - 310 * 86400),
+            end_time=int(now),
+            limit=300,
+            fallback_on_error=True,
+        )
+        state = await client.portfolio.get_state()
+    except Exception as e:
+        raise upstream_error("Failed to read SOL candles or the Solana wallet", e)
+    bars = trend_signal.closed_daily(trend_signal.from_normalized(rows), now)
+    coin = {
+        "coin": "SOL",
+        **trend_signal.evaluate(trend_signal.SOL_TREND_50, bars, now),
+    }
+    balances = solana_wallet.balances_from_portfolio(state)
+    sol = balances.get("SOL", {"units": 0.0, "value": 0.0})
+    usdc = balances.get("USDC", {"units": 0.0, "value": 0.0})
+    price = (
+        sol["value"] / sol["units"] if sol["units"] > 0 and sol["value"] > 0 else None
+    )
+    price = price or coin.get("close")
+    return {
+        "rule": trend_signal.SOL_TREND_50.key,
+        "rule_text": trend_signal.SOL_TREND_50.label,
+        "coin": coin,
+        "wallet": {
+            "sol_units": round(sol["units"], 6),
+            "sol_value_usd": round(sol["value"], 2),
+            "usdc_value_usd": round(usdc["value"], 2),
+            "sol_price_usd": round(price, 4) if price else None,
+        },
+        "plan": trend_signal.solana_plan(
+            coin["signal"], sol["units"], usdc["value"], price
+        ),
+        "note": trend_signal.SOLANA_NOTE,
+    }
 
 
 _QUOTE_TOKEN_RE = re.compile(r"^[A-Za-z0-9]{2,12}$")

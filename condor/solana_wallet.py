@@ -232,3 +232,25 @@ def wallet_from_portfolio(state: Any) -> tuple[float, float | None]:
             if str(row.get("token", "")).upper() == "SOL" and units > 0 and worth > 0:
                 price = worth / units
     return round(value, 4), price
+
+
+def balances_from_portfolio(state: Any) -> dict[str, dict[str, float]]:
+    """``{"SOL": {"units", "value"}, "USDC": {...}}`` of the Solana connector (USD values).
+
+    Same payload as :func:`wallet_from_portfolio`; a token the wallet does not hold is absent.
+    """
+    out: dict[str, dict[str, float]] = {}
+    if not isinstance(state, dict):
+        return out
+    for account in state.values():
+        rows = account.get(SOLANA_CONNECTOR) if isinstance(account, dict) else None
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            token = str(row.get("token", "")).upper()
+            if token not in ("SOL", "USDC"):
+                continue
+            slot = out.setdefault(token, {"units": 0.0, "value": 0.0})
+            slot["units"] += _number(row.get("units"))
+            slot["value"] += _number(row.get("value"))
+    return out

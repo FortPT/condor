@@ -27,6 +27,7 @@ EXPECTED_TOOLS = {
     "revolut_x",
     "trading212",
     "native_portfolio",
+    "solana_trend",
     "control_agent",
     "delegate",
     "get_available_models",

@@ -68,6 +68,7 @@ CONDOR_COMMON = {
     "revolut_x",
     "trading212",
     "native_portfolio",
+    "solana_trend",
     "delegate",
     "send_notification",
     "manage_routines",
