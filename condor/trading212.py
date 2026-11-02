@@ -970,10 +970,12 @@ class Trading212Service:
                     "usd_value": float(cash_all * rate),
                 }
             )
+        ledger = _read_ledger(user_id)
         excluded = {
-            str(name).upper()
-            for name in (_read_ledger(user_id).get("excluded_tickers") or [])
+            str(name).upper() for name in (ledger.get("excluded_tickers") or [])
         }
+        #: What the bot itself holds; any other position is the owner's own.
+        bot_held = {str(name).upper() for name in (ledger.get("positions") or {})}
         excluded_usd, excluded_tokens, positions_eur = Decimal(0), [], Decimal(0)
         holdings = []
         for ticker, row in sorted(positions.items()):
@@ -998,6 +1000,7 @@ class Trading212Service:
             if token.upper() in excluded:
                 excluded_usd += usd
                 excluded_tokens.append(token)
+            if token.upper() in excluded or token.upper() not in bot_held:
                 holdings.append(self._holding(token, row, usd, rate))
         note = (
             "Whole Trading 212 account at Trading 212's own current prices, euros "
@@ -1027,8 +1030,8 @@ class Trading212Service:
             #: account, never the bot's profit or loss.
             "excluded_value_usd": float(excluded_usd),
             "excluded_tokens": excluded_tokens,
-            #: The same holdings one by one: value now and the gain or loss against
-            #: what the owner paid, for the dashboards. Display only.
+            #: The owner's own holdings (excluded, or simply not held by the bot) one by
+            #: one: value now and the gain or loss against what was paid. Display only.
             "holdings": holdings,
             "composition_eur": {
                 "free_cash": fmt(summary["available"]),
