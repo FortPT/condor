@@ -824,6 +824,29 @@ class Trading212Service:
         return found
 
     @staticmethod
+    def _holding(token, row, usd, rate):
+        """One owner holding for the dashboards: USD value now and gain against cost.
+
+        ``gain_usd`` and ``gain_pct`` are ``None`` when Trading 212 reported no cost or
+        no EUR value, so a missing figure never reads as a flat 0.
+        """
+        value_eur = row.get("value_eur")
+        if value_eur is None and rate:
+            value_eur = usd / rate
+        cost_eur = row.get("cost_eur")
+        known = value_eur is not None and cost_eur is not None and cost_eur > 0 and rate
+        return {
+            "token": token,
+            "quantity": float(row["quantity"]),
+            "value_usd": float(usd),
+            "cost_usd": float(cost_eur * rate) if known else None,
+            "gain_usd": float((value_eur - cost_eur) * rate) if known else None,
+            "gain_pct": (
+                float((value_eur - cost_eur) / cost_eur * 100) if known else None
+            ),
+        }
+
+    @staticmethod
     def _price_eur(position):
         """EUR per share at Trading 212's own current price, or None."""
         if position and position["value_eur"] is not None and position["quantity"]:
@@ -952,6 +975,7 @@ class Trading212Service:
             for name in (_read_ledger(user_id).get("excluded_tickers") or [])
         }
         excluded_usd, excluded_tokens, positions_eur = Decimal(0), [], Decimal(0)
+        holdings = []
         for ticker, row in sorted(positions.items()):
             token = by_ticker.get(ticker) or ticker.split("_")[0]
             if row["price_usd"] and row["currency"] == PRICE_CURRENCY:
@@ -974,6 +998,7 @@ class Trading212Service:
             if token.upper() in excluded:
                 excluded_usd += usd
                 excluded_tokens.append(token)
+                holdings.append(self._holding(token, row, usd, rate))
         note = (
             "Whole Trading 212 account at Trading 212's own current prices, euros "
             "converted at Revolut X's public USDC/EUR rate: free cash, cash reserved for "
@@ -1002,6 +1027,9 @@ class Trading212Service:
             #: account, never the bot's profit or loss.
             "excluded_value_usd": float(excluded_usd),
             "excluded_tokens": excluded_tokens,
+            #: The same holdings one by one: value now and the gain or loss against
+            #: what the owner paid, for the dashboards. Display only.
+            "holdings": holdings,
             "composition_eur": {
                 "free_cash": fmt(summary["available"]),
                 "reserved_for_orders": fmt(summary["reserved"]),

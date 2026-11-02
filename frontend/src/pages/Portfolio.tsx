@@ -429,6 +429,30 @@ function ConnectorRow({
         </tr>
       )}
       {expanded &&
+        (connector.holdings ?? []).map((h) => (
+          <tr key={`holding-${h.token}`} className="border-b border-[var(--color-border)]/30" data-holding={h.token}>
+            <td colSpan={5} className="px-4 py-2 pl-10 text-xs">
+              <span className="text-[var(--color-text-muted)]">Your holding {h.token}: </span>
+              <span className="tabular-nums">{formatCurrency(convertFromUsd(h.value_usd), currencySymbol)}</span>
+              {h.gain_usd === null || h.gain_usd === undefined ? (
+                <span className="text-[var(--color-text-muted)]"> · result against cost not available</span>
+              ) : (
+                <>
+                  <span className="text-[var(--color-text-muted)]"> · since you bought it </span>
+                  <span
+                    className="font-medium tabular-nums"
+                    style={{ color: Math.abs(h.gain_usd) < 0.005 ? undefined : h.gain_usd > 0 ? "var(--color-green)" : "var(--color-red)" }}
+                  >
+                    {h.gain_usd >= 0.005 ? "+" : h.gain_usd <= -0.005 ? "−" : ""}
+                    {formatCurrency(convertFromUsd(Math.abs(h.gain_usd)), currencySymbol)}
+                    {h.gain_pct === null || h.gain_pct === undefined ? "" : ` (${h.gain_pct >= 0 ? "+" : "−"}${Math.abs(h.gain_pct).toFixed(1)}%)`}
+                  </span>
+                </>
+              )}
+            </td>
+          </tr>
+        ))}
+      {expanded &&
         connector.balances.map((b) => (
           <TokenRow key={b.token} b={b} totalPortfolio={totalPortfolio} convertFromUsd={convertFromUsd} currencySymbol={currencySymbol} />
         ))}

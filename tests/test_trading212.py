@@ -2293,10 +2293,32 @@ class WholeAccountTests(Base):
             view["total_usd"], 40 * 1.10 + 20 + 100 + mrna_usd, places=6
         )
 
+    async def test_an_excluded_holding_reports_its_gain_against_what_was_paid(self):
+        self.svc.instruments_raw = INSTRUMENTS + [self.MRNA]
+        self.svc.held["MRNA_US_EQ"] = position("MRNA_US_EQ", "2", "100", "150")
+        await self.svc.set_excluded(1, ["MRNA"])
+        view = await self.svc.portfolio(1)
+        (holding,) = view["holdings"]
+        self.assertEqual(holding["token"], "MRNA")
+        self.assertAlmostEqual(holding["value_usd"], 200.0, places=6)
+        self.assertAlmostEqual(holding["gain_usd"], 200 - 150 * 1.10, places=6)
+        self.assertAlmostEqual(
+            holding["gain_pct"], (200 / 1.10 - 150) / 150 * 100, places=6
+        )
+
+    async def test_a_holding_without_a_reported_cost_has_no_gain_rather_than_zero(self):
+        self.svc.instruments_raw = INSTRUMENTS + [self.MRNA]
+        self.svc.held["MRNA_US_EQ"] = position("MRNA_US_EQ", "2", "100", "0")
+        await self.svc.set_excluded(1, ["MRNA"])
+        (holding,) = (await self.svc.portfolio(1))["holdings"]
+        self.assertIsNone(holding["gain_usd"])
+        self.assertIsNone(holding["gain_pct"])
+
     async def test_without_an_exclusion_list_nothing_is_excluded(self):
         view = await self.svc.portfolio(1)
         self.assertEqual(view["excluded_value_usd"], 0.0)
         self.assertEqual(view["excluded_tokens"], [])
+        self.assertEqual(view["holdings"], [])
 
 
 class FlowsTests(unittest.IsolatedAsyncioTestCase):

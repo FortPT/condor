@@ -380,11 +380,22 @@ export interface BalanceItem {
   usd_value: number;
 }
 
+/** A holding the owner keeps outside the bot (Trading 212): its value and result against what was paid. */
+export interface HoldingItem {
+  token: string;
+  quantity: number;
+  value_usd: number;
+  cost_usd?: number | null;
+  gain_usd?: number | null;
+  gain_pct?: number | null;
+}
+
 export interface ConnectorBalance {
   connector: string;
   balances: BalanceItem[];
   total_usd: number;
   note?: string | null;
+  holdings?: HoldingItem[];
 }
 
 export interface PortfolioResponse {

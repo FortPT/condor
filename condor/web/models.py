@@ -65,11 +65,23 @@ class BalanceItem(BaseModel):
     usd_value: float = 0.0
 
 
+class HoldingItem(BaseModel):
+    """A holding the owner keeps outside the bot: its value and result against cost."""
+
+    token: str
+    quantity: float = 0.0
+    value_usd: float = 0.0
+    cost_usd: float | None = None
+    gain_usd: float | None = None
+    gain_pct: float | None = None
+
+
 class ConnectorBalance(BaseModel):
     connector: str
     balances: list[BalanceItem]
     total_usd: float = 0.0
     note: str | None = None
+    holdings: list[HoldingItem] = []
 
 
 class PortfolioResponse(BaseModel):

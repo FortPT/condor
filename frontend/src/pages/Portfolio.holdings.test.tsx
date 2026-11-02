@@ -1,6 +1,6 @@
 /**
- * Top Holdings lists a token once, summed across connectors; the Assets table keeps the rows
- * per connector.
+ * Trading 212 reports the owner's own holdings with their result against cost; the Portfolio shows that line
+ * in green or red under the account, and says so when the cost is not known.
  *
  * @vitest-environment jsdom
  */
@@ -11,10 +11,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { PortfolioResponse } from "@/lib/api";
-
 const getPortfolio = vi.fn();
 const getPortfolioHistory = vi.fn();
+const preference = vi.hoisted(() => ({ hidden: false }));
+const holdingsFixture = vi.hoisted(() => ({ value: [] as unknown[] }));
 
 vi.mock("@/lib/api", () => ({
   api: {
@@ -27,7 +27,9 @@ vi.mock("@/lib/api", () => ({
     getConsolidatedPositions: async () => ({ executor_positions: [], bot_positions: [] }),
   },
 }));
-
+vi.mock("@/hooks/useUiPreferences", () => ({
+  useHideHummingbot: () => ({ hidden: preference.hidden, loading: false, setHidden: () => {}, saving: false, failed: false }),
+}));
 vi.mock("@/hooks/useServer", () => ({ useServer: () => ({ server: "FortPT VM-08" }) }));
 vi.mock("@/hooks/useWebSocket", () => ({ useCondorWebSocket: () => ({}) }));
 vi.mock("@/hooks/useLpPositions", () => ({
@@ -48,38 +50,11 @@ declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
 }
 
-const bal = (token: string, usd: number) => ({
-  token,
-  total: usd,
-  available: usd,
-  usd_value: usd,
-});
-
-const PORTFOLIO: PortfolioResponse = {
-  server: "FortPT VM-08",
-  total_usd: 1592.93,
-  connectors: [
-    { connector: "Trading 212", total_usd: 1540, balances: [bal("USD", 40), bal("TSLA", 1500)] },
-    { connector: "Crypto.com", total_usd: 52.93, balances: [bal("USD", 36), bal("HYPE", 16.93)] },
-  ],
-};
-
 let container: HTMLDivElement;
 let root: Root;
 let qc: QueryClient;
 
-beforeEach(async () => {
-  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-  qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  container = document.createElement("div");
-  document.body.appendChild(container);
-  root = createRoot(container);
-  getPortfolio.mockReset().mockResolvedValue(PORTFOLIO);
-  getPortfolioHistory.mockReset().mockResolvedValue({
-    server: "FortPT VM-08",
-    interval: "1h",
-    points: [{ timestamp: 1, total_usd: 1500 }, { timestamp: 2, total_usd: 1592.93 }],
-  });
+async function render() {
   await act(async () => {
     root.render(
       <MemoryRouter>
@@ -94,30 +69,65 @@ beforeEach(async () => {
       await new Promise((r) => setTimeout(r, 0));
     });
   }
+}
+
+beforeEach(() => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+  getPortfolio.mockReset().mockImplementation(async () => ({
+    server: "FortPT VM-08",
+    total_usd: 100,
+    connectors: [{
+      connector: "Trading 212", total_usd: 100, note: "unified",
+      balances: [{ token: "VWRPl", total: 0.5, available: 0.5, usd_value: 60 }, { token: "EUR", total: 40, available: 40, usd_value: 40 }],
+      holdings: holdingsFixture.value,
+    }],
+  }));
+  getPortfolioHistory.mockReset().mockResolvedValue({
+    server: "FortPT VM-08",
+    interval: "1h",
+    points: [{ timestamp: 1, total_usd: 90 }, { timestamp: 2, total_usd: 100 }],
+  });
 });
 
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
   qc.clear();
+  preference.hidden = false;
+  holdingsFixture.value = [];
 });
 
-const topHoldingsBlock = () =>
-  Array.from(container.querySelectorAll("h3"))
-    .find((heading) => heading.textContent === "Top Holdings")!
-    .parentElement!;
+const holdingLine = () => container.querySelector("[data-holding]")?.textContent ?? "";
 
-describe("Portfolio Top Holdings", () => {
-  it("lists USD once although Trading 212 and Crypto.com each hold it", () => {
-    const labels = Array.from(topHoldingsBlock().querySelectorAll("span.font-medium")).map((el) => el.textContent);
-    expect(labels.filter((label) => label === "USD")).toHaveLength(1);
-    expect(labels).toEqual(["TSLA", "USD", "HYPE"]);
+describe("Trading 212 holdings", () => {
+  it("shows a gain in green with its percentage", async () => {
+    holdingsFixture.value = [{ token: "VWRPl", quantity: 0.5, value_usd: 60, cost_usd: 58, gain_usd: 2, gain_pct: 3.4 }];
+    await render();
+    expect(holdingLine()).toContain("VWRPl");
+    expect(holdingLine()).toContain("+");
+    expect(holdingLine()).toContain("(+3.4%)");
+    expect((container.querySelector("[data-holding] .font-medium") as HTMLElement).style.color).toBe("var(--color-green)");
   });
 
-  it("gives that token's share as the sum over both connectors (76 of 1592.93), not either part", () => {
-    const text = topHoldingsBlock().textContent!;
-    expect(text).toContain("USD4.8%");
-    expect(text).not.toContain("2.5%");
-    expect(text).not.toContain("2.3%");
+  it("shows a loss in red", async () => {
+    holdingsFixture.value = [{ token: "VWRPl", quantity: 0.5, value_usd: 60, cost_usd: 62, gain_usd: -2, gain_pct: -3.2 }];
+    await render();
+    expect(holdingLine()).toContain("−");
+    expect(holdingLine()).toContain("(−3.2%)");
+    expect((container.querySelector("[data-holding] .font-medium") as HTMLElement).style.color).toBe("var(--color-red)");
+  });
+
+  it("says the result is not available when the cost is not known, and shows nothing without holdings", async () => {
+    holdingsFixture.value = [{ token: "VWRPl", quantity: 0.5, value_usd: 60, cost_usd: null, gain_usd: null, gain_pct: null }];
+    await render();
+    expect(holdingLine()).toContain("not available");
+    holdingsFixture.value = [];
+    qc.clear();
+    await render();
+    expect(container.querySelector("[data-holding]")).toBeNull();
   });
 });
