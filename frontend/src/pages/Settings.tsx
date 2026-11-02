@@ -3,6 +3,7 @@ import {
   Bitcoin,
   Brain,
   Download,
+  Eye,
   KeyRound,
   LogOut,
   Mic,
@@ -22,6 +23,7 @@ import { AgentsSettings } from "@/components/settings/AgentsSettings";
 import { ApiKeysSettings } from "@/components/settings/ApiKeysSettings";
 import { ApiServerSettings } from "@/components/settings/ApiServerSettings";
 import { CustomProvidersSettings } from "@/components/settings/CustomProvidersSettings";
+import { DisplaySettings } from "@/components/settings/DisplaySettings";
 import { CryptoComExchange } from "@/components/settings/CryptoComExchange";
 import { GatewaySettings } from "@/components/settings/GatewaySettings";
 import { NotificationsSettings } from "@/components/settings/NotificationsSettings";
@@ -47,6 +49,7 @@ type TabKey =
   | "servers"
   | "llm"
   | "voice"
+  | "display"
   | "notifications"
   | "privacy"
   | "admin"
@@ -85,6 +88,7 @@ function buildGroups(server: string | null, isAdmin: boolean): TabGroup[] {
         { key: "agents", label: "Agents", icon: Brain },
         { key: "llm", label: "LLM Endpoints", icon: Sparkles },
         { key: "voice", label: "Voice & AI", icon: Mic },
+        { key: "display", label: "Display", icon: Eye },
       ],
     },
     {
@@ -223,6 +227,7 @@ export function Settings() {
           {tab === "keys" && <ApiKeysSettings />}
           {tab === "llm" && <CustomProvidersSettings />}
           {tab === "voice" && <VoiceSettings />}
+          {tab === "display" && <DisplaySettings />}
           {tab === "notifications" && <NotificationsSettings />}
           {/* Two cards, not one switch. Telemetry is anonymous counts the admin
               consents to install-wide; sharing is content only its author can hand

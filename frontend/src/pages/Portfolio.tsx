@@ -19,6 +19,7 @@ import { PositionsTab } from "@/components/portfolio/PositionsTab";
 import { useLpPositions } from "@/hooks/useLpPositions";
 import { useRates } from "@/hooks/useRates";
 import { useServer } from "@/hooks/useServer";
+import { useHideHummingbot } from "@/hooks/useUiPreferences";
 import { useCondorWebSocket } from "@/hooks/useWebSocket";
 import {
   api,
@@ -177,6 +178,7 @@ function DashboardStrip({
   convertFromUsd: (val: number) => number;
   currencySymbol: string;
 }) {
+  const { hidden: hideHummingbot } = useHideHummingbot();
   const activeAgents = agents.filter((a) => a.status === "running" || a.status === "active");
   const agentPnl = agents.reduce((s, a) => s + (a.latest_session_pnl ?? 0), 0);
   const agentSessions = agents.reduce((s, a) => s + (a.session_count ?? 0), 0);
@@ -196,6 +198,7 @@ function DashboardStrip({
           currencySymbol={currencySymbol}
         />
 
+        {!hideHummingbot && <>
         <KpiCell
           label="Bots"
           mainValue={botCount}
@@ -215,6 +218,7 @@ function DashboardStrip({
           }
           currencySymbol={currencySymbol}
         />
+        </>}
 
         <KpiCell
           label="Agents"

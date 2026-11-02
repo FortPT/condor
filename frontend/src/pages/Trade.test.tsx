@@ -18,8 +18,10 @@ vi.mock("@/components/ConnectKeysOverlay", () => ({ ConnectKeysOverlay: () => <d
 const exchangeStatus = { connected: true, environment: "production", enabled: false, ledger: { quote: "USD", cash: "26", positions: {}, uncertain_order: null, synced: true } };
 // The deposits/withdrawals record under the venue is read too (a GET, never a write).
 const flowsRead = (path: unknown) => String(path).startsWith("/api/v1/native-flows?venue=");
+// The display preference (whether the Hummingbot pages are hidden) is read too: a GET, never a write here.
+const prefsRead = (path: unknown) => path === "/api/v1/auth/preferences";
 const onlyReads = (calls: unknown[][]) => calls.every(([path, init]) =>
-  (flowsRead(path) || path === "/api/v1/crypto-exchange/status" || path === "/api/v1/crypto-exchange/scorecard" ||
+  (flowsRead(path) || prefsRead(path) || path === "/api/v1/crypto-exchange/status" || path === "/api/v1/crypto-exchange/scorecard" ||
     path === "/api/v1/crypto-exchange/maker-stats" || path === "/api/v1/crypto-exchange/performance" ||
     String(path).startsWith("/api/v1/crypto-exchange/coins?") || String(path).startsWith("/api/v1/crypto-exchange/candles?")) && !init);
 vi.mock("@/lib/api", async () => ({
@@ -116,7 +118,7 @@ it.each([["revolut-x", "Revolut X"], ["trading212", "Trading 212"]])("opens the 
   expect(pressed).not.toContain("Hummingbot");
   expect(pressed).not.toContain("Crypto.com");
   // the native panel only reads its own routes (and the Crypto.com status the page itself polls)
-  expect(request.fetch.mock.calls.every(([path, init]) => !init && (String(path).startsWith(`/api/v1/${key}/`) || String(path).startsWith("/api/v1/crypto-exchange/") || flowsRead(path)))).toBe(true);
+  expect(request.fetch.mock.calls.every(([path, init]) => !init && (String(path).startsWith(`/api/v1/${key}/`) || String(path).startsWith("/api/v1/crypto-exchange/") || flowsRead(path) || prefsRead(path)))).toBe(true);
 });
 it.each([
   ["/trade?workspace=revolut-x", "revolut_x"],
@@ -166,4 +168,28 @@ it("never makes Revolut X or Trading 212 the default account", async () => {
   await render("/trade");
   expect(host.querySelector("[data-venue]")).toBeNull();
   expect(host.textContent).toContain("Preview order");
+});
+
+// The display preference hides the Hummingbot terminal: no button for it, and its links land on Crypto.com.
+const hidingHummingbot = () => request.fetch.mockImplementation((path: string) => Promise.resolve(
+  path === "/api/v1/auth/preferences" ? { hide_hummingbot_pages: true } :
+  path.includes("/coins") ? { quote: "USD", coins: [] } : path.includes("/candles") ? { pair: "BTC_USD", timeframe: "1h", candles: [] } : path.endsWith("/scorecard") ? {} : exchangeStatus));
+const accountButtons = () => Array.from(host.querySelectorAll("button")).map((b) => b.textContent);
+it("offers the Hummingbot terminal by default", async () => {
+  await render();
+  expect(accountButtons()).toContain("Hummingbot");
+});
+it("hides the Hummingbot button when the preference is on, and keeps the other accounts", async () => {
+  hidingHummingbot();
+  await render();
+  expect(accountButtons()).not.toContain("Hummingbot");
+  expect(accountButtons()).toEqual(expect.arrayContaining(["Crypto.com", "Revolut X", "Trading 212", "Solana"]));
+});
+it("sends a Hummingbot link to Crypto.com instead of the hidden terminal", async () => {
+  hidingHummingbot();
+  await render("/trade?workspace=hummingbot");
+  expect(host.textContent).toContain("Preview order");
+  expect(host.querySelector("[data-workspace]")).toBeNull();
+  await render("/trade?connector=binance&pair=BTC-USDT");
+  expect(host.querySelector("[data-workspace]")).toBeNull();
 });

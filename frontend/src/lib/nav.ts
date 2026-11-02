@@ -45,6 +45,14 @@ export const NAV_ITEMS = [
   { to: "/settings", icon: Settings, label: "Settings" },
 ] as const;
 
+/** Pages that only drive Hummingbot bots, hidden by the `hide_hummingbot_pages` preference. */
+export const HUMMINGBOT_ROUTES: readonly string[] = ["/dex", "/bots"];
+
+/** The nav entries to show: all of them, or all but the Hummingbot-only pages. */
+export function visibleNavItems(hideHummingbot: boolean) {
+  return hideHummingbot ? NAV_ITEMS.filter((item) => !HUMMINGBOT_ROUTES.includes(item.to)) : NAV_ITEMS;
+}
+
 /**
  * Routes that lay themselves out edge to edge and scroll inside their own panes,
  * so `main` gives them no padding and no scrollbar of its own.
