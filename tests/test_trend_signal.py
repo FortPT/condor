@@ -6,7 +6,8 @@ import typing
 
 import pytest
 
-from condor import native_venues, trend_signal as ts
+from condor import native_venues
+from condor import trend_signal as ts
 
 DAY = 86_400_000
 T0 = 1_760_000_000_000  # an arbitrary UTC day start, in ms
